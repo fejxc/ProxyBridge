@@ -1,0 +1,541 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classification = object;
+	objectVersion = 56;
+	objectCount = 93;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		51A300000000000000000001 /* ProxyBridgeApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000001 /* ProxyBridgeApp.swift */; };
+		51A300000000000000000002 /* LocalProxyEndpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000002 /* LocalProxyEndpoint.swift */; };
+		51A300000000000000000003 /* ServerProfile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000003 /* ServerProfile.swift */; };
+		51A300000000000000000004 /* TunnelStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000004 /* TunnelStatus.swift */; };
+		51A300000000000000000005 /* AppSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000005 /* AppSettingsStore.swift */; };
+		51A300000000000000000006 /* ProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000006 /* ProfileRepository.swift */; };
+		51A300000000000000000007 /* LogRedaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000007 /* LogRedaction.swift */; };
+		51A300000000000000000008 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000008 /* LogStore.swift */; };
+		51A300000000000000000009 /* MockTunnelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000009 /* MockTunnelService.swift */; };
+		51A30000000000000000000A /* ProxyDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000A /* ProxyDetector.swift */; };
+		51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000B /* RemoteCommandTemplate.swift */; };
+		51A30000000000000000000C /* TunnelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000C /* TunnelService.swift */; };
+		51A30000000000000000000D /* AppViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000D /* AppViewModel.swift */; };
+		51A30000000000000000000E /* DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000E /* DesignSystem.swift */; };
+		51A30000000000000000000F /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000F /* GeneralSettingsView.swift */; };
+		51A300000000000000000010 /* LogsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000010 /* LogsView.swift */; };
+		51A300000000000000000011 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000011 /* MenuBarView.swift */; };
+		51A300000000000000000012 /* ProxySettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000012 /* ProxySettingsView.swift */; };
+		51A300000000000000000013 /* ServerEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000013 /* ServerEditorView.swift */; };
+		51A300000000000000000014 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000014 /* SettingsView.swift */; };
+		51A300000000000000000015 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 51A100000000000000000028 /* Localizable.strings */; };
+		51A300000000000000000101 /* ProfileRepositoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000101 /* ProfileRepositoryTests.swift */; };
+		51A300000000000000000102 /* ProfileValidationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000102 /* ProfileValidationTests.swift */; };
+		51A300000000000000000103 /* TunnelStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000103 /* TunnelStatusTests.swift */; };
+		51A300000000000000000104 /* LogRedactionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000104 /* LogRedactionTests.swift */; };
+		51A300000000000000000105 /* RemoteCommandTemplateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000105 /* RemoteCommandTemplateTests.swift */; };
+		51A300000000000000000106 /* MockTunnelServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000106 /* MockTunnelServiceTests.swift */; };
+		51A300000000000000000107 /* EndpointResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000107 /* EndpointResolverTests.swift */; };
+		51A300000000000000000108 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000108 /* TestSupport.swift */; };
+		51A300000000000000000109 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000109 /* AppViewModelTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		51A100000000000000000056 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 51A100000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 51A100000000000000000031;
+			remoteInfo = ProxyBridge;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		51A200000000000000000001 /* ProxyBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyBridgeApp.swift; sourceTree = "<group>"; };
+		51A200000000000000000002 /* LocalProxyEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyEndpoint.swift; sourceTree = "<group>"; };
+		51A200000000000000000003 /* ServerProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProfile.swift; sourceTree = "<group>"; };
+		51A200000000000000000004 /* TunnelStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatus.swift; sourceTree = "<group>"; };
+		51A200000000000000000005 /* AppSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsStore.swift; sourceTree = "<group>"; };
+		51A200000000000000000006 /* ProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepository.swift; sourceTree = "<group>"; };
+		51A200000000000000000007 /* LogRedaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogRedaction.swift; sourceTree = "<group>"; };
+		51A200000000000000000008 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
+		51A200000000000000000009 /* MockTunnelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockTunnelService.swift; sourceTree = "<group>"; };
+		51A20000000000000000000A /* ProxyDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyDetector.swift; sourceTree = "<group>"; };
+		51A20000000000000000000B /* RemoteCommandTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandTemplate.swift; sourceTree = "<group>"; };
+		51A20000000000000000000C /* TunnelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelService.swift; sourceTree = "<group>"; };
+		51A20000000000000000000D /* AppViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModel.swift; sourceTree = "<group>"; };
+		51A20000000000000000000E /* DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystem.swift; sourceTree = "<group>"; };
+		51A20000000000000000000F /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
+		51A200000000000000000010 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
+		51A200000000000000000011 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
+		51A200000000000000000012 /* ProxySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxySettingsView.swift; sourceTree = "<group>"; };
+		51A200000000000000000013 /* ServerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEditorView.swift; sourceTree = "<group>"; };
+		51A200000000000000000014 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		51A200000000000000000015 /* Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = Localizable.strings; sourceTree = "<group>"; };
+		51A200000000000000000101 /* ProfileRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepositoryTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000102 /* ProfileValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileValidationTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000103 /* TunnelStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatusTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000104 /* LogRedactionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogRedactionTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000105 /* RemoteCommandTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandTemplateTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000106 /* MockTunnelServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockTunnelServiceTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000107 /* EndpointResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointResolverTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000108 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		51A200000000000000000109 /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
+		51A100000000000000000041 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		51A100000000000000000042 /* ProxyBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		51A100000000000000000052 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		51A100000000000000000055 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		51A100000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				51A100000000000000000011 /* ProxyBridge */,
+				51A100000000000000000012 /* ProxyBridgeTests */,
+				51A100000000000000000003 /* Products */,
+				51A100000000000000000004 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		51A100000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				51A100000000000000000041 /* ProxyBridge.app */,
+				51A100000000000000000042 /* ProxyBridgeTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000004 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000011 /* ProxyBridge */ = {
+			isa = PBXGroup;
+			children = (
+				51A100000000000000000021 /* App */,
+				51A100000000000000000022 /* Models */,
+				51A100000000000000000024 /* Services */,
+				51A100000000000000000023 /* Persistence */,
+				51A100000000000000000025 /* Presentation */,
+				51A100000000000000000026 /* Resources */,
+			);
+			path = ProxyBridge;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000021 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				51A200000000000000000001 /* ProxyBridgeApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000022 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				51A200000000000000000002 /* LocalProxyEndpoint.swift */,
+				51A200000000000000000003 /* ServerProfile.swift */,
+				51A200000000000000000004 /* TunnelStatus.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000023 /* Persistence */ = {
+			isa = PBXGroup;
+			children = (
+				51A200000000000000000005 /* AppSettingsStore.swift */,
+				51A200000000000000000006 /* ProfileRepository.swift */,
+			);
+			path = Persistence;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000024 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				51A200000000000000000007 /* LogRedaction.swift */,
+				51A200000000000000000008 /* LogStore.swift */,
+				51A200000000000000000009 /* MockTunnelService.swift */,
+				51A20000000000000000000A /* ProxyDetector.swift */,
+				51A20000000000000000000B /* RemoteCommandTemplate.swift */,
+				51A20000000000000000000C /* TunnelService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000025 /* Presentation */ = {
+			isa = PBXGroup;
+			children = (
+				51A20000000000000000000D /* AppViewModel.swift */,
+				51A20000000000000000000E /* DesignSystem.swift */,
+				51A20000000000000000000F /* GeneralSettingsView.swift */,
+				51A200000000000000000010 /* LogsView.swift */,
+				51A200000000000000000011 /* MenuBarView.swift */,
+				51A200000000000000000012 /* ProxySettingsView.swift */,
+				51A200000000000000000013 /* ServerEditorView.swift */,
+				51A200000000000000000014 /* SettingsView.swift */,
+			);
+			path = Presentation;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000026 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				51A100000000000000000028 /* Localizable.strings */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		51A100000000000000000012 /* ProxyBridgeTests */ = {
+			isa = PBXGroup;
+			children = (
+				51A200000000000000000101 /* ProfileRepositoryTests.swift */,
+				51A200000000000000000102 /* ProfileValidationTests.swift */,
+				51A200000000000000000103 /* TunnelStatusTests.swift */,
+				51A200000000000000000104 /* LogRedactionTests.swift */,
+				51A200000000000000000105 /* RemoteCommandTemplateTests.swift */,
+				51A200000000000000000106 /* MockTunnelServiceTests.swift */,
+				51A200000000000000000107 /* EndpointResolverTests.swift */,
+				51A200000000000000000108 /* TestSupport.swift */,
+				51A200000000000000000109 /* AppViewModelTests.swift */,
+			);
+			path = ProxyBridgeTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		51A100000000000000000031 /* ProxyBridge */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 51A100000000000000000064 /* Build configuration list for PBXNativeTarget "ProxyBridge" */;
+			buildPhases = (
+				51A100000000000000000051 /* Sources */,
+				51A100000000000000000052 /* Frameworks */,
+				51A100000000000000000053 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = ProxyBridge;
+			packageProductDependencies = (
+			);
+			productName = ProxyBridge;
+			productReference = 51A100000000000000000041 /* ProxyBridge.app */;
+			productType = "com.apple.product-type.app";
+		};
+		51A100000000000000000032 /* ProxyBridgeTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 51A100000000000000000067 /* Build configuration list for PBXNativeTarget "ProxyBridgeTests" */;
+			buildPhases = (
+				51A100000000000000000054 /* Sources */,
+				51A100000000000000000055 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				51A100000000000000000057 /* PBXTargetDependency */,
+			);
+			name = ProxyBridgeTests;
+			packageProductDependencies = (
+			);
+			productName = ProxyBridgeTests;
+			productReference = 51A100000000000000000042 /* ProxyBridgeTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		51A100000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					51A100000000000000000031 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					51A100000000000000000032 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = 51A100000000000000000031;
+					};
+				};
+			};
+			buildConfigurationList = 51A100000000000000000061 /* Build configuration list for PBXProject "ProxyBridge" */;
+			developmentRegion = "zh-Hans";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				"zh-Hans",
+				Base,
+				en,
+			);
+			mainGroup = 51A100000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 56;
+			productRefGroup = 51A100000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				51A100000000000000000031 /* ProxyBridge */,
+				51A100000000000000000032 /* ProxyBridgeTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		51A100000000000000000053 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				51A300000000000000000015 /* Localizable.strings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		51A100000000000000000051 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				51A300000000000000000001 /* ProxyBridgeApp.swift in Sources */,
+				51A300000000000000000002 /* LocalProxyEndpoint.swift in Sources */,
+				51A300000000000000000003 /* ServerProfile.swift in Sources */,
+				51A300000000000000000004 /* TunnelStatus.swift in Sources */,
+				51A300000000000000000005 /* AppSettingsStore.swift in Sources */,
+				51A300000000000000000006 /* ProfileRepository.swift in Sources */,
+				51A300000000000000000007 /* LogRedaction.swift in Sources */,
+				51A300000000000000000008 /* LogStore.swift in Sources */,
+				51A300000000000000000009 /* MockTunnelService.swift in Sources */,
+				51A30000000000000000000A /* ProxyDetector.swift in Sources */,
+				51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */,
+				51A30000000000000000000C /* TunnelService.swift in Sources */,
+				51A30000000000000000000D /* AppViewModel.swift in Sources */,
+				51A30000000000000000000E /* DesignSystem.swift in Sources */,
+				51A30000000000000000000F /* GeneralSettingsView.swift in Sources */,
+				51A300000000000000000010 /* LogsView.swift in Sources */,
+				51A300000000000000000011 /* MenuBarView.swift in Sources */,
+				51A300000000000000000012 /* ProxySettingsView.swift in Sources */,
+				51A300000000000000000013 /* ServerEditorView.swift in Sources */,
+				51A300000000000000000014 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		51A100000000000000000054 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				51A300000000000000000101 /* ProfileRepositoryTests.swift in Sources */,
+				51A300000000000000000102 /* ProfileValidationTests.swift in Sources */,
+				51A300000000000000000103 /* TunnelStatusTests.swift in Sources */,
+				51A300000000000000000104 /* LogRedactionTests.swift in Sources */,
+				51A300000000000000000105 /* RemoteCommandTemplateTests.swift in Sources */,
+				51A300000000000000000106 /* MockTunnelServiceTests.swift in Sources */,
+				51A300000000000000000107 /* EndpointResolverTests.swift in Sources */,
+				51A300000000000000000108 /* TestSupport.swift in Sources */,
+				51A300000000000000000109 /* AppViewModelTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		51A100000000000000000057 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 51A100000000000000000031 /* ProxyBridge */;
+			targetProxy = 51A100000000000000000056 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		51A100000000000000000028 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				51A200000000000000000015 /* Localizable.strings */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		51A100000000000000000062 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		51A100000000000000000063 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGNING_ALLOWED = NO;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		51A100000000000000000065 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
+				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
+				INFOPLIST_KEY_CFBundleVersion = 1;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		51A100000000000000000066 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = NO;
+				ENABLE_TESTABILITY = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
+				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
+				INFOPLIST_KEY_CFBundleVersion = 1;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		51A100000000000000000068 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ProxyBridge.app/Contents/MacOS/ProxyBridge";
+			};
+			name = Debug;
+		};
+		51A100000000000000000069 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/ProxyBridge.app/Contents/MacOS/ProxyBridge";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		51A100000000000000000061 /* Build configuration list for PBXProject "ProxyBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				51A100000000000000000062 /* Debug */,
+				51A100000000000000000063 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		51A100000000000000000064 /* Build configuration list for PBXNativeTarget "ProxyBridge" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				51A100000000000000000065 /* Debug */,
+				51A100000000000000000066 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		51A100000000000000000067 /* Build configuration list for PBXNativeTarget "ProxyBridgeTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				51A100000000000000000068 /* Debug */,
+				51A100000000000000000069 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 51A100000000000000000001 /* Project object */;
+}

@@ -1,0 +1,5 @@
+/* ProxyBridge · 简体中文（默认语言）。界面文案集中在 Swift 代码（L10n 计划于阶段 B 引入键值化），
+   此文件保留基础设施与 App 显示名。 */
+
+"app.name" = "ProxyBridge";
+"app.subtitle" = "SSH 反向代理管理";
