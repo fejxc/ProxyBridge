@@ -1,0 +1,148 @@
+import XCTest
+@testable import ProxyBridge
+
+/// SSH 参数构建与远端探测命令（U07/U08 + 注入面）。
+final class SSHCommandBuilderTests: XCTestCase {
+
+    private func profile(
+        port: Int = 20064,
+        authMode: AuthenticationMode = .agent,
+        identityPath: String? = nil
+    ) -> ServerProfile {
+        ServerProfile(
+            name: "实验室", host: "10.11.154.192", sshPort: port,
+            username: "sunyun", authMode: authMode,
+            identityFilePath: identityPath, remotePort: 7890
+        )
+    }
+
+    private let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+
+    /// U08：严格参数（host key + loopback + BatchMode）。
+    func testU08StrictArgumentsExactArray() {
+        let args = SSHCommandBuilder.arguments(profile: profile(), localEndpoint: endpoint)
+        XCTAssertEqual(args, [
+            "-p", "20064",
+            "-N", "-T",
+            "-o", "BatchMode=yes",
+            "-o", "ServerAliveInterval=30",
+            "-o", "ServerAliveCountMax=3",
+            "-o", "ExitOnForwardFailure=yes",
+            "-o", "StrictHostKeyChecking=yes",      // 安全红线：强制主机密钥校验
+            "-o", "ConnectTimeout=10",
+            "-R", "127.0.0.1:7890:127.0.0.1:7897",  // 安全红线：远端固定 loopback
+            "sunyun@10.11.154.192",
+        ])
+    }
+
+    func testAgentModeHasNoIdentityFileFlag() {
+        let args = SSHCommandBuilder.arguments(profile: profile(), localEndpoint: endpoint)
+        XCTAssertFalse(args.contains("-i"), "agent 模式不得默认加 -i（尊重用户 OpenSSH config）")
+    }
+
+    /// U07：含空格的密钥路径逐字保真（单参数，无拆词/转义）。
+    func testU07SpacedKeyPathPreservedVerbatim() {
+        let spaced = "/Users/sunyun/My Keys/server key.pem"
+        let args = SSHCommandBuilder.arguments(
+            profile: profile(authMode: .identityFile, identityPath: spaced),
+            localEndpoint: endpoint
+        )
+        guard let index = args.firstIndex(of: "-i") else {
+            return XCTFail("identityFile 模式必须有 -i")
+        }
+        XCTAssertEqual(args[index + 1], spaced, "路径必须作为独立参数逐字保真")
+        XCTAssertEqual(args.count - 1, index + 1, "-i 后只有路径一个参数")
+    }
+
+    func testLocalEndpointForwardedExactly() {
+        let local = LocalProxyEndpoint(host: "localhost", port: 1080, protocol: .socks5, origin: .manual)
+        let args = SSHCommandBuilder.arguments(profile: profile(), localEndpoint: local)
+        guard let index = args.firstIndex(of: "-R") else {
+            return XCTFail("必须有 -R")
+        }
+        XCTAssertEqual(args[index + 1], "127.0.0.1:7890:localhost:1080")
+    }
+
+    func testPortsAreNumericOnlyInPosition() {
+        let args = SSHCommandBuilder.arguments(profile: profile(port: 22), localEndpoint: endpoint)
+        // -p 的值参数必须是纯数字
+        guard let p = args.firstIndex(of: "-p") else { return XCTFail("必须有 -p") }
+        XCTAssertEqual(args[p + 1], "22")
+        XCTAssertTrue(args[p + 1].allSatisfy(\.isNumber))
+        // 端口只能出现在 -p 值与 -R 转发串中
+        guard let r = args.firstIndex(of: "-R") else { return XCTFail("必须有 -R") }
+        XCTAssertTrue(args[r + 1].contains(":7890:"))
+    }
+
+    // MARK: 远端探测命令（无用户自由文本）
+
+    func testRemoteProbeArgumentsShape() {
+        let args = RemoteProbeCommand.arguments(
+            profile: profile(), remotePort: 7890,
+            protocol: .http, urlString: "https://www.example.com/"
+        )
+        // agent 模式：10 元素，逐字精确断言
+        XCTAssertEqual(args, [
+            "-p", "20064",
+            "-o", "BatchMode=yes",
+            "-o", "StrictHostKeyChecking=yes",   // 远端探测同样强制主机密钥校验
+            "-o", "ConnectTimeout=10",
+            "sunyun@10.11.154.192",
+            RemoteProbeCommand.script(remotePort: 7890, protocol: .http, urlString: "https://www.example.com/"),
+        ])
+        let script = args.last ?? ""
+        XCTAssertTrue(script.contains("command -v curl"))
+        XCTAssertTrue(script.contains("--proxy http://127.0.0.1:7890"))
+        XCTAssertTrue(script.contains("https://www.example.com/"))
+        XCTAssertTrue(script.contains(RemoteProbeCommand.noCurlMarker))
+    }
+
+    /// identityFile 模式：远端探测与隧道命令的 -i 行为必须一致（否则探测必然认证失败）。
+    func testRemoteProbeIdentityFileMatchesTunnelCommand() {
+        let spaced = "/Users/sunyun/My Keys/server key.pem"
+        let idProfile = profile(authMode: .identityFile, identityPath: spaced)
+        let probeArgs = RemoteProbeCommand.arguments(
+            profile: idProfile, remotePort: 7890,
+            protocol: .http, urlString: "https://www.example.com/"
+        )
+        let tunnelArgs = SSHCommandBuilder.arguments(profile: idProfile, localEndpoint: endpoint)
+        // 两条命令都必须带 -i 且路径逐字一致
+        for args in [probeArgs, tunnelArgs] {
+            guard let i = args.firstIndex(of: "-i") else {
+                return XCTFail("identityFile 模式下必须有 -i")
+            }
+            XCTAssertEqual(args[i + 1], spaced)
+        }
+    }
+
+    func testRemoteProbeSOCKSUsesSocks5Hostname() {
+        let script = RemoteProbeCommand.script(
+            remotePort: 7891, protocol: .socks5, urlString: "https://www.example.com/"
+        )
+        XCTAssertTrue(script.contains("--socks5-hostname 127.0.0.1:7891"), "DNS 必须经代理解析")
+        XCTAssertFalse(script.contains("--proxy http"))
+    }
+
+    /// 远端脚本是最终权威形态：全等断言（任何成分变化都必须显式更新此断言，
+    /// 杜绝「审计白名单过宽放行注入成分」的假阴性）。
+    func testRemoteProbeScriptIsExactConstant() {
+        XCTAssertEqual(
+            RemoteProbeCommand.script(
+                remotePort: 7890, protocol: .http, urlString: "https://www.example.com/"
+            ),
+            "command -v curl >/dev/null 2>&1 && curl --noproxy \"\" --proxy http://127.0.0.1:7890 "
+                + "--connect-timeout 3 --max-time 8 --silent --show-error "
+                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/ "
+                + "|| echo \(RemoteProbeCommand.noCurlMarker)"
+        )
+        XCTAssertEqual(
+            RemoteProbeCommand.script(
+                remotePort: 1080, protocol: .socks5, urlString: "https://www.example.com/"
+            ),
+            "command -v curl >/dev/null 2>&1 && curl --noproxy \"\" --socks5-hostname 127.0.0.1:1080 "
+                + "--connect-timeout 3 --max-time 8 --silent --show-error "
+                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/ "
+                + "|| echo \(RemoteProbeCommand.noCurlMarker)"
+        )
+    }
+}

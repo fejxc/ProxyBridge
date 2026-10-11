@@ -24,6 +24,8 @@ struct SmokeMain {
         await viewModelChecks()
         logStoreChecks()
         await liveProxyChecks()
+        sshChecks()
+        await tunnelCoordinatorChecks()
 
         print("----------------------------------------")
         print("通过 \(passed) 项，失败 \(failed) 项")
@@ -347,6 +349,7 @@ struct SmokeMain {
             func disconnect(profileID: UUID) { box.recordDisconnect(profileID) }
             func runHealthCheck(profileID: UUID) {}
             func isActive(profileID: UUID) -> Bool { false }
+            func terminateAllSessions() {}
         }
 
         let spy = SpyTunnel()
@@ -357,7 +360,8 @@ struct SmokeMain {
             settingsStore: AppSettingsStore(directoryURL: dir),
             tunnel: spy,
             proxyDetector: detector,
-            logStore: LogStore()
+            logStore: LogStore(),
+            isDemoMode: true
         )
         check("S26a", "空启动 → 未配置状态", model.profiles.isEmpty && model.overallPresentation.title == "未配置")
 
@@ -506,6 +510,163 @@ struct SmokeMain {
         } else {
             print("   实测  = 本机未启用 HTTP 系统代理，跳过端到端实测")
         }
+    }
+
+    // MARK: S31–S33 SSH 命令构建 / 错误分类 / 真实 ssh 进程
+
+    @MainActor
+    static func sshChecks() {
+        // S31：参数数组逐字断言（U08 严格性）
+        let profile = ServerProfile(
+            name: "smoke", host: "10.11.154.192", sshPort: 20064,
+            username: "sunyun", remotePort: 7890
+        )
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+        let args = SSHCommandBuilder.arguments(profile: profile, localEndpoint: endpoint)
+        check("S31a", "ssh 参数数组逐字匹配（StrictHostKeyChecking=yes）", args == [
+            "-p", "20064", "-N", "-T",
+            "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+            "-o", "ExitOnForwardFailure=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+            "-R", "127.0.0.1:7890:127.0.0.1:7897", "sunyun@10.11.154.192",
+        ])
+        let spaced = SSHCommandBuilder.arguments(
+            profile: ServerProfile(
+                name: "s", host: "h.example.com", sshPort: 22, username: "u",
+                authMode: .identityFile, identityFilePath: "/Users/x/My Keys/k.pem",
+                remotePort: 7890
+            ),
+            localEndpoint: endpoint
+        )
+        if let i = spaced.firstIndex(of: "-i") {
+            check("S31b", "含空格密钥路径逐字保真", spaced[i + 1] == "/Users/x/My Keys/k.pem")
+        } else {
+            check("S31b", "含空格密钥路径逐字保真", false)
+        }
+
+        // S32：分类映射（U09/U10）
+        let auth = SSHErrorClassifier.classify(exitCode: 255, stderr: "Permission denied (publickey).")
+        let fwd = SSHErrorClassifier.classify(exitCode: 255, stderr: "Warning: remote port forwarding failed for listen port 7890")
+        let refused = SSHErrorClassifier.classify(exitCode: 255, stderr: "ssh: connect to host 127.0.0.1 port 1: Connection refused")
+        check("S32", "分类：认证→authRequired / 转发失败→error / 拒连→error",
+              isAuthRequired(auth) && isError(fwd) && isError(refused))
+
+        // S33：真实 /usr/bin/ssh 启动（对 127.0.0.1:1，预期立即 Connection refused）
+        guard FileManager.default.isExecutableFile(atPath: "/usr/bin/ssh") else {
+            print("   S33 信息：本机无 /usr/bin/ssh，跳过真实进程检查（不计 PASS/FAIL）")
+            return
+        }
+        let factory = FoundationSSHProcessFactory()
+        let target = ServerProfile(
+            name: "local", host: "127.0.0.1", sshPort: 1,
+            username: "nobody", remotePort: 7890
+        )
+        let realArgs = SSHCommandBuilder.arguments(profile: target, localEndpoint: endpoint)
+        let handle = factory.make(arguments: realArgs, environment: SSHProcessLauncher.sshEnvironment())
+        do {
+            try handle.start()
+            let deadline = Date().addingTimeInterval(10)
+            while handle.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            let code = handle.exitCode
+            let classification = SSHErrorClassifier.classify(exitCode: code ?? 255, stderr: handle.stderrTail)
+            let detail = "exit=\(code.map(String.init) ?? "running") stderr=\(handle.stderrTail.prefix(60))"
+            check("S33", "真实 /usr/bin/ssh 启动并按 stderr 分类（拒连→error）[\(detail)]",
+                  code != nil && isError(classification))
+            // 句柄必须已终结（无泄漏）
+            handle.terminate()
+        } catch {
+            check("S33", "真实 /usr/bin/ssh 启动（异常：\(error)）", false)
+        }
+    }
+
+    // MARK: S34 生产 SSHTunnelCoordinator 状态机序列（真实协调器代码 + 测试替身进程）
+
+    @MainActor
+    static func tunnelCoordinatorChecks() async {
+        let profile = ServerProfile(
+            name: "协调器", host: "10.11.154.192", sshPort: 20064,
+            username: "sunyun", remotePort: 7890
+        )
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+        let cfg = TunnelConfiguration(profile: profile, localEndpoint: endpoint)
+
+        // S34a：完整序列到 connected
+        let factory = SmokeSSHFactory()
+        let coordinator = SSHTunnelCoordinator(
+            processFactory: factory,
+            localProber: SmokeLocalProber(outcome: .verified(statusCode: 200)),
+            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200))
+        )
+        coordinator.graceSeconds = 0.1
+        var snapshots: [TunnelSnapshot] = []
+        coordinator.onEvent = { event in
+            if case .snapshot(let s) = event { snapshots.append(s) }
+        }
+        coordinator.connect(configuration: cfg)
+        let connected = await waitSmokeUntil(timeout: 3) { snapshots.last?.phase == .connected }
+        let phases = snapshots.map(\.phase)
+        check("S34a", "协调器完整序列 checking→connecting→connected", connected
+              && phases.firstIndex(of: .checking) != nil
+              && phases.firstIndex(of: .connecting) != nil
+              && snapshots.last?.isEndToEndVerified == true)
+
+        // S34b：用户断开 → idle 后零事件（U13 在真实协调器上成立）
+        coordinator.disconnect(profileID: profile.id)
+        let idle = await waitSmokeUntil(timeout: 3) { snapshots.last?.phase == .idle }
+        let count = snapshots.count
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        check("S34b", "协调器：用户断开 → idle 且零 ghost 事件", idle && snapshots.count == count
+              && snapshots.last?.humanReadableDetail.contains("不会自动重连") == true)
+
+        // S34c：认证失败剧本 → authRequired（I01 语义）
+        let factory2 = SmokeSSHFactory()
+        let badHandle = SmokeSSHHandle()
+        badHandle.stderrText = "sunyun@10.11.154.192: Permission denied (publickey)."
+        badHandle.autoExitNanoseconds = 50_000_000
+        badHandle.autoExitCode = 255
+        factory2.enqueue(badHandle)
+        let coordinator2 = SSHTunnelCoordinator(
+            processFactory: factory2,
+            localProber: SmokeLocalProber(outcome: .verified(statusCode: 200)),
+            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200))
+        )
+        coordinator2.graceSeconds = 1.0
+        var snaps2: [TunnelSnapshot] = []
+        coordinator2.onEvent = { event in
+            if case .snapshot(let s) = event { snaps2.append(s) }
+        }
+        coordinator2.connect(configuration: cfg)
+        let authRequired = await waitSmokeUntil(timeout: 3) { snaps2.last?.phase == .authRequired }
+        check("S34c", "协调器：认证失败剧本 → authRequired（I01/U09）", authRequired
+              && snaps2.last?.humanReadableDetail.contains("认证") == true)
+
+        // S34d：远端缺 curl → degraded 且 remoteProbe=nil（U11：绝不假绿）
+        let coordinator3 = SSHTunnelCoordinator(
+            processFactory: SmokeSSHFactory(),
+            localProber: SmokeLocalProber(outcome: .verified(statusCode: 200)),
+            remoteProber: SmokeRemoteProber(outcome: .remoteCurlMissing)
+        )
+        coordinator3.graceSeconds = 0.1
+        var snaps3: [TunnelSnapshot] = []
+        coordinator3.onEvent = { event in
+            if case .snapshot(let s) = event { snaps3.append(s) }
+        }
+        coordinator3.connect(configuration: cfg)
+        let degraded = await waitSmokeUntil(timeout: 3) { snaps3.last?.phase == .degraded }
+        check("S34d", "协调器：远端缺 curl → degraded + 未验证（绝不 connected）", degraded
+              && snaps3.last?.remoteProbeVerified == nil
+              && snaps3.last?.phase != .connected)
+    }
+
+    private static func isAuthRequired(_ c: SSHErrorClassifier.Classification) -> Bool {
+        if case .authRequired = c { return true }
+        return false
+    }
+
+    private static func isError(_ c: SSHErrorClassifier.Classification) -> Bool {
+        if case .error = c { return true }
+        return false
     }
 
     /// 本机假「普通 HTTP 服务器」：接受连接、读请求、回 404、断开。

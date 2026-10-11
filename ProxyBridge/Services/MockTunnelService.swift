@@ -138,6 +138,14 @@ final class MockTunnelService: TunnelService {
         tasks[profileID] != nil
     }
 
+    func terminateAllSessions() {
+        for id in Array(tasks.keys) {
+            tasks[id]?.cancel()
+            tasks[id] = nil
+        }
+        lastSnapshots.removeAll()
+    }
+
     private func finish(_ id: UUID) {
         tasks[id] = nil
     }

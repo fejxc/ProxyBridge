@@ -1,0 +1,609 @@
+import XCTest
+@testable import ProxyBridge
+
+// MARK: - 测试替身
+
+/// 可脚本化的进程句柄：按剧本退出/挂起，stderr 可注入。
+final class FakeSSHHandle: SSHProcessHandle, @unchecked Sendable {
+    var onExit: (@Sendable (Int32) -> Void)?
+
+    private let lock = NSLock()
+    private var running = false
+    private var code: Int32?
+    private var stderr = ""
+    private var fired = false
+    private(set) var started = false
+    private(set) var terminated = false
+    var startError: Error?
+
+    func setStderr(_ text: String) {
+        lock.lock()
+        stderr = text
+        lock.unlock()
+    }
+
+    var startWasCalled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return started
+    }
+
+    var wasTerminated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return terminated
+    }
+
+    func start() throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if let startError {
+            throw startError
+        }
+        started = true
+        running = true
+    }
+
+    func simulateExit(_ exitCode: Int32, afterNanoseconds: UInt64 = 0) {
+        Task { [weak self] in
+            if afterNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: afterNanoseconds)
+            }
+            guard let self else { return }
+            self.lock.lock()
+            // 与生产一致：退出回调只发一次（test-and-set）
+            guard !self.fired else {
+                self.lock.unlock()
+                return
+            }
+            self.fired = true
+            self.running = false
+            self.code = exitCode
+            let callback = self.onExit
+            self.lock.unlock()
+            callback?(exitCode)
+        }
+    }
+
+    func terminate() {
+        lock.lock()
+        terminated = true
+        let wasRunning = running
+        lock.unlock()
+        if wasRunning { simulateExit(15) }
+    }
+
+    func forceTerminate() {
+        terminate()
+    }
+
+    var isRunning: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return running
+    }
+
+    var exitCode: Int32? {
+        lock.lock()
+        defer { lock.unlock() }
+        return code
+    }
+
+    var stderrTail: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return stderr
+    }
+
+    var stdoutTail: String { "" }
+}
+
+/// 可编排的工厂：记录 make 调用，按队列出句柄（空则自动新建）。
+final class FakeSSHFactory: SSHProcessFactory, @unchecked Sendable {
+    private let lock = NSLock()
+    private var pending: [FakeSSHHandle] = []
+    private(set) var madeHandles: [FakeSSHHandle] = []
+    private(set) var lastArguments: [String] = []
+    private(set) var lastEnvironment: [String: String] = [:]
+
+    func enqueue(_ handle: FakeSSHHandle) {
+        lock.lock()
+        pending.append(handle)
+        lock.unlock()
+    }
+
+    func make(arguments: [String], environment: [String: String]) -> SSHProcessHandle {
+        lock.lock()
+        lastArguments = arguments
+        lastEnvironment = environment
+        let handle = pending.isEmpty ? FakeSSHHandle() : pending.removeFirst()
+        madeHandles.append(handle)
+        lock.unlock()
+        return handle
+    }
+}
+
+/// 可挂起的本地探测替身（验证 checking 阶段断开的取消路径）。
+final class GatedLocalProber: ProxyProbeExecuting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [CheckedContinuation<ProbeOutcome, Never>] = []
+    var outcome: ProbeOutcome = .verified(statusCode: 200)
+
+    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            continuations.append(continuation)
+            lock.unlock()
+        }
+    }
+
+    func resumeAll() {
+        lock.lock()
+        let pending = continuations
+        continuations.removeAll()
+        lock.unlock()
+        for c in pending { c.resume(returning: outcome) }
+    }
+}
+
+/// 本地探测替身（可编程结论）。
+final class StubLocalProber: ProxyProbeExecuting, @unchecked Sendable {
+    var outcome: ProbeOutcome
+    init(outcome: ProbeOutcome) { self.outcome = outcome }
+    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome { outcome }
+}
+
+/// 远端探测替身。
+final class StubRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
+    var outcome: RemoteProbeOutcome
+    private let lock = NSLock()
+    private var calls = 0
+    init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol) async -> RemoteProbeOutcome {
+        lock.lock()
+        calls += 1
+        lock.unlock()
+        return outcome
+    }
+}
+
+// MARK: - 协调器行为
+
+@MainActor
+final class SSHTunnelCoordinatorTests: XCTestCase {
+
+    private var factory = FakeSSHFactory()
+    private var localProber = StubLocalProber(outcome: .verified(statusCode: 200))
+    private var remoteProber = StubRemoteProber(outcome: .verified(statusCode: 200))
+    private var coordinator: SSHTunnelCoordinator!
+    private var recorder = Recorder<TunnelSnapshot>()
+
+    /// 装配（在测试内调用：setUp 重写与 @MainActor 隔离不兼容）。
+    private func makeCoordinator(
+        local: ProbeOutcome = .verified(statusCode: 200),
+        remote: RemoteProbeOutcome = .verified(statusCode: 200),
+        grace: Double = 0.2
+    ) {
+        factory = FakeSSHFactory()
+        localProber = StubLocalProber(outcome: local)
+        remoteProber = StubRemoteProber(outcome: remote)
+        coordinator = SSHTunnelCoordinator(
+            processFactory: factory,
+            localProber: localProber,
+            remoteProber: remoteProber
+        )
+        coordinator.graceSeconds = grace
+        recorder = Recorder<TunnelSnapshot>()
+        let box = recorder
+        coordinator.onEvent = { event in
+            if case .snapshot(let snap) = event { box.append(snap) }
+        }
+    }
+
+    private func configuration(endpoint: LocalProxyEndpoint?) -> TunnelConfiguration {
+        var profile = ServerProfile(
+            name: "实验室 GPU 服务器", host: "10.11.154.192", sshPort: 20064,
+            username: "sunyun", remotePort: 7890
+        )
+        profile.id = UUID(uuidString: "ABCDEF00-0000-0000-0000-000000000001")!
+        return TunnelConfiguration(profile: profile, localEndpoint: endpoint)
+    }
+
+    private var endpoint: LocalProxyEndpoint {
+        LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+    }
+
+    private func waitLastPhase(_ phase: TunnelPhase) async -> Bool {
+        let box = self.recorder
+        return await waitUntilMain { box.snapshot.last?.phase == phase }
+    }
+
+    /// 否定断言辅助：等待事件计数在窗口内保持稳定（比固定 sleep 更强的「无后续事件」证据）。
+    private func awaitQuiet(countAtStart: Int, stableMilliseconds: Int = 300, timeout: TimeInterval = 3) async -> Bool {
+        let box = recorder
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastChange = Date()
+        var last = countAtStart
+        while Date() < deadline {
+            let boxNow = box
+            let current = boxNow.count
+            if current != last {
+                last = current
+                lastChange = Date()
+            }
+            if current > countAtStart && Int(Date().timeIntervalSince(lastChange) * 1000) >= stableMilliseconds {
+                return false // 静默前出现了新事件 → 直接失败
+            }
+            if current == countAtStart && Int(Date().timeIntervalSince(lastChange) * 1000) >= stableMilliseconds {
+                return true // 计数未增长且已稳定
+            }
+            try? await Task.sleep(nanoseconds: 30_000_000)
+        }
+        return box.count == countAtStart
+    }
+
+    // MARK: 完整成功序列
+
+    func testFullConnectSequenceReachesConnected() async {
+        makeCoordinator()
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        let ok = await waitLastPhase(.connected)
+        XCTAssertTrue(ok, "序列：\(recorder.snapshot.map(\.phase))")
+
+        // 时序：checking → connecting → connected
+        let phases = recorder.snapshot.map(\.phase)
+        let c = phases.firstIndex(of: .checking)
+        let g = phases.firstIndex(of: .connecting)
+        let d = phases.firstIndex(of: .connected)
+        XCTAssertNotNil(c); XCTAssertNotNil(g); XCTAssertNotNil(d)
+        if let c, let g, let d { XCTAssertTrue(c < g && g < d) }
+
+        let last = recorder.snapshot.last
+        XCTAssertEqual(last?.localProxyVerified, true)
+        XCTAssertEqual(last?.remoteProbeVerified, true)
+        XCTAssertEqual(last?.sshProcessRunning, true)
+        XCTAssertEqual(last?.phase, .connected)
+        XCTAssertEqual(last?.isEndToEndVerified, true)
+    }
+
+    // MARK: I01：进程 0.5s 后异常退出 → 分类进入终态
+
+    func testI01ProcessEarlyExitClassifiedFromStderr() async {
+        makeCoordinator(grace: 1.5)
+        let handle = FakeSSHHandle()
+        factory.enqueue(handle)
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+
+        // 进程启动后很快带着 Permission denied 退出
+        let waitStarted = await waitUntil { handle.startWasCalled }
+        XCTAssertTrue(waitStarted)
+        handle.setStderr("sunyun@10.11.154.192: Permission denied (publickey).")
+        handle.simulateExit(255)
+
+        let ok = await waitLastPhase(.authRequired)
+        XCTAssertTrue(ok, "认证失败必须进入 authRequired；序列：\(recorder.snapshot.map(\.phase))")
+    }
+
+    func testEarlyExitWithForwardFailureIsError() async {
+        makeCoordinator(grace: 1.5)
+        let handle = FakeSSHHandle()
+        factory.enqueue(handle)
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        _ = await waitUntil { handle.startWasCalled }
+        handle.setStderr("Warning: remote port forwarding failed for listen port 7890")
+        handle.simulateExit(255)
+
+        let ok = await waitLastPhase(.error)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("端口") == true)
+    }
+
+    // MARK: I02：SSH 正常但本地代理后来失败 → degraded 而非 connected
+
+    func testI02LocalProxyFailureDegradesNotConnected() async {
+        makeCoordinator(local: .connectionRefused)
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        let ok = await waitLastPhase(.degraded)
+        XCTAssertTrue(ok, "本地代理失败必须 degraded；序列：\(recorder.snapshot.map(\.phase))")
+        XCTAssertEqual(recorder.snapshot.last?.localProxyVerified, false)
+        XCTAssertNotEqual(recorder.snapshot.last?.phase, .connected)
+    }
+
+    // MARK: I03：手动断开时有在途任务 → 取消 + 零 ghost 事件
+
+    func testI03DisconnectDuringSetupStopsEverything() async {
+        makeCoordinator(grace: 5.0) // 长宽限，制造在途窗口
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        let box = recorder
+        let started = await waitUntilMain { box.snapshot.contains { $0.phase == .connecting } }
+        XCTAssertTrue(started)
+
+        coordinator.disconnect(profileID: configuration(endpoint: endpoint).profile.id)
+
+        let stopped = await waitLastPhase(.idle)
+        XCTAssertTrue(stopped)
+        XCTAssertTrue(factory.madeHandles.last?.wasTerminated == true, "必须终止本 App 拥有的进程")
+
+        let countAtStop = recorder.count
+        let quiet = await awaitQuiet(countAtStart: countAtStop, stableMilliseconds: 400)
+        XCTAssertTrue(quiet, "断开后不得再有事件（I03/U13）")
+        XCTAssertEqual(recorder.snapshot.last?.phase, .idle)
+    }
+
+    // MARK: I04：进程启动失败 → 明确状态、无泄漏
+
+    func testI04LaunchFailureReportsErrorAndCleansUp() async {
+        makeCoordinator()
+        let broken = FakeSSHHandle()
+        broken.startError = NSError(domain: "test", code: 1,
+                                    userInfo: [NSLocalizedDescriptionKey: "permission denied launching"])
+        factory.enqueue(broken)
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+
+        let ok = await waitLastPhase(.error)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("无法启动 SSH 进程") == true)
+        XCTAssertFalse(coordinator.isActive(profileID: configuration(endpoint: endpoint).profile.id),
+                       "失败后不得残留活跃状态")
+    }
+
+    // MARK: U14：双连击只跑一个序列
+
+    func testU14DoubleConnectIgnored() async {
+        makeCoordinator(grace: 0.4)
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        coordinator.connect(configuration: cfg)
+        let ok = await waitLastPhase(.connected)
+        XCTAssertTrue(ok)
+        XCTAssertEqual(factory.madeHandles.count, 1, "重复连接不得创建第二个进程")
+        XCTAssertEqual(recorder.snapshot.filter { $0.phase == .checking }.count, 1)
+    }
+
+    // MARK: 无端点 / 远端 unknown 语义
+
+    func testMissingEndpointDegradesWithNilSemantics() async {
+        makeCoordinator()
+        coordinator.connect(configuration: configuration(endpoint: nil))
+        let ok = await waitLastPhase(.degraded)
+        XCTAssertTrue(ok)
+        let last = recorder.snapshot.last
+        XCTAssertNil(last?.localProxyVerified, "未发现端点 = nil（≠ false）")
+        XCTAssertNil(last?.remoteProbeVerified)
+        XCTAssertFalse(factory.madeHandles.contains { $0.startWasCalled }, "无端点不得启动 SSH")
+    }
+
+    /// U11 语义：远端缺 curl → degraded + remoteProbe=unknown，绝不 connected。
+    func testRemoteCurlMissingIsDegradedNotConnected() async {
+        makeCoordinator(remote: .remoteCurlMissing)
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        let ok = await waitLastPhase(.degraded)
+        XCTAssertTrue(ok)
+        let last = recorder.snapshot.last
+        XCTAssertEqual(last?.localProxyVerified, true)
+        XCTAssertNil(last?.remoteProbeVerified, "缺 curl = 未验证（nil）")
+        XCTAssertTrue(last?.humanReadableDetail.contains("缺少 curl") == true)
+        XCTAssertNotEqual(last?.phase, .connected)
+    }
+
+    func testRemoteFailureIsDegradedWithFalse() async {
+        makeCoordinator(remote: .notProxy(statusCode: 502))
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        let ok = await waitLastPhase(.degraded)
+        XCTAssertTrue(ok)
+        XCTAssertEqual(recorder.snapshot.last?.remoteProbeVerified, false)
+    }
+
+    // MARK: 进程中途死亡（已 connected 后）
+
+    func testProcessDeathAfterConnectedEntersErrorWithClassification() async {
+        makeCoordinator(grace: 0.1)
+        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected)
+
+        let handle = factory.madeHandles.last
+        handle?.setStderr("Connection timed out")
+        handle?.simulateExit(255)
+
+        let errored = await waitLastPhase(.error)
+        XCTAssertTrue(errored)
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("超时") == true)
+    }
+
+    // MARK: 用户断开后的进程退出被静默（U13 双保险）
+
+    func testExitAfterUserStopIsSilent() async {
+        makeCoordinator(grace: 0.1)
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected)
+
+        coordinator.disconnect(profileID: cfg.profile.id)
+        let idle = await waitLastPhase(.idle)
+        XCTAssertTrue(idle)
+
+        let count = recorder.count
+        factory.madeHandles.last?.simulateExit(15) // SIGTERM 退出
+        let quiet = await awaitQuiet(countAtStart: count, stableMilliseconds: 300)
+        XCTAssertTrue(quiet, "用户断开后的进程退出不得产生事件")
+    }
+
+    // MARK: 断开后重连（Session 替换）
+
+    func testReconnectAfterDisconnectGetsFreshSession() async {
+        makeCoordinator(grace: 0.1)
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+        coordinator.disconnect(profileID: cfg.profile.id)
+        _ = await waitLastPhase(.idle)
+
+        let countAtIdle = recorder.count
+        coordinator.connect(configuration: cfg) // 用户显式重连
+        let reconnected = await waitLastPhase(.connected)
+        XCTAssertTrue(reconnected, "断开后允许用户显式重连（userStopped 不得残留拦截）")
+        XCTAssertEqual(factory.madeHandles.count, 2, "重连必须创建全新会话/进程")
+        XCTAssertGreaterThan(recorder.count, countAtIdle)
+        let last = recorder.snapshot.last
+        XCTAssertEqual(last?.phase, .connected)
+        XCTAssertEqual(last?.localProxyVerified, true)
+    }
+
+    // MARK: checking 阶段断开（本地探测在途的取消路径）
+
+    func testDisconnectDuringCheckingAbortsSilently() async {
+        let gate = GatedLocalProber()
+        factory = FakeSSHFactory()
+        remoteProber = StubRemoteProber(outcome: .verified(statusCode: 200))
+        coordinator = SSHTunnelCoordinator(
+            processFactory: factory, localProber: gate, remoteProber: remoteProber
+        )
+        coordinator.graceSeconds = 0.1
+        recorder = Recorder<TunnelSnapshot>()
+        let box = recorder
+        coordinator.onEvent = { event in
+            if case .snapshot(let snap) = event { box.append(snap) }
+        }
+
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        let checking = await waitUntilMain { box.snapshot.last?.phase == .checking }
+        XCTAssertTrue(checking)
+
+        coordinator.disconnect(profileID: cfg.profile.id) // 本地探测仍挂起
+        let idle = await waitLastPhase(.idle)
+        XCTAssertTrue(idle)
+
+        gate.resumeAll() // 迟到的探测结果
+        let quiet = await awaitQuiet(countAtStart: recorder.count, stableMilliseconds: 400)
+        XCTAssertTrue(quiet, "checking 阶段断开后，迟到的探测结果不得产生事件")
+        XCTAssertFalse(factory.madeHandles.contains { $0.startWasCalled }, "取消路径不得启动 SSH 进程")
+    }
+
+    // MARK: 前置检查
+
+    func testPreflightFailsOnMissingKeyFile() async {
+        makeCoordinator()
+        var profile = ServerProfile(
+            name: "k", host: "10.11.154.192", sshPort: 22,
+            username: "sunyun", authMode: .identityFile,
+            identityFilePath: "/nonexistent/proxybridge-test-key", remotePort: 7890
+        )
+        profile.id = UUID(uuidString: "ABCDEF00-0000-0000-0000-000000000002")!
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: endpoint))
+
+        let ok = await waitLastPhase(.error)
+        XCTAssertTrue(ok)
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("密钥文件不存在") == true)
+        XCTAssertFalse(factory.madeHandles.contains { $0.startWasCalled }, "前置检查失败不得启动进程")
+    }
+
+    // MARK: 健康检查
+
+    func testHealthCheckOnConnectedRefreshesRemoteAndKeepsPhase() async {
+        makeCoordinator()
+        coordinator.remoteProbeCooldown = 0 // 走远端复核分支
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+        let callsBefore = remoteProber.callCount
+
+        coordinator.runHealthCheck(profileID: cfg.profile.id)
+        let box = recorder
+        let refreshed = await waitUntilMain { box.snapshot.last?.humanReadableDetail.contains("手动检查") == true }
+        XCTAssertTrue(refreshed)
+        XCTAssertEqual(recorder.snapshot.last?.phase, .connected, "全部通过保持 connected")
+        XCTAssertGreaterThan(remoteProber.callCount, callsBefore, "冷却过后必须真的重探远端")
+    }
+
+    func testHealthCheckDegradedWhenRemoteFailsLater() async {
+        makeCoordinator()
+        coordinator.remoteProbeCooldown = 0
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+
+        remoteProber.outcome = .notProxy(statusCode: 502) // 远端此后失败
+        coordinator.runHealthCheck(profileID: cfg.profile.id)
+        let box = recorder
+        let refreshed = await waitUntilMain { box.snapshot.last?.humanReadableDetail.contains("手动检查") == true }
+        XCTAssertTrue(refreshed)
+        XCTAssertEqual(recorder.snapshot.last?.phase, .degraded, "远端复核失败必须降级，不保留旧绿")
+        XCTAssertEqual(recorder.snapshot.last?.remoteProbeVerified, false)
+    }
+
+    func testHealthCheckNeverFlipsErrorTerminal() async {
+        makeCoordinator(grace: 0.1)
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+
+        // 进程死亡 → error 终态
+        let handle = factory.madeHandles.last
+        handle?.setStderr("Connection timed out")
+        handle?.simulateExit(255)
+        _ = await waitLastPhase(.error)
+
+        let count = recorder.count
+        coordinator.remoteProbeCooldown = 0
+        coordinator.runHealthCheck(profileID: cfg.profile.id) // error 终态必须 no-op
+        let quiet = await awaitQuiet(countAtStart: count, stableMilliseconds: 300)
+        XCTAssertTrue(quiet, "error 终态下健康检查不得产生事件")
+        XCTAssertEqual(recorder.snapshot.last?.phase, .error, "error 终态不得被翻转")
+    }
+
+    /// 高危回归：健康检查与进程死亡竞争时，error 终态不得被探测结果翻回绿色。
+    func testHealthCheckRacingProcessDeathStaysError() async {
+        makeCoordinator()
+        coordinator.remoteProbeCooldown = 0
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+
+        // 健康检查进行中（远端探测在途）进程死亡
+        coordinator.runHealthCheck(profileID: cfg.profile.id)
+        let handle = factory.madeHandles.last
+        handle?.setStderr("Connection timed out")
+        handle?.simulateExit(255)
+        _ = await waitLastPhase(.error)
+
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        let phases = recorder.snapshot.map(\.phase)
+        XCTAssertFalse(phases.dropFirst(phases.firstIndex(of: .error) ?? 0).contains(.connected),
+                       "error 之后不得出现 connected（假绿）")
+        XCTAssertEqual(recorder.snapshot.last?.phase, .error)
+        let last = recorder.snapshot.last
+        XCTAssertFalse(last?.isEndToEndVerified == true, "ssh 已死时不得呈端到端已验证")
+    }
+
+    // MARK: ssh 环境白名单
+
+    func testSSHEnvironmentWhitelist() async {
+        makeCoordinator()
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+
+        let env = factory.lastEnvironment
+        XCTAssertEqual(Set(env.keys).subtracting(["PATH", "HOME", "SSH_AUTH_SOCK"]), [],
+                       "ssh 环境只允许 PATH/HOME/SSH_AUTH_SOCK（实际：\(env.keys)）")
+        XCTAssertEqual(env["PATH"], "/usr/bin:/bin:/usr/sbin:/sbin")
+        XCTAssertEqual(env["HOME"], NSHomeDirectory())
+    }
+
+    func testHealthCheckNeverRunsWhenIdle() async {
+        makeCoordinator()
+        let cfg = configuration(endpoint: endpoint)
+        coordinator.runHealthCheck(profileID: cfg.profile.id)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertTrue(recorder.snapshot.isEmpty, "idle 时健康检查必须无操作")
+        XCTAssertEqual(remoteProber.callCount, 0)
+    }
+}

@@ -89,8 +89,8 @@ struct LogsView: View {
             }
 
             SectionCard(title: filtered.isEmpty ? "暂无匹配日志" : "最近活动（最多保留 \(LogStore.capacity) 条）") {
-                if model.isDemoMode {
-                    DemoModeBanner()
+                if let bannerText = model.demoBannerText {
+                    DemoModeBanner(text: bannerText)
                 }
                 LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered) { entry in

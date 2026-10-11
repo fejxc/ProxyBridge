@@ -19,6 +19,9 @@ protocol TunnelService: AnyObject {
 
     /// 该 profile 当前是否有活跃任务/进程。
     func isActive(profileID: UUID) -> Bool
+
+    /// App 退出前清理全部本 App 拥有的子进程（PRD F05，不发 UI 事件）。
+    func terminateAllSessions()
 }
 
 /// 传给隧道服务的一份完整连接描述。

@@ -21,12 +21,14 @@ final class AppViewModel {
     let proxyDetector: ProxyDetectorService
     let logStore: LogStore
 
-    /// 阶段标识：SSH 隧道仍为 Mock（阶段 C 接入），UI 横幅据此说明。
-    let isDemoMode = true
+    /// 阶段标识：false = SSH 隧道与本地检测均为真实实现；UI 据此去除演示标注。
+    let isDemoMode: Bool
 
-    /// 演示横幅文案（阶段 B：检测已真实，隧道仍演示）。
-    var demoBannerText: String {
-        "阶段 B：本地代理已真实读取系统设置并经 curl 实测；SSH 隧道仍为演示（阶段 C 接入真实 SSH）"
+    /// 阶段横幅文案（nil = 不展示）。
+    var demoBannerText: String? {
+        isDemoMode
+            ? "演示模式：SSH 隧道为模拟（阶段 C 前）；本地代理检测已真实"
+            : nil
     }
 
     // MARK: - 状态
@@ -39,6 +41,8 @@ final class AppViewModel {
     var settingsTab: SettingsTab = .servers
 
     private var document: ProfilesDocument = .empty()
+    /// App 退出清理观察者（PRD F05：退出时清理自身 SSH 子进程）。
+    private var terminateObserver: (any NSObjectProtocol)?
 
     // MARK: - 初始化
 
@@ -47,30 +51,49 @@ final class AppViewModel {
         settingsStore: AppSettingsStore,
         tunnel: TunnelService,
         proxyDetector: ProxyDetectorService,
-        logStore: LogStore
+        logStore: LogStore,
+        isDemoMode: Bool
     ) {
         self.profileStore = profileStore
         self.settingsStore = settingsStore
         self.tunnel = tunnel
         self.proxyDetector = proxyDetector
         self.logStore = logStore
+        self.isDemoMode = isDemoMode
 
         bootstrap()
     }
 
-    /// 生产装配：本地代理检测为真实实现（SCDynamicStore + curl 实测）；
-    /// SSH 隧道在阶段 C 前仍为 Mock。
-    static func live() -> AppViewModel {
+    /// 演示装配（UI 预览/降级演示）：全部 Mock，横幅明示。
+    static func demo() -> AppViewModel {
         AppViewModel(
             profileStore: ProfileRepository(),
             settingsStore: AppSettingsStore(),
             tunnel: MockTunnelService(),
+            proxyDetector: MockProxyDetector(),
+            logStore: LogStore(),
+            isDemoMode: true
+        )
+    }
+
+    /// 生产装配：本地代理检测与 SSH 隧道均为真实实现
+    /// （SCDynamicStore + curl 实测；/usr/bin/ssh 参数数组直启）。
+    static func live() -> AppViewModel {
+        AppViewModel(
+            profileStore: ProfileRepository(),
+            settingsStore: AppSettingsStore(),
+            tunnel: SSHTunnelCoordinator(
+                processFactory: FoundationSSHProcessFactory(),
+                localProber: CurlProxyProbe(),
+                remoteProber: SSHRemoteProbe(factory: FoundationSSHProcessFactory())
+            ),
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
                 prober: CurlProxyProbe(),
                 monitor: SCDynamicStoreChangeMonitor()
             ),
-            logStore: LogStore()
+            logStore: LogStore(),
+            isDemoMode: false
         )
     }
 
@@ -106,7 +129,24 @@ final class AppViewModel {
 
         wireServices()
 
-        logStore.append(raw: "ProxyBridge 启动（阶段 B：本地代理检测为真实实现；SSH 隧道为演示）", level: .info)
+        // App 退出：终止全部本 App 拥有的 ssh 子进程（幂等、只杀自己的 PID）
+        terminateObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // queue: .main 保证主线程；同步清理（Task 跳跃可能晚于进程退出）
+            MainActor.assumeIsolated {
+                self?.tunnel.terminateAllSessions()
+            }
+        }
+
+        logStore.append(
+            raw: isDemoMode
+                ? "ProxyBridge 启动（演示模式：SSH 隧道为模拟）"
+                : "ProxyBridge 启动（本地代理检测与 SSH 隧道为真实实现；自动重连与登录启动等待阶段 D）",
+            level: .info
+        )
         if profiles.isEmpty {
             logStore.append(raw: "尚未配置服务器，请打开设置添加", level: .info)
         }
@@ -318,7 +358,12 @@ final class AppViewModel {
             logStore.append(raw: "未解析到可用本地代理：\(reason)。可在设置中手动指定。", level: .warning, profileId: profile.id)
         }
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpointValue(of: resolved))
-        logStore.append(raw: "请求连接「\(profile.name)」（演示模式：不会启动真实 SSH）", level: .info, profileId: profile.id, isDemoEvent: true)
+        logStore.append(
+            raw: isDemoMode ? "请求连接「\(profile.name)」（演示模式：不会启动真实 SSH）" : "请求连接「\(profile.name)」",
+            level: .info,
+            profileId: profile.id,
+            isDemoEvent: isDemoMode
+        )
         tunnel.connect(configuration: config)
     }
 
@@ -331,7 +376,12 @@ final class AppViewModel {
     func runHealthCheck() {
         guard let profile = currentProfile else { return }
         if !tunnel.isActive(profileID: profile.id) && snapshots[profile.id]?.phase == .idle {
-            logStore.append(raw: "尚未连接，先连接再检查（演示）", level: .warning, profileId: profile.id, isDemoEvent: true)
+            logStore.append(
+                raw: "尚未连接，请先连接再检查",
+                level: .warning,
+                profileId: profile.id,
+                isDemoEvent: isDemoMode
+            )
             return
         }
         logStore.append(raw: "开始检查连接：本地代理 / SSH 隧道 / 远端代理（演示数据，非真实探测）", level: .info, profileId: profile.id, isDemoEvent: true)

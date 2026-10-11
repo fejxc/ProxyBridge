@@ -55,6 +55,9 @@ struct ServerEditorView: View {
             set: { draft = $0 }
         )
         return VStack(alignment: .leading, spacing: 16) {
+            if model.editorIsNewDraft, let bannerText = model.demoBannerText {
+                DemoModeBanner(text: bannerText)
+            }
             if showUnsavedBanner {
                 InfoBlock(text: "正在编辑「\(draftBinding.wrappedValue.name)」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器不会丢弃它们，但当前显示的是草稿而非已保存配置。")
             }
@@ -124,9 +127,6 @@ struct ServerEditorForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if isNew {
-                DemoModeBanner()
-            }
             if needsReconnect && !isNew {
                 InfoBlock(text: "此服务器当前有活跃连接：修改主机 / 端口 / 认证 / 远程监听端口后，需断开并重连才能生效（旧隧道仍按旧配置运行）。")
             }

@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classification = object;
 	objectVersion = 56;
-	objectCount = 105;
+	objectCount = 121;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -43,6 +43,14 @@
 		51A300000000000000000018 /* LocalProxyDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000018 /* LocalProxyDetector.swift */; };
 		51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000110 /* SystemProxyDetectionTests.swift */; };
 		51A300000000000000000111 /* LocalProxyDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000111 /* LocalProxyDetectorTests.swift */; };
+		51A300000000000000000019 /* SSHCommandBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000019 /* SSHCommandBuilder.swift */; };
+		51A30000000000000000001A /* SSHErrorClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001A /* SSHErrorClassifier.swift */; };
+		51A30000000000000000001B /* SSHProcessLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001B /* SSHProcessLauncher.swift */; };
+		51A30000000000000000001C /* RemoteProbeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001C /* RemoteProbeRunner.swift */; };
+		51A30000000000000000001D /* SSHTunnelCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001D /* SSHTunnelCoordinator.swift */; };
+		51A300000000000000000112 /* SSHCommandBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000112 /* SSHCommandBuilderTests.swift */; };
+		51A300000000000000000113 /* SSHErrorClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000113 /* SSHErrorClassifierTests.swift */; };
+		51A300000000000000000114 /* SSHTunnelCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -80,6 +88,14 @@
 		51A200000000000000000016 /* SystemProxyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemProxyProvider.swift; sourceTree = "<group>"; };
 		51A200000000000000000017 /* ProxyProtocolProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyProtocolProbe.swift; sourceTree = "<group>"; };
 		51A200000000000000000018 /* LocalProxyDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyDetector.swift; sourceTree = "<group>"; };
+		51A200000000000000000019 /* SSHCommandBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCommandBuilder.swift; sourceTree = "<group>"; };
+		51A20000000000000000001A /* SSHErrorClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHErrorClassifier.swift; sourceTree = "<group>"; };
+		51A20000000000000000001B /* SSHProcessLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHProcessLauncher.swift; sourceTree = "<group>"; };
+		51A20000000000000000001C /* RemoteProbeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteProbeRunner.swift; sourceTree = "<group>"; };
+		51A20000000000000000001D /* SSHTunnelCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTunnelCoordinator.swift; sourceTree = "<group>"; };
+		51A200000000000000000112 /* SSHCommandBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCommandBuilderTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000113 /* SSHErrorClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHErrorClassifierTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTunnelCoordinatorTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000110 /* SystemProxyDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemProxyDetectionTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000111 /* LocalProxyDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyDetectorTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000101 /* ProfileRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepositoryTests.swift; sourceTree = "<group>"; };
@@ -192,6 +208,11 @@
 				51A200000000000000000016 /* SystemProxyProvider.swift */,
 				51A200000000000000000017 /* ProxyProtocolProbe.swift */,
 				51A200000000000000000018 /* LocalProxyDetector.swift */,
+				51A200000000000000000019 /* SSHCommandBuilder.swift */,
+				51A20000000000000000001A /* SSHErrorClassifier.swift */,
+				51A20000000000000000001B /* SSHProcessLauncher.swift */,
+				51A20000000000000000001C /* RemoteProbeRunner.swift */,
+				51A20000000000000000001D /* SSHTunnelCoordinator.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -234,6 +255,9 @@
 				51A20000000000000000010A /* LogStoreTests.swift */,
 				51A200000000000000000110 /* SystemProxyDetectionTests.swift */,
 				51A200000000000000000111 /* LocalProxyDetectorTests.swift */,
+				51A200000000000000000112 /* SSHCommandBuilderTests.swift */,
+				51A200000000000000000113 /* SSHErrorClassifierTests.swift */,
+				51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */,
 			);
 			path = ProxyBridgeTests;
 			sourceTree = "<group>";
@@ -349,6 +373,11 @@
 				51A300000000000000000016 /* SystemProxyProvider.swift in Sources */,
 				51A300000000000000000017 /* ProxyProtocolProbe.swift in Sources */,
 				51A300000000000000000018 /* LocalProxyDetector.swift in Sources */,
+				51A300000000000000000019 /* SSHCommandBuilder.swift in Sources */,
+				51A30000000000000000001A /* SSHErrorClassifier.swift in Sources */,
+				51A30000000000000000001B /* SSHProcessLauncher.swift in Sources */,
+				51A30000000000000000001C /* RemoteProbeRunner.swift in Sources */,
+				51A30000000000000000001D /* SSHTunnelCoordinator.swift in Sources */,
 				51A30000000000000000000D /* AppViewModel.swift in Sources */,
 				51A30000000000000000000E /* DesignSystem.swift in Sources */,
 				51A30000000000000000000F /* GeneralSettingsView.swift in Sources */,
@@ -376,6 +405,9 @@
 				51A30000000000000000010A /* LogStoreTests.swift in Sources */,
 				51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */,
 				51A300000000000000000111 /* LocalProxyDetectorTests.swift in Sources */,
+				51A300000000000000000112 /* SSHCommandBuilderTests.swift in Sources */,
+				51A300000000000000000113 /* SSHErrorClassifierTests.swift in Sources */,
+				51A300000000000000000114 /* SSHTunnelCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

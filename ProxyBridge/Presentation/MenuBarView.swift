@@ -7,8 +7,8 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            if model.isDemoMode {
-                DemoModeBanner(text: model.demoBannerText)
+            if let bannerText = model.demoBannerText {
+                DemoModeBanner(text: bannerText)
             }
             if model.profiles.isEmpty {
                 emptyState
@@ -188,8 +188,9 @@ struct MenuBarView: View {
     }
 
     private func localDetail(for display: HealthCheckDisplay) -> String {
+        let suffix = model.isDemoMode ? "（演示）" : ""
         switch display {
-        case .ok: return "本地代理已通过协议验证（演示）"
+        case .ok: return "本地代理已通过协议验证" + suffix
         case .unknown: return "尚未验证本地代理可用性"
         case .failed: return "本地代理验证失败：请确认代理已启动或改用手动配置"
         }
@@ -208,8 +209,9 @@ struct MenuBarView: View {
     }
 
     private func remoteDetail(for display: HealthCheckDisplay) -> String {
+        let suffix = model.isDemoMode ? "（演示）" : ""
         switch display {
-        case .ok: return "远端代理端到端验证通过（演示）"
+        case .ok: return "远端代理端到端验证通过" + suffix
         case .unknown: return "远端代理未验证（未验证 ≠ 可用）"
         case .failed: return "远端验证失败，请查看日志定位原因"
         }

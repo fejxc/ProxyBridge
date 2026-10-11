@@ -26,6 +26,11 @@ final class TunnelSpy: TunnelService {
         activeIDs.contains(profileID)
     }
 
+    func terminateAllSessions() {
+        disconnectCalls.append(contentsOf: activeIDs)
+        activeIDs.removeAll()
+    }
+
     /// 测试注入：模拟服务上报快照。
     func emit(_ snapshot: TunnelSnapshot) {
         onEvent?(.snapshot(snapshot))
@@ -46,7 +51,8 @@ final class AppViewModelTests: XCTestCase {
             settingsStore: AppSettingsStore(directoryURL: directory),
             tunnel: spy,
             proxyDetector: detector,
-            logStore: LogStore()
+            logStore: LogStore(),
+            isDemoMode: true
         )
         return (model, spy, detector)
     }
