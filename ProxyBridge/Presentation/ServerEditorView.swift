@@ -36,13 +36,21 @@ struct ServerEditorView: View {
 
     private var emptyPane: some View {
         SectionCard {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("未选择服务器")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("从左侧列表选择或添加一台服务器。")
+                Text("添加一台服务器开始使用：填写名称、SSH 主机、端口、用户名即可（连接前请先在终端 ssh 一次以信任主机指纹）。")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button {
+                    model.requestCreateProfile()
+                } label: {
+                    Label("添加服务器", systemImage: "plus")
+                }
+                .controlSize(.regular)
+                .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)

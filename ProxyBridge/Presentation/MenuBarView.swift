@@ -4,7 +4,15 @@ import AppKit
 /// 菜单栏弹出面板（约 368pt 宽，结构对应原型 01）。
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
     @State private var confirmQuit = false
+
+    /// 打开设置并把窗口带到前台（菜单栏应用无 Dock 图标，必须显式激活）。
+    private func openSettingsFront(tab: SettingsTab) {
+        model.openSettings(tab: tab)
+        openSettings()
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
 
     /// 是否有活跃隧道（退出前二次确认用）。
     private var hasActiveTunnel: Bool {
@@ -79,15 +87,14 @@ struct MenuBarView: View {
             .buttonStyle(.plain)
             .help("退出 ProxyBridge")
             .accessibilityLabel("退出 ProxyBridge")
-            SettingsLink {
+            Button {
+                openSettingsFront(tab: .servers)
+            } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15))
                     .foregroundStyle(Palette.muted)
             }
             .buttonStyle(.plain)
-            .simultaneousGesture(TapGesture().onEnded {
-                model.openSettings(tab: .servers)
-            })
             .help("打开设置")
             .accessibilityLabel("打开设置")
         }
@@ -105,15 +112,14 @@ struct MenuBarView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                SettingsLink {
+                Button {
+                    openSettingsFront(tab: .servers)
+                } label: {
                     Label("打开设置，添加服务器", systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
-                .simultaneousGesture(TapGesture().onEnded {
-                    model.openSettings(tab: .servers)
-                })
             }
         }
     }
@@ -311,14 +317,13 @@ struct MenuBarView: View {
             .buttonStyle(.link)
             .accessibilityHint("复制 export 环境变量示例，不修改服务器配置")
             Spacer(minLength: 0)
-            SettingsLink {
+            Button {
+                openSettingsFront(tab: .logs)
+            } label: {
                 Label("查看日志", systemImage: "list.bullet.rectangle")
                     .font(.system(size: 11.5))
             }
             .buttonStyle(.link)
-            .simultaneousGesture(TapGesture().onEnded {
-                model.openSettings(tab: .logs)
-            })
         }
     }
 
