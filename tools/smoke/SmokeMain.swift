@@ -350,7 +350,7 @@ struct SmokeMain {
             func runHealthCheck(profileID: UUID) {}
             func isActive(profileID: UUID) -> Bool { false }
             func terminateAllSessions() {}
-            func submitPassword(profileID: UUID, password: String) {}
+            func submitPassword(profileID: UUID, password: String, remember: Bool) {}
             func cancelPasswordPrompt(profileID: UUID) {}
         }
 
@@ -363,6 +363,7 @@ struct SmokeMain {
             tunnel: spy,
             proxyDetector: detector,
             logStore: LogStore(),
+            secrets: InMemoryPasswordStore(),
             isDemoMode: true
         )
         check("S26a", "空启动 → 未配置状态", model.profiles.isEmpty && model.overallPresentation.title == "未配置")
@@ -599,11 +600,12 @@ struct SmokeMain {
         let coordinator = SSHTunnelCoordinator(
             processFactory: factory,
             localProber: SmokeLocalProber(outcome: .verified(statusCode: 200)),
-            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200))
+            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200)),
+            secrets: InMemoryPasswordStore()
         )
         coordinator.graceSeconds = 0.1
         var snapshots: [TunnelSnapshot] = []
-        coordinator.onEvent = { event in
+        coordinator.onEvent = { (event: TunnelEvent) in
             if case .snapshot(let s) = event { snapshots.append(s) }
         }
         coordinator.connect(configuration: cfg)
@@ -632,11 +634,12 @@ struct SmokeMain {
         let coordinator2 = SSHTunnelCoordinator(
             processFactory: factory2,
             localProber: SmokeLocalProber(outcome: .verified(statusCode: 200)),
-            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200))
+            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200)),
+            secrets: InMemoryPasswordStore()
         )
         coordinator2.graceSeconds = 1.0
         var snaps2: [TunnelSnapshot] = []
-        coordinator2.onEvent = { event in
+        coordinator2.onEvent = { (event: TunnelEvent) in
             if case .snapshot(let s) = event { snaps2.append(s) }
         }
         coordinator2.connect(configuration: cfg)
@@ -648,11 +651,12 @@ struct SmokeMain {
         let coordinator3 = SSHTunnelCoordinator(
             processFactory: SmokeSSHFactory(),
             localProber: SmokeLocalProber(outcome: .verified(statusCode: 200)),
-            remoteProber: SmokeRemoteProber(outcome: .remoteCurlMissing)
+            remoteProber: SmokeRemoteProber(outcome: .remoteCurlMissing),
+            secrets: InMemoryPasswordStore()
         )
         coordinator3.graceSeconds = 0.1
         var snaps3: [TunnelSnapshot] = []
-        coordinator3.onEvent = { event in
+        coordinator3.onEvent = { (event: TunnelEvent) in
             if case .snapshot(let s) = event { snaps3.append(s) }
         }
         coordinator3.connect(configuration: cfg)

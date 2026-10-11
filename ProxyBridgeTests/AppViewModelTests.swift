@@ -31,7 +31,9 @@ final class TunnelSpy: TunnelService {
         activeIDs.removeAll()
     }
 
-    func submitPassword(profileID: UUID, password: String) {}
+    func submitPassword(profileID: UUID, password: String, remember: Bool) {}
+    private(set) var rememberedPassword: String?
+    var secrets: PasswordStoring { InMemoryPasswordStore() }
     func cancelPasswordPrompt(profileID: UUID) {
         disconnectCalls.append(profileID)
     }
@@ -57,6 +59,7 @@ final class AppViewModelTests: XCTestCase {
             tunnel: spy,
             proxyDetector: detector,
             logStore: LogStore(),
+            secrets: InMemoryPasswordStore(),
             isDemoMode: true
         )
         return (model, spy, detector)

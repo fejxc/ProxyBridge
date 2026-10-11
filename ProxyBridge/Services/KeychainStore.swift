@@ -1,0 +1,85 @@
+import Foundation
+import Security
+
+/// SSH 密码的安全存储抽象。
+/// 生产实现为 macOS Keychain（kSecClassGenericPassword，按 profile UUID 隔离）；
+/// 测试/冒烟注入内存实现。密码绝不明文进入 profiles.json 或日志。
+protocol PasswordStoring: AnyObject, Sendable {
+    func save(_ password: String, for profileID: UUID)
+    func load(for profileID: UUID) -> String?
+    func delete(for profileID: UUID)
+    func exists(for profileID: UUID) -> Bool
+}
+
+/// 生产实现：Keychain。
+/// 可访问性 `AfterFirstUnlock`：用户登录后本会话 App 均可读写（本应用为用户会话菜单栏应用）。
+final class KeychainPasswordStore: PasswordStoring, @unchecked Sendable {
+    private let service = "dev.sunyun.ProxyBridge.ssh-password"
+
+    init() {}
+
+    private func baseQuery(for profileID: UUID) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: profileID.uuidString,
+        ]
+    }
+
+    func save(_ password: String, for profileID: UUID) {
+        var add = baseQuery(for: profileID)
+        add[kSecValueData as String] = Data(password.utf8)
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        // upsert：先删后加，语义幂等
+        SecItemDelete(baseQuery(for: profileID) as CFDictionary)
+        SecItemAdd(add as CFDictionary, nil)
+    }
+
+    func load(for profileID: UUID) -> String? {
+        var query = baseQuery(for: profileID)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    func delete(for profileID: UUID) {
+        SecItemDelete(baseQuery(for: profileID) as CFDictionary)
+    }
+
+    func exists(for profileID: UUID) -> Bool {
+        load(for: profileID) != nil
+    }
+}
+
+/// 测试/冒烟实现：内存字典（进程内隔离，不触碰用户钥匙串）。
+final class InMemoryPasswordStore: PasswordStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [UUID: String] = [:]
+
+    init() {}
+
+    func save(_ password: String, for profileID: UUID) {
+        lock.lock()
+        storage[profileID] = password
+        lock.unlock()
+    }
+
+    func load(for profileID: UUID) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[profileID]
+    }
+
+    func delete(for profileID: UUID) {
+        lock.lock()
+        storage.removeValue(forKey: profileID)
+        lock.unlock()
+    }
+
+    func exists(for profileID: UUID) -> Bool {
+        load(for: profileID) != nil
+    }
+}

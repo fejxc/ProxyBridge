@@ -7,6 +7,7 @@ struct MenuBarView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var confirmQuit = false
     @State private var passwordInput = ""
+    @State private var rememberInput = false
 
     /// 打开设置并把窗口带到前台（菜单栏应用无 Dock 图标，必须显式激活）。
     private func openSettingsFront(tab: SettingsTab) {
@@ -222,6 +223,9 @@ struct MenuBarView: View {
                     .font(.system(size: 10.5))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                Toggle("记住密码（本机钥匙串）", isOn: $rememberInput)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: 10.5))
                 HStack(spacing: 8) {
                     SecureField("SSH 密码", text: $passwordInput)
                         .textFieldStyle(.roundedBorder)
@@ -231,6 +235,7 @@ struct MenuBarView: View {
                         .disabled(passwordInput.isEmpty)
                     Button("取消", role: .destructive) {
                         passwordInput = ""
+                        rememberInput = false
                         model.cancelPasswordPrompt()
                     }
                     .buttonStyle(.bordered)
@@ -244,8 +249,10 @@ struct MenuBarView: View {
     private func submitPassword() {
         guard !passwordInput.isEmpty else { return }
         let input = passwordInput
+        let remember = rememberInput
         passwordInput = ""
-        model.submitPassword(input)
+        rememberInput = false
+        model.submitPassword(input, remember: remember)
     }
 
     // MARK: 三层健康

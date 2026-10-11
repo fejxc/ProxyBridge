@@ -73,6 +73,8 @@ struct ServerEditorView: View {
                 profile: draftBinding,
                 isNew: model.editorIsNewDraft,
                 snapshotPhase: model.snapshots[draftBinding.wrappedValue.id]?.phase,
+                hasStoredPassword: model.hasStoredPassword(for: draftBinding.wrappedValue.id),
+                onForgetStoredPassword: { model.forgetStoredPassword() },
                 onSave: { profile in
                     guard ServerProfileRule.validate(profile).isValid else { return }
                     if model.saveDraftProfile(profile) {
@@ -121,6 +123,8 @@ struct ServerEditorForm: View {
     @Binding var profile: ServerProfile
     let isNew: Bool
     let snapshotPhase: TunnelPhase?
+    let hasStoredPassword: Bool
+    let onForgetStoredPassword: () -> Void
     let onSave: (ServerProfile) -> Void
     let onDiscard: () -> Void
     let onDelete: (ServerProfile) -> Void
@@ -165,7 +169,30 @@ struct ServerEditorForm: View {
                     }
                     if profile.authMode == .password {
                         FormRow(label: "SSH 密码", help: nil) {
-                            InfoBlock(text: "连接时会在面板中请求输入密码：密码仅本次连接在内存中使用（经系统 PTY 交给 ssh），不会保存到磁盘、配置文件或日志。远端验证会复用同一次会话密码。")
+                            VStack(alignment: .leading, spacing: 8) {
+                                InfoBlock(text: "连接时会在面板中请求输入密码。勾选「记住密码」后密码存入本机钥匙串（系统加密存储），绝不写入 profiles.json 或日志；认证失败会自动清除已存密码。")
+                                Toggle("记住密码（存入本机钥匙串）", isOn: Binding(
+                                    get: { profile.rememberPassword },
+                                    set: { on in
+                                        profile.rememberPassword = on
+                                        if !on { onForgetStoredPassword() }
+                                    }
+                                ))
+                                .toggleStyle(.checkbox)
+                                .font(.system(size: 11))
+                                if hasStoredPassword {
+                                    HStack(spacing: 8) {
+                                        Label("已记住密码（本机钥匙串）", systemImage: "checkmark.seal.fill")
+                                            .font(.system(size: 11))
+                                            .foregroundStyle(Palette.green)
+                                        Button("忘记密码") {
+                                            onForgetStoredPassword()
+                                        }
+                                        .buttonStyle(.link)
+                                        .font(.system(size: 11))
+                                    }
+                                }
+                            }
                         }
                     }
                     if profile.authMode == .identityFile {

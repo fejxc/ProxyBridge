@@ -20,6 +20,8 @@ final class AppViewModel {
     let tunnel: TunnelService
     let proxyDetector: ProxyDetectorService
     let logStore: LogStore
+    /// SSH 密码的安全存储（生产 Keychain；测试/演示内存实现）。
+    let secrets: any PasswordStoring
 
     /// 阶段标识：false = SSH 隧道与本地检测均为真实实现；UI 据此去除演示标注。
     let isDemoMode: Bool
@@ -57,6 +59,7 @@ final class AppViewModel {
         tunnel: TunnelService,
         proxyDetector: ProxyDetectorService,
         logStore: LogStore,
+        secrets: any PasswordStoring,
         isDemoMode: Bool
     ) {
         self.profileStore = profileStore
@@ -64,6 +67,7 @@ final class AppViewModel {
         self.tunnel = tunnel
         self.proxyDetector = proxyDetector
         self.logStore = logStore
+        self.secrets = secrets
         self.isDemoMode = isDemoMode
 
         bootstrap()
@@ -77,6 +81,7 @@ final class AppViewModel {
             tunnel: MockTunnelService(),
             proxyDetector: MockProxyDetector(),
             logStore: LogStore(),
+            secrets: InMemoryPasswordStore(),
             isDemoMode: true
         )
     }
@@ -90,7 +95,8 @@ final class AppViewModel {
             tunnel: SSHTunnelCoordinator(
                 processFactory: FoundationSSHProcessFactory(),
                 localProber: CurlProxyProbe(),
-                remoteProber: SSHRemoteProbe(factory: FoundationSSHProcessFactory())
+                remoteProber: SSHRemoteProbe(factory: FoundationSSHProcessFactory()),
+                secrets: KeychainPasswordStore()
             ),
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
@@ -98,6 +104,7 @@ final class AppViewModel {
                 monitor: SCDynamicStoreChangeMonitor()
             ),
             logStore: LogStore(),
+            secrets: KeychainPasswordStore(),
             isDemoMode: false
         )
     }
@@ -343,6 +350,7 @@ final class AppViewModel {
         if tunnel.isActive(profileID: id) {
             tunnel.disconnect(profileID: id)
         }
+        secrets.delete(for: id) // 清掉可能记住的密码
         let name = profiles.first { $0.id == id }?.name ?? "?"
         profiles.removeAll { $0.id == id }
         snapshots[id] = nil
@@ -385,11 +393,35 @@ final class AppViewModel {
         tunnel.disconnect(profileID: profile.id)
     }
 
-    /// 用户提交 SSH 密码（转发给隧道服务；密码不落盘不进日志）。
-    func submitPassword(_ password: String) {
+    /// 用户提交 SSH 密码（转发给隧道服务；勾选记住时存入本机钥匙串）。
+    func submitPassword(_ password: String, remember: Bool) {
         guard let id = pendingPasswordProfileId else { return }
         pendingPasswordProfileId = nil
-        tunnel.submitPassword(profileID: id, password: password)
+        if remember {
+            secrets.save(password, for: id)
+            if var p = profiles.first(where: { $0.id == id }), !p.rememberPassword {
+                p.rememberPassword = true
+                upsertProfile(p)
+            }
+        }
+        tunnel.submitPassword(profileID: id, password: password, remember: remember)
+    }
+
+    /// 是否有已记住的密码（编辑器展示用）。
+    func hasStoredPassword(for profileID: UUID) -> Bool {
+        secrets.exists(for: profileID)
+    }
+
+    /// 忘记密码：清除钥匙串并关闭记住开关。
+    func forgetStoredPassword() {
+        guard let profile = currentProfile else { return }
+        secrets.delete(for: profile.id)
+        var p = profile
+        if p.rememberPassword {
+            p.rememberPassword = false
+            upsertProfile(p)
+        }
+        logStore.append(raw: "已清除记住的 SSH 密码（钥匙串）", level: .info, profileId: profile.id)
     }
 
     func cancelPasswordPrompt() {

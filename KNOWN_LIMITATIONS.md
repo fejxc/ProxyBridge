@@ -5,7 +5,8 @@
 ## 功能边界（按计划属于后续阶段）
 
 1. **SSH 隧道已真实实现**（阶段 C）：`/usr/bin/ssh` 参数数组直启（StrictHostKeyChecking=yes 强制、BatchMode、远端绑定固定 127.0.0.1）。边界：
-   - 密码认证已支持（安全实现）：连接时在面板中输入，密码仅本次会话在内存中经系统 PTY 交给 ssh（不经命令行参数/环境变量/磁盘/日志）；错密码因 `NumberOfPasswordPrompts=1` 立即失败；远端验证复用同一次会话密码。App 不提供「记住密码」（如需可考虑 Keychain，属后续阶段）；
+   - 密码认证已支持：连接时在面板中输入，经系统 PTY 交给 ssh（不经命令行参数/环境变量/日志）。
+   - **记住密码（用户已授权本地保存）**：勾选「记住密码」后密码存入 **macOS 钥匙串**（`kSecClassGenericPassword`，系统加密存储，绝不写入 profiles.json/日志/导出）；此后连接自动应答，无需再输。认证失败时自动清除已存密码（下次重新询问）；编辑器可随时「忘记密码」；删除服务器配置同步清除。不使用 Keychain 的替代方案（明文文件/UserDefaults）已被有意排除；
    - 首次连接未知主机：StrictHostKeyChecking=yes 会拒绝并给出「先在终端手动 ssh 核对指纹」的指引（App 不代收指纹）；
    - 自动重连退避（PRD F05）属阶段 D：当前意外断线显示分类后的 error 终态，等待用户手动重连；
    - GUI 启动时若无 SSH_AUTH_SOCK（取决于系统配置），agent 认证会失败并给出改用 identityFile 的提示；

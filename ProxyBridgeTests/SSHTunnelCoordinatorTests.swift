@@ -195,6 +195,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
     private var coordinator: SSHTunnelCoordinator!
     private var recorder = Recorder<TunnelSnapshot>()
     private var passwordPrompts = Recorder<UUID>()
+    private var secretStore = InMemoryPasswordStore()
 
     /// 装配（在测试内调用：setUp 重写与 @MainActor 隔离不兼容）。
     private func makeCoordinator(
@@ -205,10 +206,12 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         factory = FakeSSHFactory()
         localProber = StubLocalProber(outcome: local)
         remoteProber = StubRemoteProber(outcome: remote)
+        secretStore = InMemoryPasswordStore()
         coordinator = SSHTunnelCoordinator(
             processFactory: factory,
             localProber: localProber,
-            remoteProber: remoteProber
+            remoteProber: remoteProber,
+            secrets: secretStore
         )
         coordinator.graceSeconds = grace
         recorder = Recorder<TunnelSnapshot>()
@@ -481,7 +484,8 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         factory = FakeSSHFactory()
         remoteProber = StubRemoteProber(outcome: .verified(statusCode: 200))
         coordinator = SSHTunnelCoordinator(
-            processFactory: factory, localProber: gate, remoteProber: remoteProber
+            processFactory: factory, localProber: gate, remoteProber: remoteProber,
+            secrets: InMemoryPasswordStore()
         )
         coordinator.graceSeconds = 0.1
         recorder = Recorder<TunnelSnapshot>()
@@ -626,7 +630,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let prompted = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
         XCTAssertTrue(prompted, "检测到提示后必须请求 UI 输入密码")
 
-        coordinator.submitPassword(profileID: cfg.profile.id, password: "s3cret-value")
+        coordinator.submitPassword(profileID: cfg.profile.id, password: "s3cret-value", remember: false)
         let connected = await waitLastPhase(.connected)
         XCTAssertTrue(connected)
 
@@ -661,6 +665,58 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let quiet = await awaitQuiet(countAtStart: recorder.count, stableMilliseconds: 300)
         XCTAssertTrue(quiet, "取消后不得再有事件")
         XCTAssertTrue(handle.wasTerminated, "取消必须终止本次 ssh 尝试")
+    }
+
+    // MARK: 记住密码（钥匙串）
+
+    func testRememberedPasswordAutoAnswersWithoutPrompt() async {
+        makeCoordinator(grace: 0.1)
+        let cfg = configuration(endpoint: endpoint)
+        var p = cfg.profile
+        p.authMode = .password
+        p.rememberPassword = true
+        let remembered = TunnelConfiguration(profile: p, localEndpoint: endpoint)
+        secretStore.save("stored-pass", for: p.id)
+
+        let handle = FakeSSHHandle()
+        factory.enqueue(handle)
+        coordinator.connect(configuration: remembered)
+        _ = await waitUntil { handle.startWasCalled }
+        handle.setStderr("root@10.11.154.192's password:")
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected)
+
+        let prompts = passwordPrompts
+        XCTAssertNil(prompts.snapshot.last, "已记住密码必须自动应答，不请求 UI 输入")
+        XCTAssertEqual(handle.ptyWrites.last, "stored-pass\n")
+        let prober = remoteProber
+        XCTAssertEqual(prober.lastPassword, "stored-pass")
+    }
+
+    func testAuthFailureClearsRememberedPassword() async {
+        makeCoordinator(grace: 0.1)
+        let cfg = configuration(endpoint: endpoint)
+        var p = cfg.profile
+        p.authMode = .password
+        p.rememberPassword = true
+        let remembered = TunnelConfiguration(profile: p, localEndpoint: endpoint)
+        secretStore.save("wrong-pass", for: p.id)
+
+        let handle = FakeSSHHandle()
+        factory.enqueue(handle)
+        coordinator.connect(configuration: remembered)
+        _ = await waitUntil { handle.startWasCalled }
+        handle.setStderr("root@10.11.154.192's password:")
+        // 自动应答后认证失败
+        let autoAnswered = await waitUntil { !handle.ptyWrites.isEmpty }
+        XCTAssertTrue(autoAnswered)
+        handle.setStderr("Permission denied (publickey).")
+        handle.simulateExit(255)
+
+        let authRequired = await waitLastPhase(.authRequired)
+        XCTAssertTrue(authRequired)
+        XCTAssertNil(secretStore.load(for: p.id), "认证失败必须清除记住的密码")
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("已清除记住的密码") == true)
     }
 
     // MARK: ssh 环境白名单

@@ -16,6 +16,7 @@ final class SSHTunnelCoordinator: TunnelService {
     private let processFactory: any SSHProcessFactory
     private let localProber: any ProxyProbeExecuting
     private let remoteProber: any RemoteProbeExecuting
+    private let secrets: any PasswordStoring
 
     /// 转发建立宽限（秒）：ExitOnForwardFailure=yes 下绑定失败会在认证后立即退出，
     /// 进程存活超过该窗口即认为转发已建立（再由远端探测给出端到端结论）。
@@ -43,11 +44,13 @@ final class SSHTunnelCoordinator: TunnelService {
     init(
         processFactory: any SSHProcessFactory = FoundationSSHProcessFactory(),
         localProber: any ProxyProbeExecuting = CurlProxyProbe(),
-        remoteProber: any RemoteProbeExecuting
+        remoteProber: any RemoteProbeExecuting,
+        secrets: any PasswordStoring
     ) {
         self.processFactory = processFactory
         self.localProber = localProber
         self.remoteProber = remoteProber
+        self.secrets = secrets
     }
 
     // MARK: - TunnelService
@@ -109,9 +112,12 @@ final class SSHTunnelCoordinator: TunnelService {
         return session.task != nil || session.handle?.isRunning == true
     }
 
-    func submitPassword(profileID: UUID, password: String) {
+    func submitPassword(profileID: UUID, password: String, remember: Bool) {
         guard let session = sessions[profileID], !session.userStopped else { return }
         session.password = password
+        if remember {
+            secrets.save(password, for: profileID) // 用户勾选「记住」→ 存入钥匙串
+        }
         session.passwordContinuation?.resume(returning: password)
         session.passwordContinuation = nil
     }
@@ -249,23 +255,35 @@ final class SSHTunnelCoordinator: TunnelService {
             guard !session.userStopped, !Task.isCancelled else { return }
             guard sawPrompt else { return } // 超时/退出已由其他路径处理
 
-            // 请求 UI 输入并挂起等待
-            var connecting = baseSnapshot(profileID: id, phase: .connecting)
-            connecting.localProxyVerified = true
-            connecting.humanReadableDetail = "等待输入 SSH 密码…（密码仅本次连接在内存中使用，不会保存）"
-            onEvent?(.snapshot(connecting))
-            onEvent?(.passwordPromptRequested(profileID: id))
+            // 已记住的密码（钥匙串）：自动应答，不打扰用户
+            var autoPassword: String?
+            if profile.rememberPassword {
+                autoPassword = secrets.load(for: id)
+            }
 
-            let submitted = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-                session.passwordContinuation = continuation
+            if let saved = autoPassword {
+                handle.writePTY(saved + "\n")
+                session.password = saved
+            } else {
+                // 请求 UI 输入并挂起等待
+                var connecting = baseSnapshot(profileID: id, phase: .connecting)
+                connecting.localProxyVerified = true
+                connecting.humanReadableDetail = profile.rememberPassword
+                    ? "等待输入 SSH 密码…（已记住的密码不可用，将重新询问）"
+                    : "等待输入 SSH 密码…（勾选「记住」可存入本机钥匙串）"
+                onEvent?(.snapshot(connecting))
+                onEvent?(.passwordPromptRequested(profileID: id))
+
+                let submitted = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+                    session.passwordContinuation = continuation
+                }
+                guard !session.userStopped, !Task.isCancelled else { return }
+                guard let password = submitted, !password.isEmpty else {
+                    session.password = nil
+                    return // cancelPasswordPrompt 已发出 disconnecting→idle
+                }
+                handle.writePTY(password + "\n")
             }
-            guard !session.userStopped, !Task.isCancelled else { return }
-            guard let password = submitted, !password.isEmpty else {
-                session.password = nil
-                return // cancelPasswordPrompt 已发出 disconnecting→idle
-            }
-            // 密码经 PTY 交给 ssh（不经 argv/环境/磁盘）；立即转存会话并清理局部引用
-            handle.writePTY(password + "\n")
             var connecting2 = baseSnapshot(profileID: id, phase: .connecting)
             connecting2.localProxyVerified = true
             connecting2.humanReadableDetail = "已提交密码，正在建立 SSH 隧道…"
@@ -399,7 +417,16 @@ final class SSHTunnelCoordinator: TunnelService {
 
         let stderr = session.handle?.stderrTail ?? ""
         let classification = SSHErrorClassifier.classify(exitCode: exitCode, stderr: stderr)
-        let (phase, detail) = SSHErrorClassifier.phaseAndDetail(for: classification)
+        var (phase, detail) = SSHErrorClassifier.phaseAndDetail(for: classification)
+
+        // 密码模式认证失败：已记住的密码一定是错的 → 清除钥匙串，下次重新询问
+        if case .authRequired = classification,
+           session.profile?.authMode == .password, session.profile?.rememberPassword == true {
+            if let pid = session.profile?.id {
+                secrets.delete(for: pid)
+            }
+            detail += "（已清除记住的密码，下次连接将重新询问）"
+        }
         session.phase = phase
         session.handle = nil
         session.task?.cancel()

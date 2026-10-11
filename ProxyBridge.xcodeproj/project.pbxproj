@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classification = object;
 	objectVersion = 56;
-	objectCount = 121;
+	objectCount = 123;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -48,6 +48,7 @@
 		51A30000000000000000001B /* SSHProcessLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001B /* SSHProcessLauncher.swift */; };
 		51A30000000000000000001C /* RemoteProbeRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001C /* RemoteProbeRunner.swift */; };
 		51A30000000000000000001D /* SSHTunnelCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001D /* SSHTunnelCoordinator.swift */; };
+		51A30000000000000000001E /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000001E /* KeychainStore.swift */; };
 		51A300000000000000000112 /* SSHCommandBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000112 /* SSHCommandBuilderTests.swift */; };
 		51A300000000000000000113 /* SSHErrorClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000113 /* SSHErrorClassifierTests.swift */; };
 		51A300000000000000000114 /* SSHTunnelCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */; };
@@ -93,6 +94,7 @@
 		51A20000000000000000001B /* SSHProcessLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHProcessLauncher.swift; sourceTree = "<group>"; };
 		51A20000000000000000001C /* RemoteProbeRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteProbeRunner.swift; sourceTree = "<group>"; };
 		51A20000000000000000001D /* SSHTunnelCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTunnelCoordinator.swift; sourceTree = "<group>"; };
+		51A20000000000000000001E /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		51A200000000000000000112 /* SSHCommandBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHCommandBuilderTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000113 /* SSHErrorClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHErrorClassifierTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTunnelCoordinatorTests.swift; sourceTree = "<group>"; };
@@ -213,6 +215,7 @@
 				51A20000000000000000001B /* SSHProcessLauncher.swift */,
 				51A20000000000000000001C /* RemoteProbeRunner.swift */,
 				51A20000000000000000001D /* SSHTunnelCoordinator.swift */,
+				51A20000000000000000001E /* KeychainStore.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -378,6 +381,7 @@
 				51A30000000000000000001B /* SSHProcessLauncher.swift in Sources */,
 				51A30000000000000000001C /* RemoteProbeRunner.swift in Sources */,
 				51A30000000000000000001D /* SSHTunnelCoordinator.swift in Sources */,
+				51A30000000000000000001E /* KeychainStore.swift in Sources */,
 				51A30000000000000000000D /* AppViewModel.swift in Sources */,
 				51A30000000000000000000E /* DesignSystem.swift in Sources */,
 				51A30000000000000000000F /* GeneralSettingsView.swift in Sources */,

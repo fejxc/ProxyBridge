@@ -146,7 +146,7 @@ final class MockTunnelService: TunnelService {
         lastSnapshots.removeAll()
     }
 
-    func submitPassword(profileID: UUID, password: String) {}
+    func submitPassword(profileID: UUID, password: String, remember: Bool) {}
     func cancelPasswordPrompt(profileID: UUID) {
         // 演示：取消等价于断开
         disconnect(profileID: profileID)

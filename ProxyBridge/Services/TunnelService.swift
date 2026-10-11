@@ -23,8 +23,8 @@ protocol TunnelService: AnyObject {
     /// App 退出前清理全部本 App 拥有的子进程（PRD F05，不发 UI 事件）。
     func terminateAllSessions()
 
-    /// 用户提交 SSH 密码（密码模式）。密码仅经内存转发给 PTY，不持久化。
-    func submitPassword(profileID: UUID, password: String)
+    /// 用户提交 SSH 密码（密码模式）。`remember` 为 true 时由服务写入钥匙串。
+    func submitPassword(profileID: UUID, password: String, remember: Bool)
 
     /// 用户取消密码输入：终止本次连接尝试。
     func cancelPasswordPrompt(profileID: UUID)

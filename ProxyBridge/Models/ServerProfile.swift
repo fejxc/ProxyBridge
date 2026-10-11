@@ -49,6 +49,8 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     var preferredProtocol: ProxyProtocol
     var reconnectEnabled: Bool
     var connectAtLaunch: Bool
+    /// 密码模式：是否记住密码（密码本体存 macOS 钥匙串，绝不进本文件）。
+    var rememberPassword: Bool
 
     /// MVP 远程绑定只允许 loopback；不提供 0.0.0.0。
     static let remoteBindHost = "127.0.0.1"
@@ -66,7 +68,8 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         manualEndpoint: LocalProxyEndpoint? = nil,
         preferredProtocol: ProxyProtocol = .http,
         reconnectEnabled: Bool = true,
-        connectAtLaunch: Bool = false
+        connectAtLaunch: Bool = false,
+        rememberPassword: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -81,10 +84,36 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.preferredProtocol = preferredProtocol
         self.reconnectEnabled = reconnectEnabled
         self.connectAtLaunch = connectAtLaunch
+        self.rememberPassword = rememberPassword
     }
 
     var displayTarget: String { "\(username)@\(host):\(sshPort)" }
     var remoteListenDisplay: String { "\(Self.remoteBindHost):\(remotePort)" }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, host, sshPort, username, authMode, identityFilePath
+        case remotePort, proxySelectionMode, manualEndpoint, preferredProtocol
+        case reconnectEnabled, connectAtLaunch, rememberPassword
+    }
+
+    /// 兼容旧文件：`rememberPassword` 缺失时按 false 处理（不破坏既有 profiles.json）。
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        host = try c.decode(String.self, forKey: .host)
+        sshPort = try c.decode(Int.self, forKey: .sshPort)
+        username = try c.decode(String.self, forKey: .username)
+        authMode = try c.decode(AuthenticationMode.self, forKey: .authMode)
+        identityFilePath = try c.decodeIfPresent(String.self, forKey: .identityFilePath)
+        remotePort = try c.decode(Int.self, forKey: .remotePort)
+        proxySelectionMode = try c.decode(ProxySelectionMode.self, forKey: .proxySelectionMode)
+        manualEndpoint = try c.decodeIfPresent(LocalProxyEndpoint.self, forKey: .manualEndpoint)
+        preferredProtocol = try c.decode(ProxyProtocol.self, forKey: .preferredProtocol)
+        reconnectEnabled = try c.decode(Bool.self, forKey: .reconnectEnabled)
+        connectAtLaunch = try c.decode(Bool.self, forKey: .connectAtLaunch)
+        rememberPassword = try c.decodeIfPresent(Bool.self, forKey: .rememberPassword) ?? false
+    }
 }
 
 // MARK: - 校验（纯函数，供表单与连接前共用）
