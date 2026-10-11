@@ -1,14 +1,18 @@
-# KNOWN_LIMITATIONS · 已知限制（阶段 A）
+# KNOWN_LIMITATIONS · 已知限制（阶段 B）
 
 > 原则：没实现的功能不标注「可用」；演示数据永远带「演示」标记。
 
 ## 功能边界（按计划属于后续阶段）
 
-1. **本地代理检测是 Mock**（阶段 B 实现）：`MockProxyDetector` 返回固定演示候选（127.0.0.1:7897），未读取系统代理、未发起任何网络请求。UI 与日志均标注「演示数据」。
-2. **SSH 隧道是 Mock**（阶段 C 实现）：`MockTunnelService` 只驱动状态机剧本（connected/degraded/authRequired/remoteBindConflict），不启动进程、不连任何服务器。面板横幅明示「未连接任何服务器」。
-3. **登录启动未生效**（阶段 D 实现）：通用设置里的开关只保存意图（`launchAtLoginRequested`），未调用 `SMAppService`，开关为禁用态并附说明。
-4. **通知未实现**：`showNotifications` 仅持久化设置项。
-5. **健康检查无真实探测**：面板三层健康来自状态机快照，不是实测。
+1. **SSH 隧道是 Mock**（阶段 C 实现）：`MockTunnelService` 只驱动状态机剧本（connected/degraded/authRequired/remoteBindConflict），不启动进程、不连任何服务器。面板横幅明示「SSH 隧道仍为演示（阶段 C 接入）」。
+2. **登录启动未生效**（阶段 D 实现）：通用设置里的开关只保存意图（`launchAtLoginRequested`），未调用 `SMAppService`，开关为禁用态并附说明。
+3. **通知未实现**：`showNotifications` 仅持久化设置项。
+4. **远端健康检查无真实探测**：面板「远端代理」一层来自状态机快照，不是实测（阶段 C 的远端 curl 探测）。
+5. **本地代理检测已真实**（阶段 B）：读取 `SCDynamicStore` 并经 `curl` 实测。边界：
+   - 验证目标固定 `https://www.example.com/`（代码白名单；仅判定代理可用性，不上传数据）；
+   - 非 loopback 候选只显示、不探测、不转发（需手动指定评估）；
+   - PAC / 仅 TUN / 需认证（407）代理如实标注限制，不猜测端口；
+   - 系统代理变化经 800ms 防抖自动重扫；SCDynamicStore 订阅失败时面板会明确提示「通知不可用，请手动重新检测」。
 
 ## 明确的不支持（MVP 范围外）
 

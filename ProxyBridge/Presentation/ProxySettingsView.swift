@@ -41,7 +41,7 @@ struct ProxySettingsView: View {
                 }
             }
 
-            InfoBlock(text: "自动发现仅是第一步。真实版本必须通过代理协议实际发出请求确认有效（阶段 B 实现）；PAC、仅 TUN、需要认证的代理可能需要手动配置。检测结果仅来自当前这台 Mac，不会跨机器套用。")
+            InfoBlock(text: "检测结果仅来自当前这台 Mac（不会跨机器套用）：读取 macOS 系统代理设置，对每个候选逐协议经 curl 实测（验证目标 https://www.example.com/ ，仅判定代理可用性，不上传任何数据）。PAC、仅 TUN、需要认证的代理会在「限制与说明」中如实标注；检测到系统代理变化时自动防抖重扫。")
         }
         .onAppear { loadManualFields() }
         .onChange(of: model.currentProfileId) { _, _ in
@@ -73,7 +73,7 @@ struct ProxySettingsView: View {
             if model.detection.isScanning {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("正在检测本地代理…（演示）")
+                    Text(model.detection.isLive ? "正在检测本地代理（读取系统设置 + curl 实测）…" : "正在检测本地代理…（演示）")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }
@@ -113,10 +113,12 @@ struct ProxySettingsView: View {
             }
             .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 4) {
-                Text("未发现本地系统代理候选")
+                Text("未发现可用的本地代理候选")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("可手动指定端口；真实版本会读取系统设置并逐协议实测（阶段 B）。")
+                Text(model.detection.isLive
+                     ? "系统当前未启用代理端口，或候选未通过协议实测。可手动指定端口，或检查代理客户端是否运行。"
+                     : "演示模式未产出候选。可手动指定端口。")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -151,7 +153,8 @@ struct ProxySettingsView: View {
                         .foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                MiniBadge(text: "演示数据", tone: .orange)
+                MiniBadge(text: model.detection.isLive ? "系统实测" : "演示数据",
+                          tone: model.detection.isLive ? .green : .orange)
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
@@ -171,12 +174,19 @@ struct ProxySettingsView: View {
     }
 
     private var scannedAtText: String {
-        if let date = model.detection.lastScanAt {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss"
-            return "最近检测 \(formatter.string(from: date)) · 127.0.0.1 · 阶段 A 演示值（未读取系统）"
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        if model.detection.isLive {
+            let base = "已读取 macOS 系统代理设置并经 curl 实测（验证目标 www.example.com）"
+            if let date = model.detection.lastScanAt {
+                return "最近检测 \(formatter.string(from: date)) · \(base)"
+            }
+            return base
         }
-        return "阶段 A 演示值（未读取系统）"
+        if let date = model.detection.lastScanAt {
+            return "最近检测 \(formatter.string(from: date)) · 演示值（未读取系统）"
+        }
+        return "演示值（未读取系统）"
     }
 
     private func candidateCard(_ candidate: ProxyCandidate) -> some View {
@@ -193,6 +203,12 @@ struct ProxySettingsView: View {
             Text("来源：\(candidate.endpoint.origin.displayName)")
                 .font(.system(size: 10.5))
                 .foregroundStyle(Palette.muted.opacity(0.9))
+            if let note = candidate.note {
+                Text(note)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -206,13 +222,14 @@ struct ProxySettingsView: View {
 
     @ViewBuilder
     private func capabilityBadge(_ capability: ProxyCandidate.Capability) -> some View {
+        let isLive = model.detection.isLive
         switch capability {
         case .verified:
-            MiniBadge(text: "已验证 · 演示", tone: .green)
+            MiniBadge(text: isLive ? "已验证" : "已验证 · 演示", tone: .green)
         case .reachable:
-            MiniBadge(text: "端口可达 · 未验证协议", tone: .orange)
+            MiniBadge(text: "端口可达 · 不可用作代理", tone: .orange)
         case .failed:
-            MiniBadge(text: "协议验证失败", tone: .red)
+            MiniBadge(text: "验证失败", tone: .red)
         case .untested:
             MiniBadge(text: "未测试", tone: .gray)
         }

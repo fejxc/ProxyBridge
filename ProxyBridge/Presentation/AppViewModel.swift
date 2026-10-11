@@ -21,8 +21,13 @@ final class AppViewModel {
     let proxyDetector: ProxyDetectorService
     let logStore: LogStore
 
-    /// 阶段标识：UI 用它显示「演示模式」横幅。阶段 C 完成后移除。
+    /// 阶段标识：SSH 隧道仍为 Mock（阶段 C 接入），UI 横幅据此说明。
     let isDemoMode = true
+
+    /// 演示横幅文案（阶段 B：检测已真实，隧道仍演示）。
+    var demoBannerText: String {
+        "阶段 B：本地代理已真实读取系统设置并经 curl 实测；SSH 隧道仍为演示（阶段 C 接入真实 SSH）"
+    }
 
     // MARK: - 状态
 
@@ -53,13 +58,18 @@ final class AppViewModel {
         bootstrap()
     }
 
-    /// 阶段 A 的默认装配：Mock 服务 + 默认存储路径。
-    static func phaseADefault() -> AppViewModel {
+    /// 生产装配：本地代理检测为真实实现（SCDynamicStore + curl 实测）；
+    /// SSH 隧道在阶段 C 前仍为 Mock。
+    static func live() -> AppViewModel {
         AppViewModel(
             profileStore: ProfileRepository(),
             settingsStore: AppSettingsStore(),
             tunnel: MockTunnelService(),
-            proxyDetector: MockProxyDetector(),
+            proxyDetector: LocalProxyDetector(
+                provider: SCDynamicStoreProxyProvider(),
+                prober: CurlProxyProbe(),
+                monitor: SCDynamicStoreChangeMonitor()
+            ),
             logStore: LogStore()
         )
     }
@@ -96,10 +106,11 @@ final class AppViewModel {
 
         wireServices()
 
-        logStore.append(raw: "ProxyBridge 启动（阶段 A：UI 与持久化已实现，SSH 与真实检测为演示）", level: .info)
+        logStore.append(raw: "ProxyBridge 启动（阶段 B：本地代理检测为真实实现；SSH 隧道为演示）", level: .info)
         if profiles.isEmpty {
             logStore.append(raw: "尚未配置服务器，请打开设置添加", level: .info)
         }
+        proxyDetector.startObservingSystemChanges()
         proxyDetector.detect()
     }
 
@@ -330,7 +341,7 @@ final class AppViewModel {
     // MARK: - 代理检测
 
     func redetectProxy() {
-        logStore.append(raw: "开始重新检测本地代理（阶段 A：演示数据，未读取系统设置）", level: .info, isDemoEvent: true)
+        logStore.append(raw: "开始重新检测本地代理（读取系统设置 + curl 实测，验证目标 www.example.com）", level: .info)
         proxyDetector.detect()
     }
 

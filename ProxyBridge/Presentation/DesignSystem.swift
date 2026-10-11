@@ -140,13 +140,15 @@ struct HealthCheckRow: View {
     }
 }
 
-/// 演示模式横幅（阶段 A：明确告知未连接真实 SSH / 未读取系统代理）。
+/// 阶段性说明横幅（明确告知哪些能力是真实的、哪些仍是演示）。
 struct DemoModeBanner: View {
+    var text: String = "演示模式：SSH 隧道与远端探测为模拟，未连接任何服务器"
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "flask")
                 .font(.system(size: 11, weight: .semibold))
-            Text("演示模式 · 阶段 A：界面与配置已真实生效；SSH 隧道与代理探测为模拟，未连接任何服务器")
+            Text(text)
                 .font(.system(size: 10.5))
                 .fixedSize(horizontal: false, vertical: true)
         }

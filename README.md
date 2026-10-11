@@ -1,11 +1,11 @@
 # ProxyBridge（macOS 原生菜单栏应用）
 
-> 版本：MVP 0.1.0 · **阶段 A（工程与 UI）**
+> 版本：MVP 0.1.0 · **阶段 B（本地代理自动检测）**
 > 目标：把「Mac 本地代理 → SSH 反向转发 → 远端 Linux 服务器可用」做成有真实健康状态的菜单栏工具。
 
 ## 这个仓库是什么
 
-SwiftUI 菜单栏应用（`MenuBarExtra` + 独立设置窗口），当前完成阶段 A：
+SwiftUI 菜单栏应用（`MenuBarExtra` + 独立设置窗口），当前完成阶段 A + B：
 
 | 层 | 状态 |
 |---|---|
@@ -13,10 +13,11 @@ SwiftUI 菜单栏应用（`MenuBarExtra` + 独立设置窗口），当前完成�
 | 数据模型与校验 | ✅ ServerProfile / LocalProxyEndpoint / TunnelSnapshot + 纯函数校验（白名单反注入） |
 | 持久化 | ✅ `~/Library/Application Support/ProxyBridge/`（profiles.json / settings.json，原子写） |
 | 菜单栏面板 + 设置窗口 | ✅ 按原型结构实现，ViewModel 注入服务，View 无业务逻辑 |
-| 隧道 / 代理检测 | 🎭 **Mock 演示**（阶段 B 接真实系统代理检测，阶段 C 接真实 SSH） |
+| 本地代理检测 | ✅ **真实实现**：`SCDynamicStore` 读取 + 变化通知防抖 + `/usr/bin/curl` 逐协议实测（HTTP/SOCKS5 分开验证，407/TLS/超时/拒绝分类呈现） |
+| SSH 隧道 | 🎭 **Mock 演示**（阶段 C 接真实 SSH） |
 | 登录启动 / 自动重连 | ⏳ 阶段 D（UI 中明确标注未生效） |
 
-**诚实性约定**：Mock 行为在 UI 上有「演示模式」横幅、日志有 `[演示]` 前缀；任何「已验证/已连接」的绿色状态都不会在演示数据之外伪造。
+**诚实性约定**：检测结果与演示行为严格区分（`isLive`）——真实 curl 验证显示「已验证」，Mock 显示「已验证 · 演示」；任何绿色状态都有真实网络证据或明确演示标注。
 
 ## 目录结构
 

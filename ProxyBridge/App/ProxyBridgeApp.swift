@@ -2,9 +2,8 @@ import SwiftUI
 
 @main
 struct ProxyBridgeApp: App {
-    /// 阶段 A：Mock 服务装配。阶段 B/C 在此替换为真实实现
-    /// （LocalProxyDetector / SSH TunnelCoordinator），UI 不感知差异。
-    @State private var model = AppViewModel.phaseADefault()
+    /// 生产装配：本地代理检测为真实实现；SSH 隧道在阶段 C 前为 Mock。
+    @State private var model = AppViewModel.live()
 
     var body: some Scene {
         MenuBarExtra {

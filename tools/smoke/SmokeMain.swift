@@ -3,6 +3,7 @@
 // 运行：scripts/smoke_test.sh —— 编译 App 源码（不含 @main 入口）+ 本文件并执行。
 
 import Foundation
+import Network
 
 @main
 struct SmokeMain {
@@ -22,6 +23,7 @@ struct SmokeMain {
         await mockTunnelChecks()
         await viewModelChecks()
         logStoreChecks()
+        await liveProxyChecks()
 
         print("----------------------------------------")
         print("通过 \(passed) 项，失败 \(failed) 项")
@@ -443,5 +445,94 @@ struct SmokeMain {
         let raw = store.exportText(redacted: false)
         check("S27c", "导出格式与脱敏开关",
               redacted.contains("[成功]") && !redacted.contains("10.11.154.192") && raw.contains("10.11.154.192"))
+    }
+
+    // MARK: S28 真实 curl 探测（本机回环，无外网依赖）+ S29 真实系统读取
+
+    @MainActor
+    static func liveProxyChecks() async {
+        let probe = CurlProxyProbe(connectTimeoutSeconds: 2, maxTimeSeconds: 4)
+
+        // S28a：连接一个必然拒绝的回环端口 → connectionRefused，绝不 verified
+        let refused = await probe.probe(host: "127.0.0.1", port: 1, protocol: .http)
+        check("S28a", "真实 curl：拒绝连接 → connectionRefused", refused == .connectionRefused)
+
+        // S28b：本机起一个「普通 HTTP 服务器」（对 CONNECT 应答 404）→ 探测不得给出 verified
+        guard let server = Self.startFakePlainHTTPServer() else {
+            check("S28b", "假 HTTP 服务器启动（Network.framework）", false)
+            return
+        }
+        defer { server.stop() }
+        let notProxy = await probe.probe(host: "127.0.0.1", port: Int(server.port), protocol: .http)
+        let notGreen: Bool
+        switch notProxy {
+        case .verified:
+            notGreen = false
+        case .reachableNotProxy, .authRequired, .connectionRefused, .timeout, .tlsError, .failed:
+            notGreen = true
+        }
+        check("S28b", "真实 curl：非代理端口绝不变绿（实际：\(notProxy)）", notGreen)
+
+        // S29：真实读取本机系统代理（对照 scutil --proxy），打印证据
+        let snapshot = SCDynamicStoreProxyProvider().readProxies()
+        func describe(_ p: SystemProxySnapshot.ExplicitProxy?) -> String {
+            p.map { "\($0.host):\($0.port)" } ?? "未启用"
+        }
+        print("—— 本机系统代理（scutil --proxy 对照）——")
+        print("   HTTP  = \(describe(snapshot.http))")
+        print("   HTTPS = \(describe(snapshot.https))")
+        print("   SOCKS = \(describe(snapshot.socks))")
+        print("   PAC   = \(snapshot.pacEnabled ? (snapshot.pacURL ?? "启用") : "关闭")")
+        check("S29a", "真实读取系统代理：启用的端口字段合法",
+              [snapshot.http, snapshot.https, snapshot.socks].compactMap { $0 }.allSatisfy {
+                  (1...65_535).contains($0.port) && !$0.host.isEmpty
+              })
+        let built = ProxyCandidateBuilder.build(from: snapshot)
+        print("   候选  = " + built.candidates.map { "\($0.endpoint.protocol.rawValue)|\($0.endpoint.displayEndpoint)" }.joined(separator: ", "))
+        check("S29b", "候选构建与系统设置一致（HTTP/HTTPS 字段 → HTTP 候选）",
+              (snapshot.http != nil || snapshot.https != nil) == built.candidates.contains { $0.endpoint.protocol == .http })
+
+        // S30：对真实系统代理做端到端协议实测（信息性证据：代理未运行时如实呈现非 verified）
+        if let systemProxy = snapshot.http {
+            let real = await probe.probe(host: systemProxy.host, port: systemProxy.port, protocol: .http)
+            switch real {
+            case .verified(let code):
+                print("   实测  = 经系统代理 \(systemProxy.host):\(systemProxy.port) 访问 www.example.com 成功（HTTP \(code)）")
+                check("S30", "端到端实测：本机系统代理真实可用", true)
+            default:
+                // 代理未运行/无外网时不虚增通过数：如实打印，不计 PASS
+                print("   实测  = 系统代理存在但未通过端到端验证（\(real)）——如实呈现（信息项，不计 PASS）")
+            }
+        } else {
+            print("   实测  = 本机未启用 HTTP 系统代理，跳过端到端实测")
+        }
+    }
+
+    /// 本机假「普通 HTTP 服务器」：接受连接、读请求、回 404、断开。
+    /// 用于验证 curl 经它的 CONNECT 不会产生 verified（真实网络证据，无外网依赖）。
+    static func startFakePlainHTTPServer() -> (port: UInt16, stop: () -> Void)? {
+        let queue = DispatchQueue(label: "smoke.fakeserver")
+        guard let listener = try? NWListener(using: .tcp, on: .any) else { return nil }
+        let ready = DispatchSemaphore(value: 0)
+        listener.stateUpdateHandler = { state in
+            if case .ready = state { ready.signal() }
+            if case .failed = state { ready.signal() }
+        }
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: queue)
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { _, _, _, _ in
+                let body = Data("HTTP/1.0 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: body, completion: .contentProcessed { _ in
+                    connection.cancel()
+                })
+            }
+        }
+        listener.start(queue: queue)
+        _ = ready.wait(timeout: .now() + 3)
+        guard case .ready = listener.state, let port = listener.port?.rawValue else {
+            listener.cancel()
+            return nil
+        }
+        return (port, { listener.cancel() })
     }
 }

@@ -8,7 +8,7 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             if model.isDemoMode {
-                DemoModeBanner()
+                DemoModeBanner(text: model.demoBannerText)
             }
             if model.profiles.isEmpty {
                 emptyState

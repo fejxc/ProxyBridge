@@ -1,24 +1,29 @@
 import Foundation
 
-/// 一次自动检测的产出。阶段 A 由 Mock 提供（标注 demo），
-/// 阶段 B 换成 SCDynamicStore + curl 真实探测。
+/// 一次自动检测的产出。生产由 LocalProxyDetector 提供（SCDynamicStore + curl 实测），
+/// MockProxyDetector 仅用于测试与演示。
 struct ProxyCandidate: Identifiable, Equatable, Sendable {
-    var id: String { endpoint.id + "|" + capability.rawValue }
+    /// 稳定标识（仅物理端点 + 协议）：能力/备注更新时 SwiftUI ForEach 身份不漂移。
+    var id: String { endpoint.id }
     var endpoint: LocalProxyEndpoint
     /// 每个协议的能力单独判定：可达 ≠ 协议可用（U02/U12 语义）。
     var capability: Capability
+    /// 本次判定的证据/原因说明（如「curl 实测通过（HTTP 200）」「407」）。
+    var note: String?
 
     enum Capability: String, Codable, Sendable {
         case verified    // 协议级验证通过（有网络证据）
-        case reachable   // 仅 TCP 可达
-        case failed      // 协议验证失败
-        case untested    // 尚未探测
+        case reachable   // 端口有响应但不是该协议可用代理
+        case failed      // 探测失败（拒绝/超时/认证等）
+        case untested    // 尚未探测（或 MVP 不探测，如非回环）
     }
 }
 
 /// 本地代理检测状态。
 struct ProxyDetectionState: Equatable, Sendable {
     var isScanning: Bool = false
+    /// true = 真实读取系统设置并实测；false = Mock 演示数据。
+    var isLive: Bool = false
     /// 去重后的物理端点 + 各协议能力。
     var candidates: [ProxyCandidate] = []
     /// PAC / 仅 TUN / 需认证等限制说明；空 = 无特殊限制。
@@ -47,11 +52,16 @@ struct ProxyDetectionState: Equatable, Sendable {
 protocol ProxyDetectorService: AnyObject {
     var onStateChange: (@MainActor (ProxyDetectionState) -> Void)? { get set }
 
-    /// 触发一次检测（阶段 B：读取系统代理 + 协议探测，带防抖）。
+    /// 触发一次检测（读取系统代理 + 协议探测）。
     func detect()
+
+    /// 订阅系统代理配置变化（真实实现：SCDynamicStore 通知 + 防抖；Mock：无操作）。
+    /// 返回 false 表示通知链路不可用。
+    @discardableResult
+    func startObservingSystemChanges() -> Bool
 }
 
-// MARK: - Mock（阶段 A：演示数据，绝不声称读取了系统）
+// MARK: - Mock（演示数据，绝不声称读取了系统；测试与降级演示用）
 
 /// 演示检测器。返回固定的「示例」候选，日志与 UI 均标注演示；
 /// 存在的意义是让 UI/ViewModel/持久化链路在无网络下可完整演练。
@@ -64,6 +74,11 @@ final class MockProxyDetector: ProxyDetectorService {
 
     /// 模拟耗时（秒）。
     var simulatedLatency: TimeInterval = 0.8
+
+    func startObservingSystemChanges() -> Bool {
+        // 演示模式不订阅系统变化，返回 true 保持调用方语义
+        true
+    }
 
     func detect() {
         task?.cancel()
@@ -88,12 +103,11 @@ final class MockProxyDetector: ProxyDetectorService {
             origin: .systemSOCKS, verifiedAt: Date()
         )
         state.candidates = [
-            ProxyCandidate(endpoint: http, capability: .verified),
-            ProxyCandidate(endpoint: socks, capability: .verified),
+            ProxyCandidate(endpoint: http, capability: .verified, note: "演示数据：未发起真实探测"),
+            ProxyCandidate(endpoint: socks, capability: .verified, note: "演示数据：未发起真实探测"),
         ]
         state.limitations = [
-            "当前为阶段 A 演示数据：未读取本机系统代理，也未发起任何网络探测。",
-            "真实版本将读取 macOS 系统代理设置并逐协议实测（阶段 B）。",
+            "当前为演示数据：未读取本机系统代理，也未发起任何网络探测。",
         ]
         state.systemProxyActiveButUnresolved = false
         emit()

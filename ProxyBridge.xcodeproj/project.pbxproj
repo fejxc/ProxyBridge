@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classification = object;
 	objectVersion = 56;
-	objectCount = 95;
+	objectCount = 105;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -38,6 +38,11 @@
 		51A300000000000000000108 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000108 /* TestSupport.swift */; };
 		51A300000000000000000109 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000109 /* AppViewModelTests.swift */; };
 		51A30000000000000000010A /* LogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000010A /* LogStoreTests.swift */; };
+		51A300000000000000000016 /* SystemProxyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000016 /* SystemProxyProvider.swift */; };
+		51A300000000000000000017 /* ProxyProtocolProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000017 /* ProxyProtocolProbe.swift */; };
+		51A300000000000000000018 /* LocalProxyDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000018 /* LocalProxyDetector.swift */; };
+		51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000110 /* SystemProxyDetectionTests.swift */; };
+		51A300000000000000000111 /* LocalProxyDetectorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000111 /* LocalProxyDetectorTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -72,6 +77,11 @@
 		51A200000000000000000013 /* ServerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEditorView.swift; sourceTree = "<group>"; };
 		51A200000000000000000014 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		51A200000000000000000015 /* zh-Hans */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.strings; name = zh-Hans; path = zh-Hans.lproj/Localizable.strings; sourceTree = "<group>"; };
+		51A200000000000000000016 /* SystemProxyProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemProxyProvider.swift; sourceTree = "<group>"; };
+		51A200000000000000000017 /* ProxyProtocolProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyProtocolProbe.swift; sourceTree = "<group>"; };
+		51A200000000000000000018 /* LocalProxyDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyDetector.swift; sourceTree = "<group>"; };
+		51A200000000000000000110 /* SystemProxyDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemProxyDetectionTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000111 /* LocalProxyDetectorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyDetectorTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000101 /* ProfileRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepositoryTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000102 /* ProfileValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileValidationTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000103 /* TunnelStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatusTests.swift; sourceTree = "<group>"; };
@@ -179,6 +189,9 @@
 				51A20000000000000000000A /* ProxyDetector.swift */,
 				51A20000000000000000000B /* RemoteCommandTemplate.swift */,
 				51A20000000000000000000C /* TunnelService.swift */,
+				51A200000000000000000016 /* SystemProxyProvider.swift */,
+				51A200000000000000000017 /* ProxyProtocolProbe.swift */,
+				51A200000000000000000018 /* LocalProxyDetector.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -219,6 +232,8 @@
 				51A200000000000000000108 /* TestSupport.swift */,
 				51A200000000000000000109 /* AppViewModelTests.swift */,
 				51A20000000000000000010A /* LogStoreTests.swift */,
+				51A200000000000000000110 /* SystemProxyDetectionTests.swift */,
+				51A200000000000000000111 /* LocalProxyDetectorTests.swift */,
 			);
 			path = ProxyBridgeTests;
 			sourceTree = "<group>";
@@ -331,6 +346,9 @@
 				51A30000000000000000000A /* ProxyDetector.swift in Sources */,
 				51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */,
 				51A30000000000000000000C /* TunnelService.swift in Sources */,
+				51A300000000000000000016 /* SystemProxyProvider.swift in Sources */,
+				51A300000000000000000017 /* ProxyProtocolProbe.swift in Sources */,
+				51A300000000000000000018 /* LocalProxyDetector.swift in Sources */,
 				51A30000000000000000000D /* AppViewModel.swift in Sources */,
 				51A30000000000000000000E /* DesignSystem.swift in Sources */,
 				51A30000000000000000000F /* GeneralSettingsView.swift in Sources */,
@@ -356,6 +374,8 @@
 				51A300000000000000000108 /* TestSupport.swift in Sources */,
 				51A300000000000000000109 /* AppViewModelTests.swift in Sources */,
 				51A30000000000000000010A /* LogStoreTests.swift in Sources */,
+				51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */,
+				51A300000000000000000111 /* LocalProxyDetectorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
