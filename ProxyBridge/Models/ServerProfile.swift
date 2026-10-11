@@ -116,7 +116,7 @@ enum ServerProfileRule {
             let first = s.first!, last = s.last!
             if !("a"..."z").contains(first.lowercased()) && !first.isNumber { return "主机名格式不正确" }
             if !("a"..."z").contains(last.lowercased()) && !last.isNumber { return "主机名格式不正确" }
-            if s.contains("--") { return "主机名格式不正确" }
+            // 注意：允许 "--"（punycode 形如 xn--e1afmkfd 是合法 IDN 主机名）
         }
         return nil
     }

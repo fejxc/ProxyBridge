@@ -75,6 +75,7 @@ final class ProfileValidationTests: XCTestCase {
             "localhost",
             "host-1.example.com",
             "a.io",
+            "xn--e1afmkfd.example.com", // punycode IDN 是合法主机名
         ]
         for host in goodHosts {
             let v = ServerProfileRule.validate(makeProfile(host: host))
@@ -151,6 +152,23 @@ final class ProfileValidationTests: XCTestCase {
         XCTAssertFalse(LocalProxyEndpointRule.isValid(host: "127.0.0.1", port: 0))
         XCTAssertFalse(LocalProxyEndpointRule.isValid(host: "127.0.0.1", port: 65_536))
         XCTAssertEqual(LocalProxyEndpointRule.validate(host: "10.0.0.1", port: 0).count, 2, "地址与端口各一条错误")
+    }
+
+    // MARK: U07 等价：含空格的密钥路径放行且保真（阶段 A 无 Process，校验/持久化等价覆盖）
+
+    func testSpacedKeyPathPassesValidationAndRoundTrip() throws {
+        var p = makeProfile()
+        p.authMode = .identityFile
+        let spaced = "/Users/sunyun/My Keys/server key.pem"
+        p.identityFilePath = spaced
+        XCTAssertTrue(ServerProfileRule.validate(p).isValid, "含空格路径是合法输入，不得拒绝")
+
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let repo = ProfileRepository(directoryURL: temp.url)
+        try repo.save(ProfilesDocument(schemaVersion: 1, profiles: [p], currentProfileId: p.id))
+        let reloaded = try repo.load()
+        XCTAssertEqual(reloaded.profiles.first?.identityFilePath, spaced, "路径必须逐字符保真（不拆词）")
     }
 
     // MARK: Tilde 展开

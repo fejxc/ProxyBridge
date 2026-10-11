@@ -7,7 +7,9 @@ struct ServerEditorView: View {
     @Environment(AppViewModel.self) private var model
 
     @State private var draft: ServerProfile?
-    @State private var confirmDelete = false
+    /// 草稿对应的原始值（未保存变更检测）。
+    @State private var lastLoaded: ServerProfile?
+    @State private var showUnsavedBanner = false
 
     var body: some View {
         Group {
@@ -18,9 +20,19 @@ struct ServerEditorView: View {
             }
         }
         .task(id: editSourceId) {
+            if showUnsavedProtection, let current = draft, let baseline = lastLoaded,
+               current != baseline {
+                // 保留用户正在编辑的草稿，改为提示；绝不静默丢弃
+                showUnsavedBanner = true
+                return
+            }
+            showUnsavedBanner = false
             loadDraft()
         }
     }
+
+    /// 未保存保护仅在「编辑已有服务器」时启用；新建草稿本身就是临时的。
+    private var showUnsavedProtection: Bool { !model.editorIsNewDraft }
 
     private var emptyPane: some View {
         SectionCard {
@@ -42,24 +54,32 @@ struct ServerEditorView: View {
             get: { draft ?? .placeholder },
             set: { draft = $0 }
         )
-        return ServerEditorForm(
-            profile: draftBinding,
-            isNew: model.editorIsNewDraft,
-            snapshotPhase: model.snapshots[draftBinding.wrappedValue.id]?.phase,
-            onSave: { profile in
-                guard ServerProfileRule.validate(profile).isValid else { return }
-                model.saveDraftProfile(profile)
-                self.draft = profile
-            },
-            onDiscard: {
-                model.discardDraft()
-                self.draft = nil
-            },
-            onDelete: { profile in
-                model.deleteProfile(profile.id)
-                self.draft = nil
+        return VStack(alignment: .leading, spacing: 16) {
+            if showUnsavedBanner {
+                InfoBlock(text: "正在编辑「\(draftBinding.wrappedValue.name)」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器不会丢弃它们，但当前显示的是草稿而非已保存配置。")
             }
-        )
+            ServerEditorForm(
+                profile: draftBinding,
+                isNew: model.editorIsNewDraft,
+                snapshotPhase: model.snapshots[draftBinding.wrappedValue.id]?.phase,
+                onSave: { profile in
+                    guard ServerProfileRule.validate(profile).isValid else { return }
+                    if model.saveDraftProfile(profile) {
+                        self.draft = profile
+                        self.lastLoaded = profile
+                        self.showUnsavedBanner = false
+                    }
+                },
+                onDiscard: {
+                    model.discardDraft()
+                    self.draft = nil
+                },
+                onDelete: { profile in
+                    model.deleteProfile(profile.id)
+                    self.draft = nil
+                }
+            )
+        }
     }
 
     private var editSourceId: String {
@@ -73,6 +93,8 @@ struct ServerEditorView: View {
         } else {
             draft = model.currentProfile
         }
+        lastLoaded = draft
+        showUnsavedBanner = false
     }
 }
 

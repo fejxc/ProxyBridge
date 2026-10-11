@@ -64,9 +64,13 @@ enum LogRedaction {
                 _ = consumedTerminator
                 continue
             }
-            // 丢弃 C0 控制字符（保留 \n \t）与 DEL
+            // 丢弃 C0 控制字符（保留 \n \t）、DEL、C1 控制字符（0x80–0x9F，
+            // VT100 终端以 ESC 开头的 8 位形式出现）、以及 Unicode 格式/双向控制符
+            // （Cf：零宽连接符、从右到左标记等，可被用于视觉欺骗）。
             let isAllowedControl = (c == "\n" || c == "\t")
-            if !isAllowedControl && ((c.value < 0x20) || c.value == 0x7F) {
+            let isC1 = (c.value >= 0x80 && c.value <= 0x9F)
+            let isUnicodeFormat = c.properties.generalCategory == .format
+            if !isAllowedControl && ((c.value < 0x20) || c.value == 0x7F || isC1 || isUnicodeFormat) {
                 continue
             }
             pending.append(c)
@@ -94,7 +98,10 @@ enum LogRedaction {
     static func redact(_ message: String, options: Options = .all) -> String {
         var s = message
         if options.contains(.keyPaths) {
-            s = replace(pattern: #"~/\.ssh/[^\s"']+|/Users/[^/\s]+/\.ssh/[^\s"']+"#, in: s, with: "[密钥路径]")
+            // 任意用户目录下的 .ssh 路径（~、绝对路径、任意家目录形态）
+            s = replace(pattern: #"(?:~|/[\w.\-]+(?:/[\w.\-]+)*)/\.ssh/[^\s"']+"#, in: s, with: "[密钥路径]")
+            // 常见私钥/证书文件后缀（无论目录）
+            s = replace(pattern: #"[^\s"]+\.(pem|key|p12|pfx)\b"#, in: s, with: "[密钥文件]")
         }
         if options.contains(.userHost) {
             s = replace(pattern: #"[A-Za-z_][A-Za-z0-9._-]*@[A-Za-z0-9.-]+"#, in: s, with: "[用户@主机]")

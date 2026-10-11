@@ -22,10 +22,30 @@ final class LogRedactionTests: XCTestCase {
         XCTAssertTrue(sanitized.contains("\n"))
     }
 
-    func testLoneEscapeDropped() {
-        XCTAssertEqual(LogRedaction.sanitize("keep\u{1B}drop-next-char?ok"), "keepdrop-next-char?ok".replacingOccurrences(of: "\u{1B}", with: ""),
-                       "孤立 ESC 及其转义处理不得残留 ESC")
+    func testLoneEscapeConsumesNextChar() {
+        // 刻意语义：孤立 ESC 按双字节转义序列消费（ESC + 下一字符整体丢弃），
+        // 与 ANSI 单字符转义（如 ESC c 清屏）的处理一致。
+        XCTAssertEqual(LogRedaction.sanitize("keep\u{1B}drop-next-char?ok"), "keeprop-next-char?ok")
         XCTAssertFalse(LogRedaction.sanitize("a\u{1B}Eb").contains("\u{1B}"))
+    }
+
+    func testC1AndUnicodeFormatControlsAreStripped() {
+        // C1 控制字符（0x80–0x9F，VT100 8 位转义形态）
+        XCTAssertEqual(LogRedaction.sanitize("a\u{9B}31mb"), "a31mb", "CSI 的 C1 形态 0x9B 必须删除")
+        // Unicode 格式/双向控制符（Cf）：零宽连接符、RLO、BOM 等
+        let bidi = "visually\u{202E}safe"
+        XCTAssertFalse(LogRedaction.sanitize(bidi).contains("\u{202E}"), "RLO 双向覆盖符必须删除")
+        XCTAssertFalse(LogRedaction.sanitize("zero\u{200D}width").contains("\u{200D}"), "ZWJ 必须删除")
+        XCTAssertFalse(LogRedaction.sanitize("b\u{FEFF}om").contains("\u{FEFF}"), "BOM 必须删除")
+    }
+
+    func testBroaderKeyPathPatterns() {
+        // 任意家目录形态的 .ssh 路径
+        XCTAssertTrue(LogRedaction.redact("/home/deploy/.ssh/id_rsa", options: .keyPaths).contains("[密钥路径]"))
+        XCTAssertTrue(LogRedaction.redact("/Users/carol/.ssh/my key", options: .keyPaths).contains("[密钥路径]"))
+        // 常见私钥/证书后缀（无论目录）
+        XCTAssertTrue(LogRedaction.redact("cert /etc/tls/server.pem loaded", options: .keyPaths).contains("[密钥文件]"))
+        XCTAssertTrue(LogRedaction.redact("reading ./secrets/token.key", options: .keyPaths).contains("[密钥文件]"))
     }
 
     func testOverlongMessagesAreTruncated() {

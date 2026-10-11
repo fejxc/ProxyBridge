@@ -66,6 +66,9 @@ final class AppViewModel {
 
     private func bootstrap() {
         settings = settingsStore.load()
+        if settingsStore.lastLoadWasCorrupted {
+            logStore.append(raw: "settings.json 无法解析，已回退默认设置（文件保留原样，便于人工排查）", level: .error)
+        }
 
         do {
             document = try profileStore.load()
@@ -182,6 +185,8 @@ final class AppViewModel {
 
     func selectProfile(_ id: UUID) {
         guard profiles.contains(where: { $0.id == id }) else { return }
+        // 切换选择即离开「新建草稿」编辑态，编辑器需跟随展示被选服务器
+        editorIsNewDraft = false
         currentProfileId = id
         persist()
         logStore.append(raw: "切换当前服务器：\(profiles.first { $0.id == id }?.name ?? "?")", level: .info, profileId: id)
@@ -206,12 +211,34 @@ final class AppViewModel {
         editorIsNewDraft = true
     }
 
-    /// 编辑器保存草稿。
-    func saveDraftProfile(_ profile: ServerProfile) {
+    /// 编辑器保存草稿。校验失败的非法配置拒绝保存（U06「拒绝保存」半边）。
+    @discardableResult
+    func saveDraftProfile(_ profile: ServerProfile) -> Bool {
+        let validation = ServerProfileRule.validate(profile)
+        guard validation.isValid else {
+            logStore.append(
+                raw: "服务器「\(profile.name)」配置未通过校验，已拒绝保存：\(validation.errors.joined(separator: "；"))",
+                level: .error, profileId: profile.id
+            )
+            return false
+        }
         editorIsNewDraft = false
         upsertProfile(profile)
         currentProfileId = profile.id
         persist()
+        if let conflict = remotePortConflictDescription(for: profile) {
+            logStore.append(raw: "端口冲突提示：\(conflict)", level: .warning, profileId: profile.id)
+        }
+        return true
+    }
+
+    /// F02「端口冲突提示」：同主机同远程监听端口会互相顶掉远端监听。
+    func remotePortConflictDescription(for profile: ServerProfile) -> String? {
+        let conflicts = profiles.filter {
+            $0.id != profile.id && $0.host == profile.host && $0.remotePort == profile.remotePort
+        }
+        guard !conflicts.isEmpty else { return nil }
+        return "「\(profile.name)」与 \(conflicts.map(\.name).joined(separator: "、")) 使用同一 SSH 主机的远程端口 \(profile.remotePort)，同时连接会互相失败"
     }
 
     /// 放弃草稿。
@@ -369,9 +396,13 @@ final class AppViewModel {
 
     // MARK: - 复制
 
-    /// 远端使用命令（按当前实测/选定协议）。无 profile 时返回 nil。
+    /// 远端使用命令（按当前实测/选定协议）。无 profile 或端口非法时返回 nil（防御持久化脏数据触发崩溃）。
     func remoteCommandText() -> String? {
         guard let profile = currentProfile else { return nil }
+        guard (1...65_535).contains(profile.remotePort) else {
+            logStore.append(raw: "服务器「\(profile.name)」的远程端口 \(profile.remotePort) 非法，已拒绝生成命令；请修正配置", level: .error, profileId: profile.id)
+            return nil
+        }
         let proto: ProxyProtocol
         if case .manual(let ep) = EndpointResolver.resolve(profile: profile, detection: detection) {
             proto = ep.protocol

@@ -98,7 +98,7 @@ final class MockTunnelServiceTests: XCTestCase {
         XCTAssertEqual(recorder.snapshot.last?.phase, .idle)
     }
 
-    // MARK: 本地代理缺失 → degraded（不是 connected）
+    // MARK: 本地代理缺失 → degraded（不是 connected；nil=未发现）
 
     func testMissingLocalEndpointDegrades() async {
         makeService()
@@ -106,8 +106,25 @@ final class MockTunnelServiceTests: XCTestCase {
         let rec = recorder
         let ok = await waitUntil { rec.snapshot.last?.phase == .degraded }
         XCTAssertTrue(ok)
-        XCTAssertEqual(recorder.snapshot.last?.localProxyVerified, false)
+        // 未解析到端点 = 未发现（nil），与「验证失败」（false）严格区分
+        XCTAssertNil(recorder.snapshot.last?.localProxyVerified)
         XCTAssertNil(recorder.snapshot.last?.remoteProbeVerified)
+        let presentation = TunnelStatusPresentation.overall(for: recorder.snapshot.last!)
+        XCTAssertEqual(presentation.title, "未发现代理")
+        XCTAssertEqual(presentation.tone, .orange)
+    }
+
+    // MARK: 健康检查不伪造绿色
+
+    func testHealthCheckDoesNotFabricateGreenFromError() async {
+        makeService(outcome: .authRequired)
+        service.connect(configuration: config(endpoint: httpEndpoint))
+        let rec = recorder
+        _ = await waitUntil { rec.snapshot.last?.phase == .authRequired }
+        service.runHealthCheck(profileID: config(endpoint: nil).profile.id)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(recorder.snapshot.last?.phase, .authRequired, "error/authRequired 不得被检查连接翻成绿色")
+        XCTAssertNotEqual(recorder.snapshot.last?.remoteProbeVerified, true)
     }
 
     // MARK: 剧本注入：认证失败 → authRequired

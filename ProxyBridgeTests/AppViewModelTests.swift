@@ -122,19 +122,37 @@ final class AppViewModelTests: XCTestCase {
 
     // MARK: 连接前置校验
 
-    func testConnectBlockedWhenProfileInvalid() {
+    func testInvalidProfileRejectedAtSaveAndConnect() {
         let temp = withTempDir()
         defer { temp.removeAll() }
         let (model, spy, _) = makeModel(directory: temp.url)
+
+        // U06「拒绝保存」：非法配置不得落盘
         var bad = validProfile()
         bad.host = "bad host"
-        model.saveDraftProfile(bad)
+        let saved = model.saveDraftProfile(bad)
+        XCTAssertFalse(saved, "非法配置必须拒绝保存")
+        XCTAssertTrue(model.profiles.isEmpty, "非法配置不得进入列表")
 
+        // U06「拒绝连接」：绕过 UI 注入非法配置时，连接前置校验拦截
+        model.upsertProfile(bad)
         model.connect()
-
         XCTAssertTrue(spy.connectCalls.isEmpty, "校验失败不得发起连接")
         XCTAssertEqual(model.currentSnapshot.phase, .error)
         XCTAssertTrue(model.currentSnapshot.humanReadableDetail.contains("校验"))
+    }
+
+    func testRemotePortConflictDetected() {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, _, _) = makeModel(directory: temp.url)
+        let a = validProfile(name: "A")
+        model.saveDraftProfile(a)
+        let b = ServerProfile(name: "B", host: a.host, sshPort: a.sshPort, username: "u2", remotePort: a.remotePort)
+        XCTAssertNotNil(model.remotePortConflictDescription(for: b), "同主机同远程端口必须提示冲突")
+
+        let c = ServerProfile(name: "C", host: "other.example.com", sshPort: 22, username: "u3", remotePort: a.remotePort)
+        XCTAssertNil(model.remotePortConflictDescription(for: c), "不同主机同端口不冲突")
     }
 
     func testConnectPassesResolvedEndpointToService() {

@@ -109,6 +109,10 @@ enum TunnelStatusPresentation {
             if snapshot.localProxyVerified == false {
                 return StatusPresentation(title: "代理异常", detail: "本地代理未通过验证", tone: .orange)
             }
+            if snapshot.localProxyVerified == nil {
+                // 端点从未验证成功且当前不可用：UI-SPEC「没有系统代理候选」→ 未发现代理
+                return StatusPresentation(title: "未发现代理", detail: "可手动配置本地代理端口", tone: .orange)
+            }
             return StatusPresentation(title: "部分可用", detail: snapshot.humanReadableDetail, tone: .orange)
         case .authRequired:
             return StatusPresentation(title: "需要处理", detail: "检查服务器指纹或 SSH 密钥", tone: .red)

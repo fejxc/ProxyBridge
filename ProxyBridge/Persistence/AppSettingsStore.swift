@@ -42,6 +42,8 @@ struct AppSettings: Codable, Equatable {
 final class AppSettingsStore: @unchecked Sendable {
     private let fileURL: URL
     private let queue = DispatchQueue(label: "dev.sunyun.ProxyBridge.settings")
+    /// 最近一次 load 是否遇到「文件存在但无法解析」（区别于首启无文件）。
+    private(set) var lastLoadWasCorrupted = false
 
     init(directoryURL: URL? = nil) {
         let dir = directoryURL ?? ProfileRepository.defaultDirectory()
@@ -50,9 +52,15 @@ final class AppSettingsStore: @unchecked Sendable {
 
     func load() -> AppSettings {
         queue.sync {
+            lastLoadWasCorrupted = false
+            guard FileManager.default.fileExists(atPath: fileURL.path) else {
+                return .defaults()
+            }
             guard let data = try? Data(contentsOf: fileURL),
                   let decoded = try? JSONDecoder().decode(AppSettings.self, from: data)
             else {
+                // 损坏：回退默认值但如实上报（调用方写日志），不静默吞掉
+                lastLoadWasCorrupted = true
                 return .defaults()
             }
             return decoded.sanitized

@@ -6,8 +6,9 @@ enum RemoteCommandTemplate {
 
     /// 按 PRD F07 生成 export 命令。协议必须来自实测（调用方保证），
     /// 未验证时调用方应提示用户，而不是阻止复制。
-    static func exportCommands(remotePort: Int, protocol: ProxyProtocol) -> String {
-        precondition((1...65_535).contains(remotePort), "remotePort 必须在 1–65535")
+    /// 端口越界返回 nil（持久化脏数据防御，不崩溃）。
+    static func exportCommands(remotePort: Int, protocol: ProxyProtocol) -> String? {
+        guard (1...65_535).contains(remotePort) else { return nil }
         switch `protocol` {
         case .http:
             return """
@@ -27,9 +28,10 @@ enum RemoteCommandTemplate {
         }
     }
 
-    /// 菜单栏「复制远端代理命令」入口：未验证时附提醒。
-    static func clipboardText(remotePort: Int, protocol: ProxyProtocol, remoteVerified: Bool?) -> String {
-        var out = exportCommands(remotePort: remotePort, protocol: `protocol`)
+    /// 菜单栏「复制远端代理命令」入口：未验证时附提醒；端口非法返回 nil。
+    static func clipboardText(remotePort: Int, protocol: ProxyProtocol, remoteVerified: Bool?) -> String? {
+        guard let base = exportCommands(remotePort: remotePort, protocol: `protocol`) else { return nil }
+        var out = base
         if remoteVerified != true {
             out += "\n# 注意：当前远端代理尚未验证（未验证 ≠ 可用），请先执行检查连接"
         }

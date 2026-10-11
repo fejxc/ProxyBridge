@@ -1,16 +1,44 @@
 import SwiftUI
 
-/// 「连接日志」Tab：时间 + 级别 + 消息，可按级别/服务器筛选，复制脱敏日志。
+/// 「连接日志」Tab：按时间/级别/服务器筛选，复制（默认脱敏）日志。
 struct LogsView: View {
     @Environment(AppViewModel.self) private var model
 
     @State private var levelFilter: LogLevel?
     @State private var profileFilter: UUID?
+    @State private var timeScope: TimeScope = .all
+
+    enum TimeScope: String, CaseIterable, Identifiable {
+        case all, lastHour, last24Hours
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .all: return "全部时间"
+            case .lastHour: return "近 1 小时"
+            case .last24Hours: return "近 24 小时"
+            }
+        }
+        var cutoff: Date? {
+            switch self {
+            case .all: return nil
+            case .lastHour: return Date().addingTimeInterval(-3_600)
+            case .last24Hours: return Date().addingTimeInterval(-86_400)
+            }
+        }
+    }
+
+    /// 时间格式化器创建开销高，进程内缓存复用。
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
 
     private var filtered: [LogEntry] {
         model.logStore.entries.filter { entry in
             if let levelFilter, entry.level != levelFilter { return false }
             if let profileFilter, entry.profileId != profileFilter { return false }
+            if let cutoff = timeScope.cutoff, entry.timestamp < cutoff { return false }
             return true
         }
     }
@@ -18,13 +46,20 @@ struct LogsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
+                Picker("时间", selection: $timeScope) {
+                    ForEach(TimeScope.allCases) { scope in
+                        Text(scope.title).tag(scope)
+                    }
+                }
+                .frame(width: 110)
+
                 Picker("级别", selection: $levelFilter) {
                     Text("全部级别").tag(LogLevel?.none)
                     ForEach(LogLevel.allCases, id: \.self) { level in
                         Text(level.displayName).tag(LogLevel?.some(level))
                     }
                 }
-                .frame(width: 130)
+                .frame(width: 120)
 
                 Picker("服务器", selection: $profileFilter) {
                     Text("全部服务器").tag(UUID?.none)
@@ -32,16 +67,19 @@ struct LogsView: View {
                         Text(p.name).tag(UUID?.some(p.id))
                     }
                 }
-                .frame(width: 160)
+                .frame(width: 150)
 
                 Spacer()
 
                 Button {
                     model.copyLogsToPasteboard()
                 } label: {
-                    Label("复制脱敏日志", systemImage: "doc.on.doc")
+                    Label(model.settings.redactLogsOnCopy ? "复制脱敏日志" : "复制未脱敏日志",
+                          systemImage: "doc.on.doc")
                 }
-                .help(model.settings.redactLogsOnCopy ? "复制时遮挡 IP / 用户@主机 / 密钥路径 / 凭据" : "当前设置：复制时不脱敏（包含主机与用户名）")
+                .help(model.settings.redactLogsOnCopy
+                      ? "复制时遮挡 IP / 用户@主机 / 密钥路径 / 凭据"
+                      : "当前设置：复制时不脱敏（包含主机与用户名），可在通用设置中开启")
 
                 Button {
                     model.logStore.removeAll()
@@ -68,7 +106,7 @@ struct LogsView: View {
 
     private func logRow(_ entry: LogEntry) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(timeString(entry.timestamp))
+            Text(Self.timeFormatter.string(from: entry.timestamp))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Palette.muted.opacity(0.8))
             Text(entry.message)
@@ -89,12 +127,6 @@ struct LogsView: View {
                 .frame(height: 1)
         }
         .accessibilityElement(children: .combine)
-    }
-
-    private func timeString(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter.string(from: date)
     }
 
     private func levelColor(_ level: LogLevel) -> Color {

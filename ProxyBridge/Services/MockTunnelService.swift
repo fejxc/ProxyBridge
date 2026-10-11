@@ -19,20 +19,18 @@ final class MockTunnelService: TunnelService {
     var outcome: Outcome = .connected
 
     private var tasks: [UUID: Task<Void, Never>] = [:]
-    private var userStopped: Set<UUID> = []
-
-    /// 测试观察：断开后是否还有事件产生（必须为 false，U13）。
-    private(set) var eventsAfterUserStop: [TunnelSnapshot] = []
+    /// 每个 profile 最近一次下发的快照（健康检查只复核，不凭空造状态）。
+    private var lastSnapshots: [UUID: TunnelSnapshot] = [:]
 
     func connect(configuration: TunnelConfiguration) {
         let id = configuration.profile.id
         // U14：同一 profile 重复连接请求只保留一个任务
         guard tasks[id] == nil else { return }
-        userStopped.remove(id)
 
         tasks[id] = Task { @MainActor [weak self, id, configuration, stepDelay] in
             let delay = UInt64(stepDelay * 1_000_000_000)
             let emit: (TunnelSnapshot) -> Void = { snapshot in
+                self?.lastSnapshots[id] = snapshot
                 self?.onEvent?(.snapshot(snapshot))
             }
             var snap = TunnelSnapshot.idle(id)
@@ -52,8 +50,10 @@ final class MockTunnelService: TunnelService {
             }
             if !localOK {
                 snap.phase = .degraded
-                snap.localProxyVerified = false
-                snap.humanReadableDetail = "本地代理未通过验证（演示）：未解析到可用端点"
+                // 区分「未解析到端点（未发现）」与「端点验证失败」：
+                // 未发现 → localProxyVerified 保持 nil（nil ≠ false ≠ true）
+                snap.localProxyVerified = nil
+                snap.humanReadableDetail = "未发现可用的本地代理端点（演示）：请在设置中手动指定"
                 emit(snap)
                 self.finish(id)
                 return
@@ -97,45 +97,48 @@ final class MockTunnelService: TunnelService {
     }
 
     func disconnect(profileID: UUID) {
-        userStopped.insert(profileID)
         tasks[profileID]?.cancel()
         tasks[profileID] = nil
         var snap = TunnelSnapshot.idle(profileID)
         snap.phase = .disconnecting
         snap.humanReadableDetail = "正在停止（演示）"
+        lastSnapshots[profileID] = snap
         onEvent?(.snapshot(snap))
         var idle = TunnelSnapshot.idle(profileID)
         idle.humanReadableDetail = "用户手动断开（演示）；不会自动重连"
+        lastSnapshots[profileID] = idle
         onEvent?(.snapshot(idle))
     }
 
+    /// 手动「检查连接」：只复核最近一次已知状态并刷新时间戳，
+    /// 绝不把 error/authRequired/idle 翻转成绿色（诚实性红线）。
     func runHealthCheck(profileID: UUID) {
-        // 演示：仅当处于终态时重新发一份带新验证时间的快照
         guard tasks[profileID] == nil else { return }
-        var snap = TunnelSnapshot.idle(profileID)
-        snap.phase = .connected
-        snap.sshProcessRunning = true
-        snap.localProxyVerified = true
-        snap.remoteProbeVerified = true
-        snap.lastRemoteProbeAt = Date()
-        snap.humanReadableDetail = "手动检查完成（演示数据，非真实探测）"
-        onEvent?(.snapshot(snap))
+        guard let last = lastSnapshots[profileID] else {
+            var idle = TunnelSnapshot.idle(profileID)
+            idle.humanReadableDetail = "检查完成：当前无活跃连接（演示）"
+            onEvent?(.snapshot(idle))
+            return
+        }
+        guard last.phase == .connected || last.phase == .degraded else {
+            // 终态错误保持原样，只附检查说明
+            var unchanged = last
+            unchanged.humanReadableDetail = "检查完成：状态仍为「\(last.humanReadableDetail)」（演示，不改变结论）"
+            onEvent?(.snapshot(unchanged))
+            return
+        }
+        var rechecked = last
+        rechecked.lastRemoteProbeAt = Date()
+        rechecked.humanReadableDetail = "手动检查完成（演示数据，非真实探测；结论沿用上次验证）"
+        lastSnapshots[profileID] = rechecked
+        onEvent?(.snapshot(rechecked))
     }
 
     func isActive(profileID: UUID) -> Bool {
         tasks[profileID] != nil
     }
 
-    /// 拦截事件以检测「断开后是否还有事件」（U13 语义）。
-    /// Mock 的 onEvent 由 AppViewModel 设置；测试可通过包一层实现监听。
     private func finish(_ id: UUID) {
         tasks[id] = nil
-    }
-
-    /// 供测试直接判定：用户断开后是否有泄漏事件。
-    func recordEventForAudit(_ snapshot: TunnelSnapshot) {
-        if userStopped.contains(snapshot.profileId) {
-            eventsAfterUserStop.append(snapshot)
-        }
     }
 }

@@ -43,12 +43,19 @@ struct ProxySettingsView: View {
 
             InfoBlock(text: "自动发现仅是第一步。真实版本必须通过代理协议实际发出请求确认有效（阶段 B 实现）；PAC、仅 TUN、需要认证的代理可能需要手动配置。检测结果仅来自当前这台 Mac，不会跨机器套用。")
         }
-        .onAppear {
-            if let ep = model.currentProfile?.manualEndpoint {
-                manualHost = ep.host
-                manualPort = ep.port
-                manualProtocol = ep.protocol
-            }
+        .onAppear { loadManualFields() }
+        .onChange(of: model.currentProfileId) { _, _ in
+            loadManualFields()
+            manualErrors = []
+        }
+    }
+
+    /// 从当前 profile 的手动端点回填表单（无则保持默认初值）。
+    private func loadManualFields() {
+        if let ep = model.currentProfile?.manualEndpoint {
+            manualHost = ep.host
+            manualPort = ep.port
+            manualProtocol = ep.protocol
         }
     }
 

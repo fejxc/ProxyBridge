@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classification = object;
 	objectVersion = 56;
-	objectCount = 93;
+	objectCount = 95;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -37,6 +37,7 @@
 		51A300000000000000000107 /* EndpointResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000107 /* EndpointResolverTests.swift */; };
 		51A300000000000000000108 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000108 /* TestSupport.swift */; };
 		51A300000000000000000109 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000109 /* AppViewModelTests.swift */; };
+		51A30000000000000000010A /* LogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000010A /* LogStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -70,7 +71,7 @@
 		51A200000000000000000012 /* ProxySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxySettingsView.swift; sourceTree = "<group>"; };
 		51A200000000000000000013 /* ServerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerEditorView.swift; sourceTree = "<group>"; };
 		51A200000000000000000014 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
-		51A200000000000000000015 /* Localizable.strings */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; path = Localizable.strings; sourceTree = "<group>"; };
+		51A200000000000000000015 /* zh-Hans */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.strings; name = zh-Hans; path = zh-Hans.lproj/Localizable.strings; sourceTree = "<group>"; };
 		51A200000000000000000101 /* ProfileRepositoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepositoryTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000102 /* ProfileValidationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileValidationTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000103 /* TunnelStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatusTests.swift; sourceTree = "<group>"; };
@@ -80,6 +81,7 @@
 		51A200000000000000000107 /* EndpointResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointResolverTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000108 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
 		51A200000000000000000109 /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
+		51A20000000000000000010A /* LogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStoreTests.swift; sourceTree = "<group>"; };
 		51A100000000000000000041 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		51A100000000000000000042 /* ProxyBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -216,6 +218,7 @@
 				51A200000000000000000107 /* EndpointResolverTests.swift */,
 				51A200000000000000000108 /* TestSupport.swift */,
 				51A200000000000000000109 /* AppViewModelTests.swift */,
+				51A20000000000000000010A /* LogStoreTests.swift */,
 			);
 			path = ProxyBridgeTests;
 			sourceTree = "<group>";
@@ -352,6 +355,7 @@
 				51A300000000000000000107 /* EndpointResolverTests.swift in Sources */,
 				51A300000000000000000108 /* TestSupport.swift in Sources */,
 				51A300000000000000000109 /* AppViewModelTests.swift in Sources */,
+				51A30000000000000000010A /* LogStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -369,7 +373,7 @@
 		51A100000000000000000028 /* Localizable.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
-				51A200000000000000000015 /* Localizable.strings */,
+				51A200000000000000000015 /* zh-Hans */,
 			);
 			name = Localizable.strings;
 			sourceTree = "<group>";

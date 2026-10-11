@@ -21,6 +21,7 @@ struct SmokeMain {
         resolverChecks()
         await mockTunnelChecks()
         await viewModelChecks()
+        logStoreChecks()
 
         print("----------------------------------------")
         print("通过 \(passed) 项，失败 \(failed) 项")
@@ -214,10 +215,11 @@ struct SmokeMain {
 
     static func templateChecks() {
         let http = RemoteCommandTemplate.exportCommands(remotePort: 7890, protocol: .http)
-        check("S20a", "HTTP 模板含 http_proxy/https_proxy", http.contains("export http_proxy=http://127.0.0.1:7890") && http.contains("export https_proxy=http://127.0.0.1:7890"))
+        check("S20a", "HTTP 模板含 http_proxy/https_proxy", (http ?? "").contains("export http_proxy=http://127.0.0.1:7890") && (http ?? "").contains("export https_proxy=http://127.0.0.1:7890"))
+        check("S20a2", "非法端口返回 nil 不崩溃", RemoteCommandTemplate.exportCommands(remotePort: 65_536, protocol: .http) == nil)
         let socks = RemoteCommandTemplate.exportCommands(remotePort: 7891, protocol: .socks5)
-        check("S20b", "SOCKS 模板用 socks5h", socks.contains("export ALL_PROXY=socks5h://127.0.0.1:7891"))
-        check("S20c", "未验证时附提醒", RemoteCommandTemplate.clipboardText(remotePort: 7890, protocol: .http, remoteVerified: nil).contains("尚未验证"))
+        check("S20b", "SOCKS 模板用 socks5h", (socks ?? "").contains("export ALL_PROXY=socks5h://127.0.0.1:7891"))
+        check("S20c", "未验证时附提醒", (RemoteCommandTemplate.clipboardText(remotePort: 7890, protocol: .http, remoteVerified: nil) ?? "").contains("尚未验证"))
     }
 
     // MARK: S25 端点解析
@@ -305,7 +307,7 @@ struct SmokeMain {
         let (s4, b4) = makeService()
         s4.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
         let degraded = await waitSmokeUntil { b4.all.last?.phase == .degraded }
-        check("S24", "无本地端点 → degraded + localProxyVerified=false", degraded && b4.all.last?.localProxyVerified == false)
+        check("S24", "无本地端点 → degraded + localProxyVerified=nil（未发现）", degraded && b4.all.last?.localProxyVerified == nil)
     }
 
     static func waitSmokeUntil(timeout: TimeInterval = 3, _ condition: @escaping () -> Bool) async -> Bool {
@@ -371,11 +373,15 @@ struct SmokeMain {
         check("S26b", "连接经校验并把已验证端点传给服务",
               spy.box.connects.count == 1 && spy.box.connects.first?.localEndpoint?.port == 7897)
 
-        // 无效配置拦截
+        // 无效配置拦截（U06 两个半边）
         profile.host = "bad host"
-        model.upsertProfile(profile)
+        let invalidSaved = model.saveDraftProfile(profile)
+        check("S26i", "非法主机拒绝保存（不落盘不进列表）", !invalidSaved && model.profiles.count == 1)
+        model.upsertProfile(profile) // 模拟绕过 UI 的注入路径
         model.connect()
-        check("S26c", "非法主机阻止连接并置 error", spy.box.connects.count == 1 && model.currentSnapshot.phase == .error)
+        check("S26c", "注入的非法主机仍阻止连接并置 error", spy.box.connects.count == 1 && model.currentSnapshot.phase == .error)
+        profile.host = "10.11.154.192"
+        model.upsertProfile(profile) // 恢复合法配置继续后续检查
 
         // 活跃连接时改参数 → degraded + 重连提示（经服务事件真实路径注入快照）
         spy.onEvent?(.snapshot(TunnelSnapshot(
@@ -403,5 +409,39 @@ struct SmokeMain {
         // 复制命令
         let cmd = model.remoteCommandText()
         check("S26h", "复制命令按协议生成且未验证提醒", cmd?.contains("尚未验证") == true)
+
+        // 端口冲突提示（F02）
+        var samePort = profile
+        samePort.id = UUID()
+        samePort.name = "同端口第二台"
+        let conflict = model.remotePortConflictDescription(for: samePort)
+        check("S26j", "同主机同远程端口冲突提示", conflict?.contains("远程端口") == true && conflict?.contains("互相") == true)
+        var otherHost = profile
+        otherHost.id = UUID()
+        otherHost.host = "other.example.com"
+        check("S26k", "不同主机同端口不误报", model.remotePortConflictDescription(for: otherHost) == nil)
+    }
+
+    // MARK: S27 LogStore / AppSettingsStore
+
+    @MainActor
+    static func logStoreChecks() {
+        let store = LogStore()
+        for i in 0..<(LogStore.capacity + 2) {
+            store.append(raw: "e-\(i)", level: .info)
+        }
+        check("S27a", "日志环形容量收敛并保留最新",
+              store.entries.count == LogStore.capacity && store.entries.last?.message == "e-\(LogStore.capacity + 1)")
+
+        store.append(raw: "demo \u{1B}[31mx\u{1B}[0m ~/.ssh/id_rsa", level: .info, isDemoEvent: true)
+        let last = store.entries.last?.message ?? ""
+        check("S27b", "演示前缀 + ANSI 剥离 + 密钥遮挡",
+              last.hasPrefix("[演示] ") && !last.contains("\u{1B}") && !last.contains(".ssh/"))
+
+        store.append(raw: "ip 10.11.154.192 sunyun@10.11.154.192", level: .success)
+        let redacted = store.exportText(redacted: true)
+        let raw = store.exportText(redacted: false)
+        check("S27c", "导出格式与脱敏开关",
+              redacted.contains("[成功]") && !redacted.contains("10.11.154.192") && raw.contains("10.11.154.192"))
     }
 }

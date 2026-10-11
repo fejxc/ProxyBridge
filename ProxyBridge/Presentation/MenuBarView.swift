@@ -3,11 +3,13 @@ import SwiftUI
 /// 菜单栏弹出面板（约 368pt 宽，结构对应原型 01）。
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if model.isDemoMode {
+                DemoModeBanner()
+            }
             if model.profiles.isEmpty {
                 emptyState
             } else {
@@ -44,15 +46,15 @@ struct MenuBarView: View {
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 0)
-            Button {
-                model.openSettings(tab: .servers)
-                openSettings()
-            } label: {
+            SettingsLink {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15))
                     .foregroundStyle(Palette.muted)
             }
             .buttonStyle(.plain)
+            .simultaneousGesture(TapGesture().onEnded {
+                model.openSettings(tab: .servers)
+            })
             .help("打开设置")
             .accessibilityLabel("打开设置")
         }
@@ -70,15 +72,15 @@ struct MenuBarView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    model.openSettings(tab: .servers)
-                    openSettings()
-                } label: {
+                SettingsLink {
                     Label("打开设置，添加服务器", systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
+                .simultaneousGesture(TapGesture().onEnded {
+                    model.openSettings(tab: .servers)
+                })
             }
         }
     }
@@ -172,6 +174,11 @@ struct MenuBarView: View {
             HealthCheckRow(title: "远端代理", display: triad.remote, detail: remoteDetail(for: triad.remote))
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            model.openSettings(tab: .logs)
+        }
+        .help("点击查看日志定位原因")
     }
 
     private var separator: some View {
@@ -269,14 +276,14 @@ struct MenuBarView: View {
             .buttonStyle(.link)
             .accessibilityHint("复制 export 环境变量示例，不修改服务器配置")
             Spacer(minLength: 0)
-            Button {
-                model.openSettings(tab: .logs)
-                openSettings()
-            } label: {
+            SettingsLink {
                 Label("查看日志", systemImage: "list.bullet.rectangle")
                     .font(.system(size: 11.5))
             }
             .buttonStyle(.link)
+            .simultaneousGesture(TapGesture().onEnded {
+                model.openSettings(tab: .logs)
+            })
         }
     }
 
