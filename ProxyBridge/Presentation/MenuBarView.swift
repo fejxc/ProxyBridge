@@ -1,8 +1,15 @@
 import SwiftUI
+import AppKit
 
 /// 菜单栏弹出面板（约 368pt 宽，结构对应原型 01）。
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
+    @State private var confirmQuit = false
+
+    /// 是否有活跃隧道（退出前二次确认用）。
+    private var hasActiveTunnel: Bool {
+        model.profiles.contains { model.tunnel.isActive(profileID: $0.id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -23,6 +30,18 @@ struct MenuBarView: View {
         .padding(16)
         .frame(width: 368)
         .background(Palette.background)
+        .confirmationDialog(
+            "确定退出 ProxyBridge？",
+            isPresented: $confirmQuit,
+            titleVisibility: .visible
+        ) {
+            Button("退出并断开所有隧道", role: .destructive) {
+                NSApplication.shared.terminate(nil)
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("当前有活跃的 SSH 连接，退出会断开这些隧道（不会遗留 ssh 进程）。")
+        }
     }
 
     // MARK: 头部
@@ -46,6 +65,20 @@ struct MenuBarView: View {
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 0)
+            Button {
+                if hasActiveTunnel {
+                    confirmQuit = true
+                } else {
+                    NSApplication.shared.terminate(nil) // 触发 willTerminate → 清理全部子进程
+                }
+            } label: {
+                Image(systemName: "power")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Palette.muted)
+            }
+            .buttonStyle(.plain)
+            .help("退出 ProxyBridge")
+            .accessibilityLabel("退出 ProxyBridge")
             SettingsLink {
                 Image(systemName: "gearshape")
                     .font(.system(size: 15))
