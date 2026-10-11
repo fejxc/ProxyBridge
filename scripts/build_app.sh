@@ -27,6 +27,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 	<key>CFBundleIdentifier</key><string>dev.sunyun.ProxyBridge</string>
 	<key>CFBundleName</key><string>ProxyBridge</string>
 	<key>CFBundleDisplayName</key><string>ProxyBridge</string>
+	<key>CFBundleIconFile</key><string>ProxyBridge</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>0.1.0</string>
 	<key>CFBundleVersion</key><string>1</string>
@@ -37,6 +38,21 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+echo "== 生成应用图标（缺失时）=="
+if [ ! -f "build/icon/ProxyBridge.icns" ]; then
+	mkdir -p build/icon
+	swift tools/make_icon.swift build/icon/icon_1024.png
+	ICONSET="build/icon/AppIcon.iconset"
+	rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+	for s in 16 32 128 256 512; do
+		sips -z $s $s build/icon/icon_1024.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
+		d=$((s*2))
+		sips -z $d $d build/icon/icon_1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
+	done
+	iconutil -c icns "$ICONSET" -o build/icon/ProxyBridge.icns
+fi
+cp build/icon/ProxyBridge.icns "$APP/Contents/Resources/ProxyBridge.icns"
 
 cp ProxyBridge/Resources/zh-Hans.lproj/Localizable.strings "$APP/Contents/Resources/Localizable.strings" 2>/dev/null || true
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj"

@@ -61,7 +61,11 @@ bash scripts/xcode_test.sh          # 构建 + XCTest 全量测试
 ```bash
 bash scripts/typecheck.sh           # swiftc 全模块类型检查（App + 测试代码）
 bash scripts/smoke_test.sh          # 93 项核心逻辑断言（真实执行，含状态机序列与真实 ssh 进程证据）
-bash scripts/build_app.sh && open build/ProxyBridge.app   # 构建并运行
+
+# 日常安装（推荐）：构建 + 装入 /Applications + 自动启动
+bash scripts/install_app.sh
+# 之后随时打开：Spotlight 搜「ProxyBridge」/ 启动台 / Finder 双击 /Applications/ProxyBridge.app
+# 或仅构建不安装：bash scripts/build_app.sh && open build/ProxyBridge.app
 ```
 
 ## 使用（阶段 C：全部为真实行为）
@@ -78,6 +82,8 @@ bash scripts/build_app.sh && open build/ProxyBridge.app   # 构建并运行
 - **配置文件损坏**：启动日志会提示已把 `profiles.json` 改名为 `profiles.corrupt-<时间>.json` 并以空配置启动。
 - **存储位置**：`~/Library/Application Support/ProxyBridge/`（删掉即重置）。
 - **看日志**：面板 → 查看日志；或 `log stream --predicate 'subsystem == "dev.sunyun.ProxyBridge"'`。
+- **开机自启（临时方案）**：阶段 D 接入 SMAppService 前，可在 系统设置 → 通用 → 登录项 手动添加 `/Applications/ProxyBridge.app`（不会自动连接任何服务器）。
+- **重装/升级**：重跑 `bash scripts/install_app.sh`（会自动停止旧实例后覆盖）。
 - **构建细节与已知限制**：见 [BUILD.md](BUILD.md)、[KNOWN_LIMITATIONS.md](KNOWN_LIMITATIONS.md)。
 
 ## 安全设计要点（阶段 A–C 已落实）
