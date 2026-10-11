@@ -111,7 +111,7 @@ enum TunnelStatusPresentation {
             }
             if snapshot.localProxyVerified == nil {
                 // 端点从未验证成功且当前不可用：UI-SPEC「没有系统代理候选」→ 未发现代理
-                return StatusPresentation(title: "未发现代理", detail: "可手动配置本地代理端口", tone: .orange)
+                return StatusPresentation(title: "未发现代理", detail: "确认代理客户端运行中，重新点「连接」或手动指定端口", tone: .orange)
             }
             return StatusPresentation(title: "部分可用", detail: snapshot.humanReadableDetail, tone: .orange)
         case .authRequired:

@@ -166,7 +166,7 @@ final class SSHTunnelCoordinator: TunnelService {
             finishSetup(session: session, profileID: id) {
                 var degraded = self.baseSnapshot(profileID: id, phase: .degraded)
                 degraded.localProxyVerified = nil // 未发现 ≠ 验证失败
-                degraded.humanReadableDetail = "未发现可用的本地代理端点：请在设置中手动指定"
+                degraded.humanReadableDetail = "未发现可用的本地代理端点：请确认代理客户端正在运行且系统代理已开启，然后重新点「连接」；或在「本地代理」页手动指定端口"
                 session.phase = .degraded
                 return degraded
             }
