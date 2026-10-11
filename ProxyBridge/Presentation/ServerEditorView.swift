@@ -163,6 +163,11 @@ struct ServerEditorForm: View {
                         }
                         .pickerStyle(.menu)
                     }
+                    if profile.authMode == .password {
+                        FormRow(label: "SSH 密码", help: nil) {
+                            InfoBlock(text: "连接时会在面板中请求输入密码：密码仅本次连接在内存中使用（经系统 PTY 交给 ssh），不会保存到磁盘、配置文件或日志。远端验证会复用同一次会话密码。")
+                        }
+                    }
                     if profile.authMode == .identityFile {
                         FormRow(label: "密钥路径", help: "仅引用本机私钥文件路径；不读取、不上传、不保存密钥内容。") {
                             HStack(spacing: 8) {

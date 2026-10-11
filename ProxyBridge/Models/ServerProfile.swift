@@ -1,14 +1,18 @@
 import Foundation
 
-/// SSH 认证方式。MVP 不存储 SSH 密码。
+/// SSH 认证方式。
+/// 安全约定：`password` 模式的密码只在连接时经内存临时使用（PTY 应答 ssh 提示），
+/// 绝不写入磁盘/日志/导出；模型层不设密码字段。
 enum AuthenticationMode: String, Codable, Sendable, CaseIterable {
     case agent
     case identityFile
+    case password
 
     var displayName: String {
         switch self {
         case .agent: return "ssh-agent（推荐）"
         case .identityFile: return "指定私钥文件"
+        case .password: return "SSH 密码（不保存，仅连接时输入）"
         }
     }
 }
@@ -164,8 +168,8 @@ enum ServerProfileRule {
             result.warnings.append("远程端口 < 1024 通常需要远端 root 权限，建议使用 1024–65535")
         }
         switch profile.authMode {
-        case .agent:
-            break
+        case .agent, .password:
+            break // agent 无需本地密钥；密码在连接时经内存输入（不落盘）
         case .identityFile:
             let path = (profile.identityFilePath ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             if path.isEmpty {

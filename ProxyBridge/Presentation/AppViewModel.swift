@@ -37,6 +37,11 @@ final class AppViewModel {
     private(set) var currentProfileId: UUID?
     private(set) var snapshots: [UUID: TunnelSnapshot] = [:]
     private(set) var detection = ProxyDetectionState()
+    /// 密码模式：等待用户输入 SSH 密码的 profile（nil = 无待输入）。
+    private(set) var pendingPasswordProfileId: UUID?
+    var pendingPasswordProfileName: String? {
+        pendingPasswordProfileId.flatMap { id in profiles.first { $0.id == id }?.name }
+    }
     private(set) var settings: AppSettings = .defaults()
     var settingsTab: SettingsTab = .servers
 
@@ -160,6 +165,13 @@ final class AppViewModel {
             switch event {
             case .snapshot(let snap):
                 self.applySnapshot(snap)
+            case .passwordPromptRequested(let profileId):
+                self.pendingPasswordProfileId = profileId
+                self.logStore.append(
+                    raw: "服务器需要 SSH 密码：请在面板中输入（密码仅本次连接在内存中使用，不会保存）",
+                    level: .info,
+                    profileId: profileId
+                )
             }
         }
         proxyDetector.onStateChange = { [weak self] state in
@@ -371,6 +383,19 @@ final class AppViewModel {
         guard let profile = currentProfile else { return }
         logStore.append(raw: "用户手动断开「\(profile.name)」（演示）", level: .info, profileId: profile.id, isDemoEvent: true)
         tunnel.disconnect(profileID: profile.id)
+    }
+
+    /// 用户提交 SSH 密码（转发给隧道服务；密码不落盘不进日志）。
+    func submitPassword(_ password: String) {
+        guard let id = pendingPasswordProfileId else { return }
+        pendingPasswordProfileId = nil
+        tunnel.submitPassword(profileID: id, password: password)
+    }
+
+    func cancelPasswordPrompt() {
+        guard let id = pendingPasswordProfileId else { return }
+        pendingPasswordProfileId = nil
+        tunnel.cancelPasswordPrompt(profileID: id)
     }
 
     func runHealthCheck() {

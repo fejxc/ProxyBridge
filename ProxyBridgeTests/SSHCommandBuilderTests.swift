@@ -40,6 +40,30 @@ final class SSHCommandBuilderTests: XCTestCase {
         XCTAssertFalse(args.contains("-i"), "agent 模式不得默认加 -i（尊重用户 OpenSSH config）")
     }
 
+    /// 密码模式：无 BatchMode（需交互应答）、强制密码路径、只允许一次尝试。
+    func testPasswordModeArguments() {
+        let args = SSHCommandBuilder.arguments(
+            profile: profile(authMode: .password), localEndpoint: endpoint
+        )
+        XCTAssertFalse(args.contains("BatchMode=yes"), "密码模式不得启用 BatchMode（会直接失败）")
+        XCTAssertTrue(args.contains("-o") && args.contains("PubkeyAuthentication=no"))
+        XCTAssertTrue(args.contains("PreferredAuthentications=keyboard-interactive,password"))
+        XCTAssertTrue(args.contains("NumberOfPasswordPrompts=1"), "错密码必须立即失败")
+        XCTAssertTrue(args.contains("-o") && args.contains("StrictHostKeyChecking=yes"), "密码模式同样强制主机密钥校验")
+        XCTAssertFalse(args.contains("-i"))
+    }
+
+    /// 密码模式的远端探测参数与隧道一致（无 BatchMode + 密码限制 + 无 -i）。
+    func testRemoteProbePasswordModeArguments() {
+        let args = RemoteProbeCommand.arguments(
+            profile: profile(authMode: .password), remotePort: 7890,
+            protocol: .http, urlString: "https://www.example.com/"
+        )
+        XCTAssertFalse(args.contains("BatchMode=yes"))
+        XCTAssertTrue(args.contains("NumberOfPasswordPrompts=1"))
+        XCTAssertFalse(args.contains("-i"))
+    }
+
     /// U07：含空格的密钥路径逐字保真（单参数，无拆词/转义）。
     func testU07SpacedKeyPathPreservedVerbatim() {
         let spaced = "/Users/sunyun/My Keys/server key.pem"

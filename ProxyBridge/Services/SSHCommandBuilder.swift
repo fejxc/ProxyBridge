@@ -22,12 +22,24 @@ enum SSHCommandBuilder {
         var args: [String] = [
             "-p", String(profile.sshPort),
             "-N", "-T",
-            "-o", "BatchMode=yes",                    // 无 UI 场景禁止任何交互提示
             "-o", "ServerAliveInterval=30",
             "-o", "ServerAliveCountMax=3",
             "-o", "ExitOnForwardFailure=yes",         // 转发建立失败立即退出（可检测）
             "-o", "StrictHostKeyChecking=yes",        // 主机密钥强制校验（安全红线）
             "-o", "ConnectTimeout=10",
+        ]
+        if profile.authMode == .password {
+            // 密码模式：经 PTY 应答提示（App 内输入，不落盘）；禁用公钥路径、
+            // 只允许一次密码尝试（错密码立即失败，行为可预期）
+            args += [
+                "-o", "PubkeyAuthentication=no",
+                "-o", "PreferredAuthentications=keyboard-interactive,password",
+                "-o", "NumberOfPasswordPrompts=1",
+            ]
+        } else {
+            args += ["-o", "BatchMode=yes"]           // 非密码模式禁止任何交互提示
+        }
+        args += [
             "-R", forwardArgument(profile: profile, localEndpoint: localEndpoint),
         ]
         if profile.authMode == .identityFile,
@@ -71,10 +83,18 @@ enum RemoteProbeCommand {
         precondition(CurlProxyProbe.urlWhitelist.contains(urlString), "验证 URL 必须来自白名单")
         var args = [
             "-p", String(profile.sshPort),
-            "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=yes",
             "-o", "ConnectTimeout=10",
         ]
+        if profile.authMode == .password {
+            args += [
+                "-o", "PubkeyAuthentication=no",
+                "-o", "PreferredAuthentications=keyboard-interactive,password",
+                "-o", "NumberOfPasswordPrompts=1",
+            ]
+        } else {
+            args += ["-o", "BatchMode=yes"]
+        }
         // 与隧道命令同条件复用身份（§7：探测复用 profile 的 host/port/identity 参数）
         if profile.authMode == .identityFile,
            let path = profile.identityFilePath?.trimmingCharacters(in: .whitespacesAndNewlines),

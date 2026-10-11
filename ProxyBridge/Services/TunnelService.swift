@@ -22,6 +22,12 @@ protocol TunnelService: AnyObject {
 
     /// App 退出前清理全部本 App 拥有的子进程（PRD F05，不发 UI 事件）。
     func terminateAllSessions()
+
+    /// 用户提交 SSH 密码（密码模式）。密码仅经内存转发给 PTY，不持久化。
+    func submitPassword(profileID: UUID, password: String)
+
+    /// 用户取消密码输入：终止本次连接尝试。
+    func cancelPasswordPrompt(profileID: UUID)
 }
 
 /// 传给隧道服务的一份完整连接描述。
@@ -34,6 +40,8 @@ struct TunnelConfiguration: Sendable, Equatable {
 /// 隧道服务向 UI 上报的事件。
 enum TunnelEvent: Sendable {
     case snapshot(TunnelSnapshot)
+    /// 密码模式：等待用户在 UI 输入 SSH 密码（经 PTY 应答，内存中使用、不落盘）。
+    case passwordPromptRequested(profileID: UUID)
 }
 
 // MARK: - 端点解析（纯函数）

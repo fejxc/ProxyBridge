@@ -5,7 +5,7 @@
 ## 功能边界（按计划属于后续阶段）
 
 1. **SSH 隧道已真实实现**（阶段 C）：`/usr/bin/ssh` 参数数组直启（StrictHostKeyChecking=yes 强制、BatchMode、远端绑定固定 127.0.0.1）。边界：
-   - MVP 不存储 SSH 密码：认证仅 ssh-agent / identityFile；BatchMode 下密码认证服务器会直接 authRequired；
+   - 密码认证已支持（安全实现）：连接时在面板中输入，密码仅本次会话在内存中经系统 PTY 交给 ssh（不经命令行参数/环境变量/磁盘/日志）；错密码因 `NumberOfPasswordPrompts=1` 立即失败；远端验证复用同一次会话密码。App 不提供「记住密码」（如需可考虑 Keychain，属后续阶段）；
    - 首次连接未知主机：StrictHostKeyChecking=yes 会拒绝并给出「先在终端手动 ssh 核对指纹」的指引（App 不代收指纹）；
    - 自动重连退避（PRD F05）属阶段 D：当前意外断线显示分类后的 error 终态，等待用户手动重连；
    - GUI 启动时若无 SSH_AUTH_SOCK（取决于系统配置），agent 认证会失败并给出改用 identityFile 的提示；
@@ -24,7 +24,7 @@
 - 远程绑定只允许 `127.0.0.1`——不提供、也不接受 `0.0.0.0`/公网监听配置（模型层常量 + 校验）。
 - IPv6 字面量 SSH 主机（`::1` 等）：校验层拒绝并提示改用主机名；`::1` 作为**本地代理地址**是允许的。
 - 非 loopback 的本地代理主机（如局域网代理）：UI 明确提示 MVP 不转发。
-- SSH 密码认证：`AuthenticationMode` 只有 agent / identityFile；不存密码、不做 sshpass。
+- 不「记住」SSH 密码：密码模式每次连接都需在面板输入（安全取舍——不落盘是红线；如需免输可改用密钥并加载进 ssh-agent）。
 - 跨用户 `~otheruser` 形式的密钥路径不展开（仅 `~` 与 `~/...`）。
 - 多语言：当前简体中文硬编码于视图常量（文案已集中，`Localizable.strings` 基础设施就位，键值化在后续阶段做）。
 

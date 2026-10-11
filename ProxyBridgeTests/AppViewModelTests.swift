@@ -31,6 +31,11 @@ final class TunnelSpy: TunnelService {
         activeIDs.removeAll()
     }
 
+    func submitPassword(profileID: UUID, password: String) {}
+    func cancelPasswordPrompt(profileID: UUID) {
+        disconnectCalls.append(profileID)
+    }
+
     /// 测试注入：模拟服务上报快照。
     func emit(_ snapshot: TunnelSnapshot) {
         onEvent?(.snapshot(snapshot))

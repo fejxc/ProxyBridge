@@ -350,6 +350,8 @@ struct SmokeMain {
             func runHealthCheck(profileID: UUID) {}
             func isActive(profileID: UUID) -> Bool { false }
             func terminateAllSessions() {}
+            func submitPassword(profileID: UUID, password: String) {}
+            func cancelPasswordPrompt(profileID: UUID) {}
         }
 
         let spy = SpyTunnel()
@@ -525,8 +527,9 @@ struct SmokeMain {
         let args = SSHCommandBuilder.arguments(profile: profile, localEndpoint: endpoint)
         check("S31a", "ssh 参数数组逐字匹配（StrictHostKeyChecking=yes）", args == [
             "-p", "20064", "-N", "-T",
-            "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
+            "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=3",
             "-o", "ExitOnForwardFailure=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10",
+            "-o", "BatchMode=yes",
             "-R", "127.0.0.1:7890:127.0.0.1:7897", "sunyun@10.11.154.192",
         ])
         let spaced = SSHCommandBuilder.arguments(

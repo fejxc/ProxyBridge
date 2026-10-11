@@ -56,6 +56,8 @@ final class SmokeSSHHandle: SSHProcessHandle, @unchecked Sendable {
     var exitCode: Int32? { lock.lock(); defer { lock.unlock() }; return code }
     var stderrTail: String { lock.lock(); defer { lock.unlock() }; return stderrText }
     var stdoutTail: String { "" }
+    var onPTYOutput: (@Sendable (String) -> Void)?
+    func writePTY(_ text: String) {}
 }
 
 final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
@@ -85,5 +87,5 @@ final class SmokeLocalProber: ProxyProbeExecuting, @unchecked Sendable {
 final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     var outcome: RemoteProbeOutcome
     init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol) async -> RemoteProbeOutcome { outcome }
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome { outcome }
 }

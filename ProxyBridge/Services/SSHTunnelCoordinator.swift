@@ -33,6 +33,9 @@ final class SSHTunnelCoordinator: TunnelService {
         var lastRemoteProbeAt: Date?
         var probingRemote = false
         var profile: ServerProfile?
+        /// 密码模式：本次连接的密码（仅内存；断开/退出即丢弃，不落盘不进日志）。
+        var password: String?
+        var passwordContinuation: CheckedContinuation<String?, Never>?
     }
 
     private var sessions: [UUID: Session] = [:]
@@ -68,6 +71,9 @@ final class SSHTunnelCoordinator: TunnelService {
         guard let session = sessions[profileID] else { return }
         // 用户断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
         session.userStopped = true
+        session.password = nil // 断开即丢弃
+        session.passwordContinuation?.resume(returning: nil)
+        session.passwordContinuation = nil
         session.task?.cancel()
         session.task = nil
         if let handle = session.handle {
@@ -103,12 +109,31 @@ final class SSHTunnelCoordinator: TunnelService {
         return session.task != nil || session.handle?.isRunning == true
     }
 
+    func submitPassword(profileID: UUID, password: String) {
+        guard let session = sessions[profileID], !session.userStopped else { return }
+        session.password = password
+        session.passwordContinuation?.resume(returning: password)
+        session.passwordContinuation = nil
+    }
+
+    func cancelPasswordPrompt(profileID: UUID) {
+        guard let session = sessions[profileID] else { return }
+        session.password = nil
+        session.passwordContinuation?.resume(returning: nil)
+        session.passwordContinuation = nil
+        // 用户放弃：等价于一次手动断开（终态，不自动重连）
+        disconnect(profileID: profileID)
+    }
+
     /// App 退出：终止全部本 App 拥有的 ssh 进程（不冒 idle 事件——UI 即将消失）。
     func terminateAllSessions() {
         for (id, session) in sessions {
             session.userStopped = true
             session.task?.cancel()
             session.task = nil
+            session.password = nil
+            session.passwordContinuation?.resume(returning: nil)
+            session.passwordContinuation = nil
             if let handle = session.handle {
                 handle.terminate()
                 scheduleForceKill(handle)
@@ -178,7 +203,10 @@ final class SSHTunnelCoordinator: TunnelService {
         onEvent?(.snapshot(connecting))
 
         let args = SSHCommandBuilder.arguments(profile: profile, localEndpoint: localEndpoint)
-        let handle = processFactory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+        let usePTY = profile.authMode == .password
+        let handle = usePTY
+            ? processFactory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+            : processFactory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
         session.handle = handle
         let sessionID = id
         handle.onExit = { [weak self] code in
@@ -199,7 +227,52 @@ final class SSHTunnelCoordinator: TunnelService {
             return
         }
 
-        // 4) 宽限期：进程在此窗口内退出 → 分类（转发失败/认证/网络）
+        // 4a) 密码模式：等待 ssh 的密码提示 → 请 UI 输入 → 经 PTY 应答
+        if usePTY {
+            var prompting = baseSnapshot(profileID: id, phase: .connecting)
+            prompting.localProxyVerified = true
+            prompting.humanReadableDetail = "等待输入 SSH 密码…"
+            onEvent?(.snapshot(prompting))
+
+            // 等密码提示出现（或进程退出）
+            let promptDeadline = Date().addingTimeInterval(30)
+            var sawPrompt = false
+            while Date() < promptDeadline {
+                if session.userStopped || Task.isCancelled { return }
+                if handle.exitCode != nil { return } // 已退出 → handleProcessExit 分类
+                if handle.stderrTail.lowercased().contains("password") {
+                    sawPrompt = true
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            guard !session.userStopped, !Task.isCancelled else { return }
+            guard sawPrompt else { return } // 超时/退出已由其他路径处理
+
+            // 请求 UI 输入并挂起等待
+            var connecting = baseSnapshot(profileID: id, phase: .connecting)
+            connecting.localProxyVerified = true
+            connecting.humanReadableDetail = "等待输入 SSH 密码…（密码仅本次连接在内存中使用，不会保存）"
+            onEvent?(.snapshot(connecting))
+            onEvent?(.passwordPromptRequested(profileID: id))
+
+            let submitted = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
+                session.passwordContinuation = continuation
+            }
+            guard !session.userStopped, !Task.isCancelled else { return }
+            guard let password = submitted, !password.isEmpty else {
+                session.password = nil
+                return // cancelPasswordPrompt 已发出 disconnecting→idle
+            }
+            // 密码经 PTY 交给 ssh（不经 argv/环境/磁盘）；立即转存会话并清理局部引用
+            handle.writePTY(password + "\n")
+            var connecting2 = baseSnapshot(profileID: id, phase: .connecting)
+            connecting2.localProxyVerified = true
+            connecting2.humanReadableDetail = "已提交密码，正在建立 SSH 隧道…"
+            onEvent?(.snapshot(connecting2))
+        }
+
+        // 4) 宽限期：进程在此窗口内退出 → 分类（转发失败/认证/网络；密码错误也在此被 NumberOfPasswordPrompts=1 快速失败）
         var waited = 0.0
         while waited < graceSeconds {
             if session.userStopped || Task.isCancelled { return }
@@ -333,6 +406,7 @@ final class SSHTunnelCoordinator: TunnelService {
         session.task = nil
         session.localVerified = nil
         session.remoteVerified = nil
+        session.password = nil // 进程已死，密码随之丢弃
 
         var snap = baseSnapshot(profileID: profileID, phase: phase)
         snap.humanReadableDetail = detail
@@ -345,7 +419,8 @@ final class SSHTunnelCoordinator: TunnelService {
         return await remoteProber.probe(
             profile: profile,
             remotePort: profile.remotePort,
-            protocol: profile.preferredProtocol
+            protocol: profile.preferredProtocol,
+            password: session.password
         )
     }
 

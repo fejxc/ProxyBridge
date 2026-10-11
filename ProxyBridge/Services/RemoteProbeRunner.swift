@@ -23,7 +23,8 @@ enum RemoteProbeOutcome: Equatable, Sendable {
 
 /// 远端探测执行抽象（测试注入 / 生产 SSH 实现）。
 protocol RemoteProbeExecuting: AnyObject, Sendable {
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol) async -> RemoteProbeOutcome
+    /// `password` 非空时经 PTY 应答远端 ssh 的密码提示（内存中临时使用，不落盘）。
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome
 }
 
 /// 生产实现：一次性 `ssh` 执行受控远端脚本，收集 stdout/exit 后解析。
@@ -35,21 +36,45 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
         self.factory = factory
     }
 
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol) async -> RemoteProbeOutcome {
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String? = nil) async -> RemoteProbeOutcome {
         let args = RemoteProbeCommand.arguments(
             profile: profile,
             remotePort: remotePort,
             protocol: `protocol`,
             urlString: CurlProxyProbe.verificationURL
         )
-        let handle = factory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+        let usePTY = password != nil
+        let handle = usePTY
+            ? factory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+            : factory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
         do {
             try handle.start()
         } catch {
             return .unknown(reason: "无法启动远端探测 ssh：\(error.localizedDescription)")
         }
-        // 取消 → 终止探测进程（不留孤儿 ssh）；等待循环对取消即时退出（不做忙等）
         return await withTaskCancellationHandler {
+            // 密码模式：等待密码提示并应答（NumberOfPasswordPrompts=1，错密码立即失败）
+            if usePTY {
+                let promptDeadline = Date().addingTimeInterval(15)
+                var sawPrompt = false
+                while handle.isRunning && Date() < promptDeadline {
+                    if handle.stderrTail.lowercased().contains("password") {
+                        sawPrompt = true
+                        break
+                    }
+                    do { try await Task.sleep(nanoseconds: 50_000_000) }
+                    catch { handle.terminate(); return .unknown(reason: "远端探测已取消") }
+                }
+                guard sawPrompt else {
+                    handle.terminate()
+                    return .unknown(reason: handle.isRunning ? "远端探测超时（未见密码提示）" : "远端 ssh 未进入密码提示（主机密钥/网络问题？）")
+                }
+                guard let password, !password.isEmpty else {
+                    handle.terminate()
+                    return .unknown(reason: "密码模式缺少会话密码")
+                }
+                handle.writePTY(password + "\n")
+            }
             // 脚本内部 --max-time 8 + ssh ConnectTimeout 10 → 上限 ~20s，轮询等待
             let deadline = Date().addingTimeInterval(20)
             while handle.isRunning && Date() < deadline {

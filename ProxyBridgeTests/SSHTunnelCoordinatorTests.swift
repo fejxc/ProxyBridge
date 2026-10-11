@@ -96,6 +96,16 @@ final class FakeSSHHandle: SSHProcessHandle, @unchecked Sendable {
     }
 
     var stdoutTail: String { "" }
+
+    var onPTYOutput: (@Sendable (String) -> Void)?
+
+    /// 记录写入 PTY 的内容（密码流私密性测试用）。
+    private(set) var ptyWrites: [String] = []
+    func writePTY(_ text: String) {
+        lock.lock()
+        ptyWrites.append(text)
+        lock.unlock()
+    }
 }
 
 /// 可编排的工厂：记录 make 调用，按队列出句柄（空则自动新建）。
@@ -158,15 +168,17 @@ final class StubRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     var outcome: RemoteProbeOutcome
     private let lock = NSLock()
     private var calls = 0
+    private(set) var lastPassword: String?
     init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
     var callCount: Int {
         lock.lock()
         defer { lock.unlock() }
         return calls
     }
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol) async -> RemoteProbeOutcome {
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome {
         lock.lock()
         calls += 1
+        lastPassword = password
         lock.unlock()
         return outcome
     }
@@ -182,6 +194,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
     private var remoteProber = StubRemoteProber(outcome: .verified(statusCode: 200))
     private var coordinator: SSHTunnelCoordinator!
     private var recorder = Recorder<TunnelSnapshot>()
+    private var passwordPrompts = Recorder<UUID>()
 
     /// 装配（在测试内调用：setUp 重写与 @MainActor 隔离不兼容）。
     private func makeCoordinator(
@@ -199,9 +212,14 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         )
         coordinator.graceSeconds = grace
         recorder = Recorder<TunnelSnapshot>()
+        passwordPrompts = Recorder<UUID>()
         let box = recorder
+        let prompts = passwordPrompts
         coordinator.onEvent = { event in
-            if case .snapshot(let snap) = event { box.append(snap) }
+            switch event {
+            case .snapshot(let snap): box.append(snap)
+            case .passwordPromptRequested(let id): prompts.append(id)
+            }
         }
     }
 
@@ -581,6 +599,68 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.snapshot.last?.phase, .error)
         let last = recorder.snapshot.last
         XCTAssertFalse(last?.isEndToEndVerified == true, "ssh 已死时不得呈端到端已验证")
+    }
+
+    // MARK: 密码模式（PTY 握手）
+
+    private func passwordProfile() -> ServerProfile {
+        var p = ServerProfile(
+            name: "密码机", host: "10.11.154.192", sshPort: 22,
+            username: "root", authMode: .password, remotePort: 7890
+        )
+        p.id = UUID(uuidString: "ABCDEF00-0000-0000-0000-0000000000C0")!
+        return p
+    }
+
+    func testPasswordFlowPromptsSubmitsAndConnects() async {
+        makeCoordinator(grace: 0.1)
+        let handle = FakeSSHHandle()
+        factory.enqueue(handle)
+        let cfg = TunnelConfiguration(profile: passwordProfile(), localEndpoint: endpoint)
+
+        coordinator.connect(configuration: cfg)
+        // ssh 启动后出现密码提示
+        _ = await waitUntil { handle.startWasCalled }
+        handle.setStderr("root@10.11.154.192's password:")
+        let prompts = passwordPrompts
+        let prompted = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
+        XCTAssertTrue(prompted, "检测到提示后必须请求 UI 输入密码")
+
+        coordinator.submitPassword(profileID: cfg.profile.id, password: "s3cret-value")
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected)
+
+        // 密码经 PTY 交给 ssh（含换行）
+        XCTAssertEqual(handle.ptyWrites.last, "s3cret-value\n")
+        // 远端探测复用会话密码
+        let prober = remoteProber
+        let remotePass = await waitUntilMain { prober.lastPassword != nil }
+        XCTAssertTrue(remotePass)
+        XCTAssertEqual(prober.lastPassword, "s3cret-value")
+
+        // 私密性：所有快照/日志 detail 绝不包含密码
+        let leaked = recorder.snapshot.contains { $0.humanReadableDetail.contains("s3cret-value") }
+        XCTAssertFalse(leaked, "密码不得出现在任何状态文案中")
+    }
+
+    func testCancelPasswordPromptEndsInIdleWithNoGhostEvents() async {
+        makeCoordinator(grace: 0.1)
+        let handle = FakeSSHHandle()
+        factory.enqueue(handle)
+        let cfg = TunnelConfiguration(profile: passwordProfile(), localEndpoint: endpoint)
+        coordinator.connect(configuration: cfg)
+        _ = await waitUntil { handle.startWasCalled }
+        handle.setStderr("root@10.11.154.192's password:")
+        let prompts = passwordPrompts
+        let prompted = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
+        XCTAssertTrue(prompted)
+
+        coordinator.cancelPasswordPrompt(profileID: cfg.profile.id)
+        let idle = await waitLastPhase(.idle)
+        XCTAssertTrue(idle)
+        let quiet = await awaitQuiet(countAtStart: recorder.count, stableMilliseconds: 300)
+        XCTAssertTrue(quiet, "取消后不得再有事件")
+        XCTAssertTrue(handle.wasTerminated, "取消必须终止本次 ssh 尝试")
     }
 
     // MARK: ssh 环境白名单
