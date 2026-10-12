@@ -1,6 +1,6 @@
 # 实时流量统计实现与验收（1.2.0）
 
-验收日期：2026-10-12。本地验收完成，1.2.0 已准备通过版本标签触发 GitHub 发布工作流；云端结果以 Actions 和 Release 页面为准。现有 1.1.0 不包含此功能。
+验收日期：2026-10-12。1.2.0 已发布，标签对应提交 faf4b00。GitHub CI 和发布工作流全部通过；1.1.0 不包含此功能。
 
 ## 最小改动方案与最终文件
 
@@ -59,7 +59,8 @@ Linux:远端端口 → 原系统 OpenSSH 反向隧道 → Mac:Relay → Mac:本�
 | 真实服务器端到端 | 通过，现有服务器 curl HTTP 200；终止本测试所属 SSH 后自动重连再次 HTTP 200；周期检查通过；手动断开后无再次状态事件/重连 |
 | 浅色/深色界面 | 通过，SwiftUI ImageRenderer 生成并检查 build/traffic-light.png、build/traffic-dark.png；数据来源为本地真实 TCP 测量 |
 | 本地安装与通用 DMG | 通过，/Applications/ProxyBridge.app；arm64/x86_64 编译、通用二进制、签名与磁盘镜像校验 |
-| Intel 实机运行 | 未验证；云端验证和发布结果以对应 Actions 页面为准 |
+| GitHub CI 与发布 | 通过：Xcode 构建、完整 XCTest、arm64/x86_64 编译与冒烟/真实 TCP 测试、通用 DMG 校验及 Release 上传 |
+| Intel 用户设备安装与界面 | 未验证；Intel GitHub runner 的编译和 TCP 测试已通过 |
 | App Sandbox 下运行 | 未验证，当前未启用 Sandbox |
 
 本地 TCP 验收日志：build/relay-test-result.log。原始字节统计采用可控测试服务，不能仅由 UI 数值判断是否通过。
@@ -75,3 +76,11 @@ bash scripts/build_dmg.sh 1.2.0
 ```
 
 产物：build/dist/ProxyBridge-1.2.0-universal.dmg 及同目录 SHA-256 文件。当前为 ad-hoc 签名，未做 Apple 公证。
+
+## 发布证据
+
+- [源码 CI（faf4b00）](https://github.com/fejxc/ProxyBridge/actions/runs/38252207613)：成功，完整 XCTest 成功。
+- [双架构验证、打包与发布](https://github.com/fejxc/ProxyBridge/actions/runs/38252211648)：所有任务成功。
+- [v1.2.0 Release](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)：正式发布，包含 universal.dmg 和 SHA-256 文件。
+
+本地冒烟为 150 项，GitHub arm64 CI 日志为 149 项且 0 失败；检查总数受既有环境条件分支影响，不视为同一次验证的固定数量。

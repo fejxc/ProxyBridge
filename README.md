@@ -6,11 +6,11 @@
 
 **macOS 14+ 菜单栏 SSH 反向代理工具。**将 Mac 上的 HTTP 或 SOCKS5 本地代理，通过 SSH 安全转发到 Linux 服务器的回环地址。
 
-[下载 1.1.0 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.1.0/ProxyBridge-1.1.0-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
+[下载 1.2.0 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.2.0/ProxyBridge-1.2.0-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 
 ## 安装
 
-1. 下载 `ProxyBridge-1.1.0-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
+1. 下载 `ProxyBridge-1.2.0-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
 2. 打开 DMG，将 `ProxyBridge.app` 拖到「应用程序」文件夹，再双击启动。
 3. 如果 macOS 阻止打开，确认文件来自本仓库 Release 后，按 [Apple 官方说明](https://support.apple.com/102445)在「系统设置 → 隐私与安全性」中允许打开。
 
@@ -31,7 +31,7 @@
 
 Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器编辑窗口的「流量统计 Relay」中可指定固定端口（建议 17997）；端口占用时会停止连接并报告原因。旧配置可直接使用，无需改动服务器代理端口。
 
-1.2.0 新增此功能；发布构建完成后可在[版本页面](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)下载。顶部 1.1.0 下载不包含它。实现和验收见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
+1.2.0 已发布，可在[版本页面](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)下载。实现和验收见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
 ## 首次使用
 
