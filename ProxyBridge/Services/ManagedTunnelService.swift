@@ -180,6 +180,7 @@ final class ManagedTunnelService: TunnelService {
     private var remoteInterval: Double { remoteIntervalOverride ?? Double(settings.remoteCheckIntervalSeconds) }
 
     private func receive(_ event: TunnelEvent) {
+        if case .traffic = event { onEvent?(event); return }
         guard !suppressEvents else { return }
         guard case .snapshot(let snapshot) = event else { onEvent?(event); return }
         let id = snapshot.profileId

@@ -12,7 +12,7 @@ OUT="build/smoke"
 mkdir -p build
 SMOKE_SUPPORT=(tools/smoke/SmokeFakes.swift)
 # Older release tags do not contain runtime regression sources.
-for support in tools/smoke/RuntimeFakes.swift tools/smoke/RuntimeChecks.swift; do
+for support in tools/smoke/RuntimeFakes.swift tools/smoke/RuntimeChecks.swift tools/smoke/RelayLifecycleChecks.swift; do
   if [ -f "$support" ]; then SMOKE_SUPPORT+=("$support"); fi
 done
 

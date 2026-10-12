@@ -222,6 +222,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
             switch event {
             case .snapshot(let snap): box.append(snap)
             case .passwordPromptRequested(let id): prompts.append(id)
+            case .traffic: break
             }
         }
     }

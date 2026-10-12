@@ -68,6 +68,7 @@ jobs:
           test "$(uname -m)" = "$BUILD_ARCH"
           bash scripts/typecheck.sh "${BUILD_ARCH}-apple-macos14.0"
           bash scripts/smoke_test.sh "${BUILD_ARCH}-apple-macos14.0"
+          if [ -f scripts/relay_test.sh ]; then bash scripts/relay_test.sh; fi
 
   package:
     needs: [source, verify]

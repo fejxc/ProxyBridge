@@ -44,6 +44,8 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     var authMode: AuthenticationMode
     var identityFilePath: String?
     var remotePort: Int
+    /// nil selects an available loopback port.
+    var relayPort: Int?
     var proxySelectionMode: ProxySelectionMode
     var manualEndpoint: LocalProxyEndpoint?
     var preferredProtocol: ProxyProtocol
@@ -69,7 +71,8 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         preferredProtocol: ProxyProtocol = .http,
         reconnectEnabled: Bool = true,
         connectAtLaunch: Bool = false,
-        rememberPassword: Bool = false
+        rememberPassword: Bool = false,
+        relayPort: Int? = nil
     ) {
         self.id = id
         self.name = name
@@ -79,6 +82,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.authMode = authMode
         self.identityFilePath = identityFilePath
         self.remotePort = remotePort
+        self.relayPort = relayPort
         self.proxySelectionMode = proxySelectionMode
         self.manualEndpoint = manualEndpoint
         self.preferredProtocol = preferredProtocol
@@ -92,7 +96,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, host, sshPort, username, authMode, identityFilePath
-        case remotePort, proxySelectionMode, manualEndpoint, preferredProtocol
+        case relayPort, remotePort, proxySelectionMode, manualEndpoint, preferredProtocol
         case reconnectEnabled, connectAtLaunch, rememberPassword
     }
 
@@ -107,6 +111,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         authMode = try c.decode(AuthenticationMode.self, forKey: .authMode)
         identityFilePath = try c.decodeIfPresent(String.self, forKey: .identityFilePath)
         remotePort = try c.decode(Int.self, forKey: .remotePort)
+        relayPort = try c.decodeIfPresent(Int.self, forKey: .relayPort)
         proxySelectionMode = try c.decode(ProxySelectionMode.self, forKey: .proxySelectionMode)
         manualEndpoint = try c.decodeIfPresent(LocalProxyEndpoint.self, forKey: .manualEndpoint)
         preferredProtocol = try c.decode(ProxyProtocol.self, forKey: .preferredProtocol)
@@ -177,6 +182,9 @@ enum ServerProfileRule {
     /// 完整 profile 校验。错误阻止保存/连接；警告允许保存但需要用户知晓。
     static func validate(_ profile: ServerProfile) -> ProfileValidation {
         var result = ProfileValidation()
+        if let relayPort = profile.relayPort, !(1...65_535).contains(relayPort) {
+            result.errors.append("Relay 端口必须在 1–65535 之间")
+        }
 
         let nameCount = profile.name.trimmingCharacters(in: .whitespacesAndNewlines).count
         if !nameLengthLimits.contains(nameCount) {

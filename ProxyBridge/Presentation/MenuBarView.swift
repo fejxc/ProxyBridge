@@ -29,6 +29,13 @@ struct MenuBarView: View {
                     PasswordPromptCard()
                 }
                 checks
+                if let profile = model.currentProfile {
+                    TrafficStatsView(
+                        session: model.trafficStore.session(for: profile.id),
+                        connected: model.currentSnapshot.sshProcessRunning &&
+                            [.connected, .degraded].contains(model.currentSnapshot.phase)
+                    )
+                }
                 actions
                 links
             }

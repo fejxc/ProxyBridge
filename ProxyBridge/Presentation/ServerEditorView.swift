@@ -226,6 +226,14 @@ struct ServerEditorForm: View {
                             .foregroundStyle(Palette.ink)
                             .textSelection(.enabled)
                     }
+                    FormRow(label: "流量统计 Relay", help: "仅监听 127.0.0.1；默认由系统选择空闲端口，固定端口被占用时连接失败。") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle("固定本地 Relay 端口", isOn: Binding(get: { profile.relayPort != nil }, set: { profile.relayPort = $0 ? 17997 : nil }))
+                            if profile.relayPort != nil {
+                                PortField(value: Binding(get: { profile.relayPort ?? 17997 }, set: { profile.relayPort = $0 }), prompt: "Relay 端口")
+                            }
+                        }
+                    }
                     FormRow(label: "首选协议", help: "自动检测模式下优先采用该协议的实测结果；手动模式以手动端点为准。") {
                         Picker("首选协议", selection: $profile.preferredProtocol) {
                             Text("HTTP").tag(ProxyProtocol.http)

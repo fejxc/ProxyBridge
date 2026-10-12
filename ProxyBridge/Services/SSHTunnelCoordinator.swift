@@ -17,6 +17,7 @@ final class SSHTunnelCoordinator: TunnelService {
     private let localProber: any ProxyProbeExecuting
     private let remoteProber: any RemoteProbeExecuting
     private let secrets: any PasswordStoring
+    private let relayFactory: (any TCPRelayMaking)?
 
     /// 转发建立宽限（秒）：ExitOnForwardFailure=yes 下绑定失败会在认证后立即退出，
     /// 进程存活超过该窗口即认为转发已建立（再由远端探测给出端到端结论）。
@@ -35,23 +36,29 @@ final class SSHTunnelCoordinator: TunnelService {
         var probingRemote = false
         var profile: ServerProfile?
         var localEndpoint: LocalProxyEndpoint?
+        var relay: (any TCPRelaying)?
+        var trafficID: UUID?
         /// 密码模式：本次连接的密码（仅内存；断开/退出即丢弃，不落盘不进日志）。
         /// UI 经 submitPassword 写入；setup 任务轮询此字段（不再用 continuation 挂起）。
         var password: String?
     }
 
     private var sessions: [UUID: Session] = [:]
+    private var trafficGenerations: [UUID: UUID] = [:]
+    private var trafficSequences: [UUID: UInt64] = [:]
 
     init(
         processFactory: any SSHProcessFactory = FoundationSSHProcessFactory(),
         localProber: any ProxyProbeExecuting = CurlProxyProbe(),
         remoteProber: any RemoteProbeExecuting,
-        secrets: any PasswordStoring
+        secrets: any PasswordStoring,
+        relayFactory: (any TCPRelayMaking)? = nil
     ) {
         self.processFactory = processFactory
         self.localProber = localProber
         self.remoteProber = remoteProber
         self.secrets = secrets
+        self.relayFactory = relayFactory
     }
 
     // MARK: - TunnelService
@@ -75,6 +82,7 @@ final class SSHTunnelCoordinator: TunnelService {
         guard let session = sessions[profileID] else { return }
         // 用户断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
         session.userStopped = true
+        session.relay?.stop()
         session.password = nil // 断开即丢弃
         session.task?.cancel()
         session.task = nil
@@ -142,6 +150,7 @@ final class SSHTunnelCoordinator: TunnelService {
             session.task?.cancel()
             session.task = nil
             session.password = nil
+            session.relay?.stop()
             if let handle = session.handle {
                 handle.terminate()
                 scheduleForceKill(handle)
@@ -204,6 +213,46 @@ final class SSHTunnelCoordinator: TunnelService {
             return
         }
 
+        var sshEndpoint = localEndpoint
+        if let relayFactory {
+            let relay = relayFactory.make(profileID: id)
+            session.relay = relay
+            session.trafficID = relay.sessionID
+            trafficGenerations[id] = relay.sessionID
+            trafficSequences[id] = 0
+            onEvent?(.traffic(TrafficSnapshot(profileID: id, sessionID: relay.sessionID)))
+            relay.onStatistics = { [weak self] value in
+                Task { @MainActor [weak self] in
+                    guard let self, self.trafficGenerations[id] == value.sessionID else { return }
+                    guard value.sequence >= (self.trafficSequences[id] ?? 0) else { return }
+                    self.trafficSequences[id] = value.sequence
+                    self.onEvent?(.traffic(value))
+                    if !value.isRunning, self.trafficGenerations[id] == value.sessionID {
+                        self.trafficGenerations[id] = nil; self.trafficSequences[id] = nil
+                    }
+                }
+            }
+            let trafficID = relay.sessionID
+            relay.onFailure = { [weak self] detail in
+                Task { @MainActor [weak self] in self?.relayFailed(profileID: id, trafficID: trafficID, detail: detail) }
+            }
+            do {
+                let port = try await relay.start(port: UInt16(profile.relayPort ?? 0), target: localEndpoint)
+                guard !Task.isCancelled, !session.userStopped else { relay.stop(); return }
+                sshEndpoint = LocalProxyEndpoint(host: "127.0.0.1", port: Int(port), protocol: localEndpoint.protocol, origin: .manual)
+            } catch {
+                relay.stop()
+                guard !Task.isCancelled, !session.userStopped else { return }
+                finishSetup(session: session, profileID: id) {
+                    session.phase = .error
+                    var failure = self.baseSnapshot(profileID: id, phase: .error)
+                    failure.humanReadableDetail = "本地 Relay 无法启动（端口可能被占用）：\(error.localizedDescription)"
+                    return failure
+                }
+                return
+            }
+        }
+
         // 3) connecting：启动 ssh 进程
         var connecting = baseSnapshot(profileID: id, phase: .connecting)
         connecting.localProxyVerified = true
@@ -211,7 +260,7 @@ final class SSHTunnelCoordinator: TunnelService {
         session.phase = .connecting
         onEvent?(.snapshot(connecting))
 
-        let args = SSHCommandBuilder.arguments(profile: profile, localEndpoint: localEndpoint)
+        let args = SSHCommandBuilder.arguments(profile: profile, localEndpoint: sshEndpoint)
         let usePTY = profile.authMode == .password
         let handle = usePTY
             ? processFactory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
@@ -228,6 +277,7 @@ final class SSHTunnelCoordinator: TunnelService {
             try handle.start()
         } catch {
             session.handle = nil
+            session.relay?.stop()
             finishSetup(session: session, profileID: id) {
                 var errorState = self.baseSnapshot(profileID: id, phase: .error)
                 errorState.humanReadableDetail = "无法启动 SSH 进程：\(error.localizedDescription)"
@@ -258,6 +308,7 @@ final class SSHTunnelCoordinator: TunnelService {
             }
             guard !session.userStopped, !Task.isCancelled else { return }
             guard sawPrompt else {
+                session.relay?.stop()
                 handle.terminate()
                 scheduleForceKill(handle)
                 finishSetup(session: session, profileID: id) {
@@ -296,6 +347,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 guard !session.userStopped, !Task.isCancelled else { return }
                 guard let password = session.password, !password.isEmpty else {
                     session.password = nil
+                    session.relay?.stop()
                     handle.terminate()
                     scheduleForceKill(handle)
                     finishSetup(session: session, profileID: id) {
@@ -350,6 +402,11 @@ final class SSHTunnelCoordinator: TunnelService {
             finalSnap.humanReadableDetail = "隧道已建立，远端缺少 curl，无法验证（未验证 ≠ 可用）"
             session.phase = .degraded
         case .authRequired(let detail):
+            session.password = nil
+            session.relay?.stop()
+            handle.terminate()
+            scheduleForceKill(handle)
+            session.handle = nil
             session.remoteVerified = nil
             finalSnap = baseSnapshot(profileID: id, phase: .authRequired)
             finalSnap.humanReadableDetail = detail
@@ -414,6 +471,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 session.remoteVerified = nil
                 session.phase = .authRequired
                 session.password = nil
+                session.relay?.stop()
                 handle.terminate()
                 scheduleForceKill(handle)
                 session.handle = nil
@@ -471,6 +529,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 detail += "；已清除记住的密码，下次连接将重新询问"
             }
         }
+        session.relay?.stop()
         session.phase = phase
         session.handle = nil
         session.task?.cancel()
@@ -482,6 +541,19 @@ final class SSHTunnelCoordinator: TunnelService {
         var snap = baseSnapshot(profileID: profileID, phase: phase)
         snap.humanReadableDetail = detail
         onEvent?(.snapshot(snap))
+    }
+
+    private func relayFailed(profileID: UUID, trafficID: UUID, detail: String) {
+        guard let session = sessions[profileID], session.trafficID == trafficID, !session.userStopped else { return }
+        session.task?.cancel(); session.task = nil
+        session.phase = .error
+        session.password = nil
+        session.localVerified = nil; session.remoteVerified = nil
+        if let handle = session.handle { handle.terminate(); scheduleForceKill(handle) }
+        session.handle = nil
+        var snapshot = baseSnapshot(profileID: profileID, phase: .error)
+        snapshot.humanReadableDetail = detail
+        onEvent?(.snapshot(snapshot))
     }
 
     private func remoteVerify(session: Session, profile: ServerProfile) async -> RemoteProbeOutcome {
@@ -527,6 +599,7 @@ final class SSHTunnelCoordinator: TunnelService {
 
     /// 前置检查：失败原因（nil = 通过）。
     static func preflightFailure(profile: ServerProfile) -> String? {
+        if let port = profile.relayPort, !(1...65_535).contains(port) { return "Relay 端口必须在 1–65535 之间" }
         guard FileManager.default.isExecutableFile(atPath: SSHCommandBuilder.executableURL.path) else {
             return "系统缺少 /usr/bin/ssh"
         }

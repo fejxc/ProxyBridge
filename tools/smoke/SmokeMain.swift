@@ -29,6 +29,7 @@ struct SmokeMain {
         await ptyChecks()
         await probeRegressionChecks()
         await runtimeChecks()
+        await relayLifecycleChecks()
         await tunnelCoordinatorChecks()
         loopbackGuardChecks()
 

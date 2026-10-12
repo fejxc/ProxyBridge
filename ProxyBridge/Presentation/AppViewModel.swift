@@ -21,6 +21,7 @@ final class AppViewModel {
     let proxyDetector: ProxyDetectorService
     let logStore: LogStore
     /// SSH 密码的安全存储（生产 Keychain；测试内存实现）。
+    let trafficStore = TrafficStore()
     let secrets: any PasswordStoring
 
     // MARK: - 状态
@@ -87,7 +88,8 @@ final class AppViewModel {
                 processFactory: FoundationSSHProcessFactory(),
                 localProber: CurlProxyProbe(),
                 remoteProber: SSHRemoteProbe(factory: FoundationSSHProcessFactory()),
-                secrets: KeychainPasswordStore()
+                secrets: KeychainPasswordStore(),
+                relayFactory: TCPRelayFactory()
             )),
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
@@ -179,6 +181,8 @@ final class AppViewModel {
         tunnel.onEvent = { [weak self] event in
             guard let self else { return }
             switch event {
+            case .traffic(let snapshot):
+                if self.profiles.contains(where: { $0.id == snapshot.profileID }) { self.trafficStore.update(snapshot) }
             case .snapshot(let snap):
                 self.applySnapshot(snap)
             case .passwordPromptRequested(let profileId):
@@ -345,6 +349,7 @@ final class AppViewModel {
                 || old.authMode != profile.authMode
                 || old.identityFilePath != profile.identityFilePath
                 || old.remotePort != profile.remotePort
+                || old.relayPort != profile.relayPort
             if connectionRelevantChange,
                let snap = snapshots[profile.id], snap.phase == .connected || snap.phase == .degraded {
                 var updated = snap
@@ -373,6 +378,7 @@ final class AppViewModel {
         let name = profiles.first { $0.id == id }?.name ?? "?"
         profiles.removeAll { $0.id == id }
         snapshots[id] = nil
+        trafficStore.remove(id)
         pendingStartupProfiles.remove(id)
         notificationTasks.removeValue(forKey: id)?.cancel()
         notificationGenerations[id] = nil

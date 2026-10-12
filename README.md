@@ -25,6 +25,14 @@
 - 支持本地与远端周期检查、睡眠和唤醒恢复、系统登录项、启动时连接选定服务器及连接异常通知。
 - 日志会脱敏，不记录密码、密钥内容或完整认证信息。
 
+## 实时流量（1.2.0）
+
+当前源码新增本地 TCP Relay，链路为 `Linux → SSH → Mac Relay → 本地代理`。连接面板显示实际上传、下载速率及累计流量，展开可查看最近 60 秒曲线。上传指 Linux → Mac 本地代理，下载为反方向；只统计 Relay 成功转发的业务字节，包含代理健康检查，不包含 SSH 协议开销。断开保留本次累计量，重连开始新统计。
+
+Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器编辑窗口的「流量统计 Relay」中可指定固定端口（建议 17997）；端口占用时会停止连接并报告原因。旧配置可直接使用，无需改动服务器代理端口。
+
+1.2.0 新增此功能；发布构建完成后可在[版本页面](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)下载。顶部 1.1.0 下载不包含它。实现和验收见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
+
 ## 首次使用
 
 1. 在这台 Mac 上启动本地代理客户端，确认 HTTP 或 SOCKS5 回环代理正常运行。
@@ -52,9 +60,10 @@ bash scripts/xcode_test.sh
 
 ```bash
 bash scripts/typecheck.sh       # App 与测试代码类型检查
-bash scripts/smoke_test.sh      # 143 项可执行回归检查
+bash scripts/smoke_test.sh      # 当前源码 150 项可执行回归检查
+bash scripts/relay_test.sh      # 真实本地 TCP 转发、精度与清理验证
 bash scripts/install_app.sh     # 构建并安装到 /Applications
-bash scripts/build_dmg.sh 1.1.0 # 构建通用 DMG 和 SHA-256 文件
+bash scripts/build_dmg.sh 1.2.0 # 构建通用 DMG 和 SHA-256 文件
 ```
 
 推送 `vX.Y.Z` 格式的版本标签会触发 GitHub Actions：分别在 Apple Silicon 和 Intel runner 上检查，再构建和验证通用 DMG，最后发布 GitHub Release。详见[发布流程](docs/RELEASE.md)。

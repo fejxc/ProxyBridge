@@ -53,6 +53,7 @@ struct TunnelConfiguration: Sendable, Equatable {
 /// 隧道服务向 UI 上报的事件。
 enum TunnelEvent: Sendable {
     case snapshot(TunnelSnapshot)
+    case traffic(TrafficSnapshot)
     /// 密码模式：等待用户在 UI 输入 SSH 密码（经 PTY 应答，内存中使用、不落盘）。
     case passwordPromptRequested(profileID: UUID)
 }
