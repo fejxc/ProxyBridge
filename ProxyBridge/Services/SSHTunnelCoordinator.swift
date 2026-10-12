@@ -106,6 +106,15 @@ final class SSHTunnelCoordinator: TunnelService {
         }
     }
 
+    func runLocalHealthCheck(profileID: UUID) {
+        guard let session = sessions[profileID], session.task == nil, !session.userStopped,
+              session.phase == .connected || session.phase == .degraded,
+              session.handle?.isRunning == true else { return }
+        session.task = Task { @MainActor [weak self] in
+            await self?.runHealthRefresh(session: session, includeRemote: false)
+        }
+    }
+
     func isActive(profileID: UUID) -> Bool {
         guard let session = sessions[profileID] else { return false }
         return session.task != nil || session.handle?.isRunning == true
@@ -356,7 +365,7 @@ final class SSHTunnelCoordinator: TunnelService {
 
     /// 健康检查：复核本地 + 远端（带冷却与并发锁），只影响 connected/degraded。
     /// 每个挂起点之后都必须重新验证会话状态——用户断开 / 进程死亡的终态绝不被翻转。
-    private func runHealthRefresh(session: Session) async {
+    private func runHealthRefresh(session: Session, includeRemote: Bool = true) async {
         defer { session.task = nil }
         guard let profile = session.profile else { return }
         let id = profile.id
@@ -380,7 +389,7 @@ final class SSHTunnelCoordinator: TunnelService {
         // 远端复核（冷却 + 并发锁 + 断开守卫）
         var remoteOutcome: RemoteProbeOutcome?
         let cooled = session.lastRemoteProbeAt.map { Date().timeIntervalSince($0) >= remoteProbeCooldown } ?? true
-        if cooled && !session.probingRemote {
+        if includeRemote && cooled && !session.probingRemote {
             guard !session.userStopped, !Task.isCancelled,
                   session.handle?.isRunning == true else { return }
             remoteOutcome = await remoteVerify(session: session, profile: profile)
@@ -399,14 +408,29 @@ final class SSHTunnelCoordinator: TunnelService {
                 session.remoteVerified = true
                 snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP \(code)）"
             case .remoteCurlMissing, .unknown:
-                if session.remoteVerified != true { session.remoteVerified = nil }
-                snap.humanReadableDetail = "手动检查完成：远端本次无法验证（结论沿用上次）"
-            case .notProxy, .connectionFailure, .authRequired:
+                session.remoteVerified = nil
+                snap.humanReadableDetail = "健康检查完成：远端本次无法验证，连接已降级"
+            case .authRequired(let detail):
+                session.remoteVerified = nil
+                session.phase = .authRequired
+                session.password = nil
+                handle.terminate()
+                scheduleForceKill(handle)
+                session.handle = nil
+                snap.sshProcessRunning = false
+                snap.humanReadableDetail = detail
+                if profile.authMode == .password, detail.contains("认证被拒绝"), secrets.exists(for: id) {
+                    secrets.delete(for: id)
+                    snap.humanReadableDetail += "；已清除记住的密码，请手动重新连接"
+                }
+            case .notProxy, .connectionFailure:
                 session.remoteVerified = false
                 snap.humanReadableDetail = "手动检查完成：远端验证未通过"
             }
         } else {
-            snap.humanReadableDetail = "手动检查完成（远端探测冷却中，结论沿用上次）"
+            snap.humanReadableDetail = includeRemote
+                ? "健康检查完成（远端探测冷却中，结论沿用上次）"
+                : "本地健康检查完成：\(localOK ? "代理可用" : "代理未通过验证")"
         }
 
         // 相位重算（基于复查后的会话状态）：三层全绿才 connected；任一失败降级（不保留旧绿）
@@ -419,6 +443,7 @@ final class SSHTunnelCoordinator: TunnelService {
         } else {
             snap.phase = session.phase
         }
+        snap.remoteProbeVerified = session.remoteVerified
         onEvent?(.snapshot(snap))
     }
 
@@ -436,7 +461,8 @@ final class SSHTunnelCoordinator: TunnelService {
 
         // 密码模式认证失败：给出密码语向的具体原因（而非泛化的密钥/agent 提示）
         if case .authRequired = classification,
-           session.profile?.authMode == .password {
+           session.profile?.authMode == .password,
+           stderr.lowercased().contains("permission denied") {
             detail = "密码认证被拒绝：密码不正确，或服务器已关闭密码登录（PasswordAuthentication no）"
             // 以钥匙串实际内容为准清除（不能用连接时捕获的旧 profile 副本判断——
             // 「记住」往往是在连接发起后才勾选的，旧副本还是 false）

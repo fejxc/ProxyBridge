@@ -2,8 +2,7 @@ import Foundation
 
 /// 通用设置（通用设置 Tab 持久化的全部字段）。
 struct AppSettings: Codable, Equatable {
-    /// 用户是否请求登录启动。实际生效依赖阶段 D 的 SMAppService 注册；
-    /// 阶段 A 仅记录意图，不声称已注册。
+    /// 用户请求的登录启动偏好；界面以 SMAppService 实际状态为准。
     var launchAtLoginRequested: Bool
     var showNotifications: Bool
     /// 远端健康检查周期（秒）。默认 60，避免过度探测。

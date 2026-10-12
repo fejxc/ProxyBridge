@@ -36,8 +36,21 @@ final class AppViewModel {
     }
     private(set) var settings: AppSettings = .defaults()
     var settingsTab: SettingsTab = .servers
+    var showSettingsWindow: (() -> Void)?
 
     private var document: ProfilesDocument = .empty()
+    private let systemServices: (any AppSystemIntegrating)?
+    private(set) var loginLaunchEnabled = false
+    private(set) var loginStatusDescription = "仅安装后的应用可以设置登录启动"
+    private(set) var notificationStatusDescription = "尚未授权通知"
+    private(set) var changingLoginState = false
+    private var passwordPromptQueue: [UUID] = []
+    var degradedNotificationDelaySeconds: Double = 60
+    private var pendingStartupProfiles: Set<UUID> = []
+    private var loginErrorMessage: String?
+    private var notificationGenerations: [UUID: UUID] = [:]
+    private var notificationTasks: [UUID: Task<Void, Never>] = [:]
+    private var notificationPolicy = ConnectionNotificationPolicy()
     private var connectionEndpoints: [UUID: LocalProxyEndpoint] = [:]
     /// App 退出清理观察者（PRD F05：退出时清理自身 SSH 子进程）。
     private var terminateObserver: (any NSObjectProtocol)?
@@ -50,7 +63,8 @@ final class AppViewModel {
         tunnel: TunnelService,
         proxyDetector: ProxyDetectorService,
         logStore: LogStore,
-        secrets: any PasswordStoring
+        secrets: any PasswordStoring,
+        systemServices: (any AppSystemIntegrating)? = nil
     ) {
         self.profileStore = profileStore
         self.settingsStore = settingsStore
@@ -58,6 +72,7 @@ final class AppViewModel {
         self.proxyDetector = proxyDetector
         self.logStore = logStore
         self.secrets = secrets
+        self.systemServices = systemServices
 
         bootstrap()
     }
@@ -68,19 +83,20 @@ final class AppViewModel {
         AppViewModel(
             profileStore: ProfileRepository(),
             settingsStore: AppSettingsStore(),
-            tunnel: SSHTunnelCoordinator(
+            tunnel: ManagedTunnelService(underlying: SSHTunnelCoordinator(
                 processFactory: FoundationSSHProcessFactory(),
                 localProber: CurlProxyProbe(),
                 remoteProber: SSHRemoteProbe(factory: FoundationSSHProcessFactory()),
                 secrets: KeychainPasswordStore()
-            ),
+            )),
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
                 prober: CurlProxyProbe(),
                 monitor: SCDynamicStoreChangeMonitor()
             ),
             logStore: LogStore(),
-            secrets: KeychainPasswordStore()
+            secrets: KeychainPasswordStore(),
+            systemServices: AppSystemServices()
         )
     }
 
@@ -114,7 +130,27 @@ final class AppViewModel {
             snapshots[p.id] = TunnelSnapshot.idle(p.id)
         }
 
+        pendingStartupProfiles = Set(profiles.filter(\.connectAtLaunch).map(\.id))
         wireServices()
+        tunnel.updateRuntimeSettings(settings)
+        systemServices?.onSleep = { [weak self] in
+            self?.pendingPasswordProfileId = nil
+            self?.passwordPromptQueue.removeAll()
+            self?.tunnel.prepareForSleep()
+        }
+        systemServices?.onWake = { [weak self] in
+            self?.proxyDetector.detect()
+            self?.tunnel.resumeAfterWake()
+        }
+        if let runtime = tunnel as? ManagedTunnelService {
+            runtime.resolveEndpoint = { [weak self] profile in
+                guard let self else { return nil }
+                let endpoint = self.endpointValue(of: EndpointResolver.resolve(profile: profile, detection: self.detection))
+                self.connectionEndpoints[profile.id] = endpoint
+                return endpoint
+            }
+        }
+        refreshSystemStatus()
 
         // App 退出：终止全部本 App 拥有的 ssh 子进程（幂等、只杀自己的 PID）
         terminateObserver = NotificationCenter.default.addObserver(
@@ -124,7 +160,7 @@ final class AppViewModel {
         ) { [weak self] _ in
             // queue: .main 保证主线程；同步清理（Task 跳跃可能晚于进程退出）
             MainActor.assumeIsolated {
-                self?.tunnel.terminateAllSessions()
+                self?.shutdown()
             }
         }
 
@@ -146,16 +182,25 @@ final class AppViewModel {
             case .snapshot(let snap):
                 self.applySnapshot(snap)
             case .passwordPromptRequested(let profileId):
-                self.pendingPasswordProfileId = profileId
+                if self.pendingPasswordProfileId == nil { self.pendingPasswordProfileId = profileId }
+                else if self.pendingPasswordProfileId != profileId && !self.passwordPromptQueue.contains(profileId) {
+                    self.passwordPromptQueue.append(profileId)
+                }
                 self.logStore.append(
-                    raw: "服务器需要 SSH 密码：请在面板中输入（密码仅本次连接在内存中使用，不会保存）",
+                    raw: "服务器需要 SSH 密码：请在面板中输入（密码在内存中使用，勾选记住才写入本机钥匙串）",
                     level: .info,
                     profileId: profileId
                 )
             }
         }
         proxyDetector.onStateChange = { [weak self] state in
-            self?.detection = state
+            guard let self else { return }
+            self.detection = state
+            if !state.isScanning {
+                let ids = self.pendingStartupProfiles
+                self.pendingStartupProfiles.removeAll()
+                for profile in self.profiles where ids.contains(profile.id) { self.connect(profile: profile) }
+            }
         }
     }
 
@@ -315,6 +360,7 @@ final class AppViewModel {
             if currentProfileId == nil { currentProfileId = profile.id }
             logStore.append(raw: "新增服务器「\(profile.name)」", level: .success, profileId: profile.id)
         }
+        tunnel.updateReconnectPreference(profileID: profile.id, enabled: profile.reconnectEnabled, rememberPassword: profile.rememberPassword)
         persist()
     }
 
@@ -327,6 +373,11 @@ final class AppViewModel {
         let name = profiles.first { $0.id == id }?.name ?? "?"
         profiles.removeAll { $0.id == id }
         snapshots[id] = nil
+        pendingStartupProfiles.remove(id)
+        notificationTasks.removeValue(forKey: id)?.cancel()
+        notificationGenerations[id] = nil
+        notificationPolicy.reset(profileID: id)
+        finishPasswordPrompt(profileID: id)
         if currentProfileId == id {
             currentProfileId = profiles.first?.id
         }
@@ -338,6 +389,10 @@ final class AppViewModel {
 
     func connect() {
         guard let profile = currentProfile else { return }
+        connect(profile: profile)
+    }
+
+    private func connect(profile: ServerProfile) {
         guard ServerProfileRule.validate(profile).isValid else {
             logStore.append(raw: "服务器「\(profile.name)」配置未通过校验，已阻止连接", level: .error, profileId: profile.id)
             var snap = snapshots[profile.id] ?? TunnelSnapshot.idle(profile.id)
@@ -362,6 +417,7 @@ final class AppViewModel {
 
     func disconnect() {
         guard let profile = currentProfile else { return }
+        pendingStartupProfiles.remove(profile.id)
         logStore.append(raw: "用户手动断开「\(profile.name)」", level: .info, profileId: profile.id)
         tunnel.disconnect(profileID: profile.id)
     }
@@ -369,7 +425,7 @@ final class AppViewModel {
     /// 用户提交 SSH 密码（转发给隧道服务；勾选记住时存入本机钥匙串）。
     func submitPassword(_ password: String, remember: Bool) {
         guard let id = pendingPasswordProfileId else { return }
-        pendingPasswordProfileId = nil
+        finishPasswordPrompt(profileID: id)
         if remember {
             secrets.save(password, for: id)
             if var p = profiles.first(where: { $0.id == id }), !p.rememberPassword {
@@ -399,8 +455,19 @@ final class AppViewModel {
 
     func cancelPasswordPrompt() {
         guard let id = pendingPasswordProfileId else { return }
-        pendingPasswordProfileId = nil
+        finishPasswordPrompt(profileID: id)
         tunnel.cancelPasswordPrompt(profileID: id)
+    }
+
+    private func finishPasswordPrompt(profileID: UUID) {
+        passwordPromptQueue.removeAll { $0 == profileID }
+        if pendingPasswordProfileId == profileID {
+            pendingPasswordProfileId = nil
+            while !passwordPromptQueue.isEmpty {
+                let next = passwordPromptQueue.removeFirst()
+                if profiles.contains(where: { $0.id == next }) { pendingPasswordProfileId = next; break }
+            }
+        }
     }
 
     func runHealthCheck() {
@@ -477,6 +544,13 @@ final class AppViewModel {
         var next = settings
         mutate(&next)
         settings = next.sanitized
+        tunnel.updateRuntimeSettings(settings)
+        if !settings.showNotifications {
+            notificationTasks.values.forEach { $0.cancel() }
+            notificationTasks.removeAll()
+            notificationGenerations.removeAll()
+            systemServices?.clearNotifications()
+        }
         do {
             try settingsStore.save(settings)
         } catch {
@@ -521,6 +595,7 @@ final class AppViewModel {
     /// 菜单栏「查看日志」/设置按钮跳转。
     func openSettings(tab: SettingsTab) {
         settingsTab = tab
+        showSettingsWindow?()
     }
 
     // MARK: - 内部
@@ -535,6 +610,10 @@ final class AppViewModel {
     private func applySnapshot(_ snap: TunnelSnapshot) {
         let previous = snapshots[snap.profileId]
         snapshots[snap.profileId] = snap
+        considerNotification(snap)
+        if [.idle, .error, .authRequired].contains(snap.phase) {
+            finishPasswordPrompt(profileID: snap.profileId)
+        }
         if !snap.sshProcessRunning && [.idle, .error, .authRequired].contains(snap.phase) {
             connectionEndpoints[snap.profileId] = nil
         }
@@ -553,6 +632,87 @@ final class AppViewModel {
             level: level,
             profileId: snap.profileId
         )
+    }
+
+    func refreshSystemStatus() {
+        guard let services = systemServices else { return }
+        loginLaunchEnabled = services.loginState == .enabled || services.loginState == .requiresApproval
+        loginStatusDescription = services.loginState.description + (loginErrorMessage.map { "；" + $0 } ?? "")
+        Task { @MainActor [weak self] in
+            do { self?.notificationStatusDescription = try await services.notificationPermission(request: false).description }
+            catch { self?.notificationStatusDescription = "无法读取通知授权：\(error.localizedDescription)" }
+        }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        guard let services = systemServices, !changingLoginState else { return }
+        changingLoginState = true
+        loginErrorMessage = nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.changingLoginState = false; self.refreshSystemStatus() }
+            do {
+                try await services.setLoginEnabled(enabled)
+                let requested = services.loginState == .enabled || services.loginState == .requiresApproval
+                self.updateSettings { $0.launchAtLoginRequested = requested }
+                self.logStore.append(raw: services.loginState.description, level: .info)
+            } catch {
+                self.loginErrorMessage = "登录启动设置失败：\(error.localizedDescription)"
+                self.loginStatusDescription = self.loginErrorMessage!
+                self.logStore.append(raw: self.loginStatusDescription, level: .error)
+            }
+        }
+    }
+
+    func requestNotificationPermission() {
+        guard let services = systemServices else { return }
+        Task { @MainActor [weak self] in
+            do { self?.notificationStatusDescription = try await services.notificationPermission(request: true).description }
+            catch { self?.notificationStatusDescription = "通知授权失败：\(error.localizedDescription)" }
+        }
+    }
+
+    private func considerNotification(_ snapshot: TunnelSnapshot) {
+        let id = snapshot.profileId
+        if snapshot.phase == .idle || snapshot.phase == .connected {
+            notificationTasks.removeValue(forKey: id)?.cancel()
+            notificationGenerations[id] = nil
+            if snapshot.phase == .idle { notificationPolicy.reset(profileID: id) }
+            return
+        }
+        if snapshot.phase == .error || snapshot.phase == .authRequired {
+            notificationTasks.removeValue(forKey: id)?.cancel()
+            notificationGenerations[id] = nil
+        }
+        guard settings.showNotifications, let services = systemServices,
+              let message = ConnectionNotificationPolicy.message(for: snapshot.phase),
+              !snapshot.humanReadableDetail.contains("自动重连已关闭"), notificationTasks[id] == nil else { return }
+        let delay = snapshot.phase == .degraded ? degradedNotificationDelaySeconds : 0
+        let generation = UUID()
+        notificationGenerations[id] = generation
+        notificationTasks[id] = Task { @MainActor [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            catch { return }
+            guard let self, self.notificationGenerations[id] == generation else { return }
+            defer { self.notificationTasks[id] = nil; self.notificationGenerations[id] = nil }
+            guard !Task.isCancelled, self.settings.showNotifications,
+                  let current = self.snapshots[id], current.phase != .idle && current.phase != .connected,
+                  (snapshot.phase != .degraded || current.phase == .degraded) else { return }
+            guard self.notificationPolicy.shouldSend(profileID: id, now: Date()) else { return }
+            do { try await services.postNotification(profileID: id, body: message) }
+            catch { self.logStore.append(raw: "发送连接异常通知失败：\(error.localizedDescription)", level: .warning, profileId: id) }
+        }
+    }
+
+    func shutdown() {
+        notificationTasks.values.forEach { $0.cancel() }
+        notificationTasks.removeAll()
+        notificationGenerations.removeAll()
+        pendingStartupProfiles.removeAll()
+        pendingPasswordProfileId = nil
+        passwordPromptQueue.removeAll()
+        systemServices?.stopObserving()
+        tunnel.terminateAllSessions()
     }
 
     private func persist() {

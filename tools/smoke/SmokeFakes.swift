@@ -88,6 +88,7 @@ final class SmokeLocalProber: ProxyProbeExecuting, @unchecked Sendable {
 final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     var outcome: RemoteProbeOutcome
     private(set) var lastProtocol: ProxyProtocol?
+    private(set) var callCount = 0
     init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome { lastProtocol = `protocol`; return outcome }
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome { callCount += 1; lastProtocol = `protocol`; return outcome }
 }

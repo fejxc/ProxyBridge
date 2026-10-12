@@ -18,6 +18,14 @@ if len(versions) != 1:
 print(versions.pop())
 PYVERSION
 )
+BUILD_NUMBER=$(python3 - <<'PYBUILD'
+import re
+from pathlib import Path
+values = set(re.findall(r'CURRENT_PROJECT_VERSION = ([0-9]+);', Path('ProxyBridge.xcodeproj/project.pbxproj').read_text()))
+if len(values) != 1: raise SystemExit('工程构建号不一致')
+print(values.pop())
+PYBUILD
+)
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -40,7 +48,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 	<key>CFBundleIconFile</key><string>ProxyBridge</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>${VERSION}</string>
-	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleVersion</key><string>${BUILD_NUMBER}</string>
 	<key>CFBundleDevelopmentRegion</key><string>zh-Hans</string>
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSUIElement</key><true/>
@@ -49,20 +57,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "== 生成应用图标（缺失时）=="
-if [ ! -f "build/icon/ProxyBridge.icns" ]; then
-	mkdir -p build/icon
-	swift tools/make_icon.swift build/icon/icon_1024.png
-	ICONSET="build/icon/AppIcon.iconset"
-	rm -rf "$ICONSET" && mkdir -p "$ICONSET"
-	for s in 16 32 128 256 512; do
-		sips -z $s $s build/icon/icon_1024.png --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-		d=$((s*2))
-		sips -z $d $d build/icon/icon_1024.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-	done
-	iconutil -c icns "$ICONSET" -o build/icon/ProxyBridge.icns
+echo "== 应用图标 =="
+if [ -f "ProxyBridge/Resources/ProxyBridge.icns" ]; then
+    cp ProxyBridge/Resources/ProxyBridge.icns "$APP/Contents/Resources/ProxyBridge.icns"
+else
+    # Keep packaging historical release tags that predate the supplied logo.
+    mkdir -p build/icon
+    swift tools/make_icon.swift build/icon/icon_1024.png
+    ICONSET="build/icon/AppIcon.iconset"
+    rm -rf "$ICONSET" && mkdir -p "$ICONSET"
+    for size in 16 32 128 256 512; do
+        sips -z "$size" "$size" build/icon/icon_1024.png --out "$ICONSET/icon_${size}x${size}.png" >/dev/null
+        doubled=$((size*2))
+        sips -z "$doubled" "$doubled" build/icon/icon_1024.png --out "$ICONSET/icon_${size}x${size}@2x.png" >/dev/null
+    done
+    iconutil -c icns "$ICONSET" -o build/icon/ProxyBridge.icns
+    cp build/icon/ProxyBridge.icns "$APP/Contents/Resources/ProxyBridge.icns"
 fi
-cp build/icon/ProxyBridge.icns "$APP/Contents/Resources/ProxyBridge.icns"
 
 cp ProxyBridge/Resources/zh-Hans.lproj/Localizable.strings "$APP/Contents/Resources/Localizable.strings" 2>/dev/null || true
 mkdir -p "$APP/Contents/Resources/zh-Hans.lproj"

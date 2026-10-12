@@ -53,6 +53,9 @@
 		51A300000000000000000113 /* SSHErrorClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000113 /* SSHErrorClassifierTests.swift */; };
 		51A300000000000000000114 /* SSHTunnelCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */; };
 		51A300000000000000000115 /* MockServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000115 /* MockServices.swift */; };
+		51A300000000000000000020 /* ManagedTunnelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000020 /* ManagedTunnelService.swift */; };
+		51A300000000000000000021 /* AppSystemServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000021 /* AppSystemServices.swift */; };
+		51A300000000000000000022 /* ProxyBridge.icns in Resources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000022 /* ProxyBridge.icns */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -114,6 +117,9 @@
 		51A100000000000000000041 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		51A100000000000000000042 /* ProxyBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		51A200000000000000000115 /* MockServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockServices.swift; sourceTree = "<group>"; };
+		51A200000000000000000020 /* ManagedTunnelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedTunnelService.swift; sourceTree = "<group>"; };
+		51A200000000000000000021 /* AppSystemServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSystemServices.swift; sourceTree = "<group>"; };
+		51A200000000000000000022 /* ProxyBridge.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = ProxyBridge.icns; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -209,6 +215,8 @@
 				51A20000000000000000000B /* RemoteCommandTemplate.swift */,
 				51A20000000000000000000C /* TunnelService.swift */,
 				51A200000000000000000016 /* SystemProxyProvider.swift */,
+				51A200000000000000000021 /* AppSystemServices.swift */,
+				51A200000000000000000020 /* ManagedTunnelService.swift */,
 				51A200000000000000000017 /* ProxyProtocolProbe.swift */,
 				51A200000000000000000018 /* LocalProxyDetector.swift */,
 				51A200000000000000000019 /* SSHCommandBuilder.swift */,
@@ -241,6 +249,7 @@
 			isa = PBXGroup;
 			children = (
 				51A100000000000000000028 /* Localizable.strings */,
+				51A200000000000000000022 /* ProxyBridge.icns */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -354,6 +363,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				51A300000000000000000015 /* Localizable.strings in Resources */,
+				51A300000000000000000022 /* ProxyBridge.icns in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -376,6 +386,8 @@
 				51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */,
 				51A30000000000000000000C /* TunnelService.swift in Sources */,
 				51A300000000000000000016 /* SystemProxyProvider.swift in Sources */,
+				51A300000000000000000021 /* AppSystemServices.swift in Sources */,
+				51A300000000000000000020 /* ManagedTunnelService.swift in Sources */,
 				51A300000000000000000017 /* ProxyProtocolProbe.swift in Sources */,
 				51A300000000000000000018 /* LocalProxyDetector.swift in Sources */,
 				51A300000000000000000019 /* SSHCommandBuilder.swift in Sources */,
@@ -479,13 +491,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 1.0.0;
-				INFOPLIST_KEY_CFBundleVersion = 1;
+				INFOPLIST_KEY_CFBundleIconFile = ProxyBridge;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.1.0;
+				INFOPLIST_KEY_CFBundleVersion = 2;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -493,7 +506,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -506,13 +519,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_PREVIEWS = NO;
 				ENABLE_TESTABILITY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 1.0.0;
-				INFOPLIST_KEY_CFBundleVersion = 1;
+				INFOPLIST_KEY_CFBundleIconFile = ProxyBridge;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.1.0;
+				INFOPLIST_KEY_CFBundleVersion = 2;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -520,7 +534,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -533,14 +547,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -553,14 +567,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;

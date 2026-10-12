@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 通用设置。尚未实现的行为禁用展示。
+/// 通用设置与系统授权状态。
 struct GeneralSettingsView: View {
     @Environment(AppViewModel.self) private var model
 
@@ -10,21 +10,20 @@ struct GeneralSettingsView: View {
                 VStack(spacing: 0) {
                     settingRow(
                         title: "登录时启动 ProxyBridge",
-                        subtitle: "尚未支持；可在系统设置的「登录项」中手动添加应用。"
+                        subtitle: model.loginStatusDescription
                     ) {
                         Toggle("登录时启动", isOn: launchBinding)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
-                            .disabled(true)
+                            .disabled(model.changingLoginState)
                     }
                     divider
                     settingRow(
                         title: "显示连接异常通知",
-                        subtitle: "尚未支持；当前请在应用面板与日志中查看连接异常。"
+                        subtitle: model.notificationStatusDescription
                     ) {
                         Toggle("通知", isOn: notificationBinding)
-                            .disabled(true)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
@@ -32,7 +31,7 @@ struct GeneralSettingsView: View {
                     divider
                     settingRow(
                         title: "远端健康检查间隔",
-                        subtitle: "周期检查尚未支持；可使用「检查连接」手动验证。"
+                        subtitle: "定期在服务器上通过 curl 验证代理，每次只运行一个探测。"
                     ) {
                         Picker("间隔", selection: remoteIntervalBinding) {
                             ForEach(AppSettings.allowedRemoteIntervals, id: \.self) { seconds in
@@ -40,12 +39,11 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .frame(width: 110)
-                        .disabled(true)
                     }
                     divider
                     settingRow(
                         title: "本地轻量检查间隔",
-                        subtitle: "周期检查尚未支持；连接及手动检查时会验证本地代理。"
+                        subtitle: "定期验证当前隧道使用的本地代理，不登录远端。"
                     ) {
                         Picker("间隔", selection: localIntervalBinding) {
                             ForEach(AppSettings.allowedLocalIntervals, id: \.self) { seconds in
@@ -53,7 +51,6 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .frame(width: 110)
-                        .disabled(true)
                     }
                     divider
                     settingRow(
@@ -68,14 +65,18 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            InfoBlock(text: "连接和手动检查会验证本地代理、SSH 隧道及远端代理。当前不支持自动重连、周期检查或系统异常通知。")
+            HStack {
+                Button("授权通知") { model.requestNotificationPermission() }
+                Button("刷新系统授权状态") { model.refreshSystemStatus() }
+            }
+            InfoBlock(text: "自动重连由各服务器配置控制。网络故障按 1、2、4 秒逐步退避，最多等待 60 秒；认证或指纹错误不会自动重试。手动断开会停止恢复，睡眠后仅恢复此前允许自动重连的连接。")
 
             SectionCard(title: "关于") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("ProxyBridge · SSH 反向代理管理工具")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
-                    Text("版本：1.0.0")
+                    Text("版本：" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发构建"))
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
                     Text("通过 SSH 将 Mac 本地代理转发至服务器的回环端口。")
@@ -85,6 +86,7 @@ struct GeneralSettingsView: View {
                 }
             }
         }
+        .onAppear { model.refreshSystemStatus() }
     }
 
     private var divider: some View {
@@ -120,8 +122,8 @@ struct GeneralSettingsView: View {
 
     private var launchBinding: Binding<Bool> {
         Binding(
-            get: { model.settings.launchAtLoginRequested },
-            set: { on in model.updateSettings { $0.launchAtLoginRequested = on } }
+            get: { model.loginLaunchEnabled },
+            set: { on in model.setLaunchAtLogin(on) }
         )
     }
 

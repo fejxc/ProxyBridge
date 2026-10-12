@@ -16,6 +16,12 @@ protocol TunnelService: AnyObject {
     /// 手动「检查连接」：只做验证，不改配置。
     func runHealthCheck(profileID: UUID)
 
+    func runLocalHealthCheck(profileID: UUID)
+    func updateRuntimeSettings(_ settings: AppSettings)
+    func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool)
+    func prepareForSleep()
+    func resumeAfterWake()
+
     /// 该 profile 当前是否有活跃任务/进程。
     func isActive(profileID: UUID) -> Bool
 
@@ -27,6 +33,14 @@ protocol TunnelService: AnyObject {
 
     /// 用户取消密码输入：终止本次连接尝试。
     func cancelPasswordPrompt(profileID: UUID)
+}
+
+extension TunnelService {
+    func runLocalHealthCheck(profileID: UUID) { runHealthCheck(profileID: profileID) }
+    func updateRuntimeSettings(_ settings: AppSettings) {}
+    func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool) {}
+    func prepareForSleep() {}
+    func resumeAfterWake() {}
 }
 
 /// 传给隧道服务的一份完整连接描述。

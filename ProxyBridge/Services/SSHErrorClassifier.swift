@@ -24,7 +24,7 @@ enum SSHErrorClassifier {
         }
         if lower.contains("permission denied") {
             if lower.contains("publickey") || lower.contains("password") || lower.contains("keyboard-interactive") {
-                return .authRequired(detail: "SSH 认证被拒绝：检查密钥/ssh-agent 与远端 authorized_keys（App 不使用密码登录）")
+                return .authRequired(detail: "SSH 认证被拒绝：检查密码、密钥/ssh-agent 与远端 authorized_keys")
             }
             return .authRequired(detail: "SSH 认证被拒绝：检查密钥/ssh-agent 与远端 authorized_keys")
         }

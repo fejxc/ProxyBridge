@@ -10,13 +10,18 @@ cd "$(dirname "$0")/.."
 TARGET="${1:-$(uname -m)-apple-macos14.0}"
 OUT="build/smoke"
 mkdir -p build
+SMOKE_SUPPORT=(tools/smoke/SmokeFakes.swift)
+# Older release tags do not contain runtime regression sources.
+for support in tools/smoke/RuntimeFakes.swift tools/smoke/RuntimeChecks.swift; do
+  if [ -f "$support" ]; then SMOKE_SUPPORT+=("$support"); fi
+done
 
 echo "== 编译冒烟测试可执行文件（App 生产源码 + tools/smoke）=="
 swiftc -o "$OUT" -swift-version 5 -target "$TARGET" \
   ProxyBridge/Models/*.swift ProxyBridge/Persistence/*.swift ProxyBridge/Services/*.swift \
   ProxyBridge/Presentation/AppViewModel.swift \
   ProxyBridgeTests/MockServices.swift \
-  tools/smoke/SmokeFakes.swift \
+  "${SMOKE_SUPPORT[@]}" \
   tools/smoke/SmokeMain.swift
 
 echo "== 执行 =="

@@ -237,7 +237,7 @@ struct ServerEditorForm: View {
                             .controlSize(.small)
                     }
                     FormRow(label: "启动后连接") {
-                        Toggle("登录启动 App 后，自动连接此服务器", isOn: $profile.connectAtLaunch)
+                        Toggle("App 启动后，自动连接此服务器", isOn: $profile.connectAtLaunch)
                             .controlSize(.small)
                     }
                 }

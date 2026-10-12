@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: ['master', 'main']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    name: Build & Test (macOS 14)
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 工具链信息
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: 编译检查（App 模块 + 测试代码 + Swift 6 预检）
+        run: bash scripts/typecheck.sh
+
+      - name: 冒烟测试（生产代码直连断言）
+        run: bash scripts/smoke_test.sh
+
+      # 云端 runner 有完整 Xcode：补齐本地一直欠着的 xcodebuild + XCTest 真实执行
+      - name: xcodebuild build（Debug）
+        run: >
+          xcodebuild -project ProxyBridge.xcodeproj
+          -scheme ProxyBridge
+          -configuration Debug
+          CODE_SIGNING_ALLOWED=NO
+          build
+
+      - name: xcodebuild test（XCTest 全量）
+        run: >
+          xcodebuild -project ProxyBridge.xcodeproj
+          -scheme ProxyBridge
+          -configuration Debug
+          CODE_SIGNING_ALLOWED=NO
+          test
+
+      - name: 构建可分发的 .app
+        run: bash scripts/build_app.sh
+
+      - name: 上传 App 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProxyBridge-app
+          path: build/ProxyBridge.app
+          retention-days: 14

@@ -42,6 +42,14 @@ struct PasswordPromptCard: View {
                 }
             }
         }
+        .onChange(of: model.pendingPasswordProfileId) { _, _ in
+            passwordInput = ""
+            rememberInput = false
+        }
+        .onDisappear {
+            passwordInput = ""
+            rememberInput = false
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("输入 SSH 密码")
     }

@@ -4,13 +4,11 @@ import AppKit
 /// 菜单栏弹出面板（约 368pt 宽，结构对应原型 01）。
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
     @State private var confirmQuit = false
 
     /// 打开设置并把窗口带到前台（菜单栏应用无 Dock 图标，必须显式激活）。
     private func openSettingsFront(tab: SettingsTab) {
         model.openSettings(tab: tab)
-        openSettings()
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
