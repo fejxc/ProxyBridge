@@ -13,6 +13,8 @@ mkdir -p "$BUILD_DIR"
 
 XCODE_DEVELOPER=$(xcode-select -p)
 XCTEST_FRAMEWORKS="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/Library/Frameworks"
+XCTEST_SWIFT_MODULES="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/usr/lib"
+SWIFT_PLATFORM_LIBRARY="$(dirname "$(dirname "$(xcrun --find swiftc)")")/lib/swift/macosx"
 if [ -d "$XCTEST_FRAMEWORKS/XCTest.framework" ]; then
   HAS_XCODE=1
   echo "== 环境检测：完整 Xcode（使用真实 XCTest）=="
@@ -47,7 +49,7 @@ else
   rm -f "$BUILD_DIR/XCTest.swiftmodule" "$BUILD_DIR/XCTest.swiftdoc" "$BUILD_DIR/XCTest.swiftsourceinfo"
   echo "== [3/4] 测试代码类型检查（真实 XCTest + @testable 模块）=="
   swiftc -typecheck ProxyBridgeTests/*.swift \
-    -I "$BUILD_DIR" -F "$XCTEST_FRAMEWORKS" \
+    -I "$BUILD_DIR" -I "$XCTEST_SWIFT_MODULES" -I "$SWIFT_PLATFORM_LIBRARY" -F "$XCTEST_FRAMEWORKS" \
     -swift-version 5 -target "$TARGET" || exit 1
   echo "测试代码检查通过（0 error）"
 fi
