@@ -7,11 +7,13 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET="arm64-apple-macos14.0"
+TARGET="${1:-$(uname -m)-apple-macos14.0}"
 BUILD_DIR="build/typecheck"
 mkdir -p "$BUILD_DIR"
 
-if command -v xcodebuild >/dev/null 2>&1 && xcodebuild -version >/dev/null 2>&1; then
+XCODE_DEVELOPER=$(xcode-select -p)
+XCTEST_FRAMEWORKS="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/Library/Frameworks"
+if [ -d "$XCTEST_FRAMEWORKS/XCTest.framework" ]; then
   HAS_XCODE=1
   echo "== 环境检测：完整 Xcode（使用真实 XCTest）=="
 else
@@ -41,9 +43,11 @@ if [ "$HAS_XCODE" = "0" ]; then
     -swift-version 5 -target "$TARGET" || exit 1
   echo "测试代码检查通过（0 error）"
 else
+  # Remove an old CLT shim if this checkout is reused with a full Xcode toolchain.
+  rm -f "$BUILD_DIR/XCTest.swiftmodule" "$BUILD_DIR/XCTest.swiftdoc" "$BUILD_DIR/XCTest.swiftsourceinfo"
   echo "== [3/4] 测试代码类型检查（真实 XCTest + @testable 模块）=="
   swiftc -typecheck ProxyBridgeTests/*.swift \
-    -I "$BUILD_DIR" \
+    -I "$BUILD_DIR" -F "$XCTEST_FRAMEWORKS" \
     -swift-version 5 -target "$TARGET" || exit 1
   echo "测试代码检查通过（0 error）"
 fi

@@ -219,7 +219,7 @@ final class SSHTunnelCoordinator: TunnelService {
         session.handle = handle
         let sessionID = id
         handle.onExit = { [weak self, weak handle] code in
-            Task { @MainActor in
+            Task { @MainActor [weak self, weak handle] in
                 guard let self, let handle, self.sessions[sessionID]?.handle === handle else { return }
                 self.handleProcessExit(profileID: sessionID, exitCode: code)
             }
