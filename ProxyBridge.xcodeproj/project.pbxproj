@@ -297,7 +297,7 @@
 			);
 			productName = ProxyBridge;
 			productReference = 51A100000000000000000041 /* ProxyBridge.app */;
-			productType = "com.apple.product-type.app";
+			productType = "com.apple.product-type.application";
 		};
 		51A100000000000000000032 /* ProxyBridgeTests */ = {
 			isa = PBXNativeTarget;
