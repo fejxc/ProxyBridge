@@ -45,6 +45,16 @@ ProxyBridge/
     └── evidence/                # 运行证据（截图等）
 ```
 
+## 下载与安装（无需开发工具）
+
+在 [GitHub Releases](https://github.com/fejxc/ProxyBridge/releases/latest) 下载 `ProxyBridge-版本号-universal.dmg`，适用于 macOS 14+ 的 Apple Silicon 和 Intel Mac。
+
+打开 DMG，将 `ProxyBridge.app` 拖入 `Applications`，随后从应用程序文件夹启动。当前为 ad-hoc 签名、未经过 Apple 公证；首次运行若被阻止，确认下载来源后可按 [Apple 官方说明](https://support.apple.com/102445) 在系统设置的「隐私与安全性」中允许打开。
+
+每台 Mac 需自行配置代理客户端、服务器及 SSH 主机指纹；安装包不包含任何用户配置、密码或私钥。
+
+自动打包流程及发布方法见 [docs/RELEASE.md](docs/RELEASE.md)。
+
 ## 快速开始
 
 ### 有完整 Xcode 的 Mac（推荐）
@@ -60,7 +70,7 @@ bash scripts/xcode_test.sh          # 构建 + XCTest 全量测试
 
 ```bash
 bash scripts/typecheck.sh           # swiftc 全模块类型检查（App + 测试代码）
-bash scripts/smoke_test.sh          # 93 项核心逻辑断言（真实执行，含状态机序列与真实 ssh 进程证据）
+bash scripts/smoke_test.sh          # 114 项核心逻辑断言（真实执行，含状态机序列与真实 ssh 进程证据）
 
 # 日常安装（推荐）：构建 + 装入 /Applications + 自动启动
 bash scripts/install_app.sh

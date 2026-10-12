@@ -1,0 +1,125 @@
+name: Build and release DMG
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag, e.g. v1.0.0'
+        required: true
+        default: v1.0.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dmg-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - id: resolve
+        env:
+          REQUESTED_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Expected an existing vX.Y.Z tag'; exit 1; }
+          commit=$(git rev-parse --verify "refs/tags/${REQUESTED_TAG}^{commit}")
+          echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          path: source
+      - name: Use current build tools with tagged application source
+        run: cp scripts/{typecheck,smoke_test}.sh source/scripts/
+      - name: Native compile and smoke checks
+        working-directory: source
+        env:
+          BUILD_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$BUILD_ARCH"
+          bash scripts/typecheck.sh "${BUILD_ARCH}-apple-macos14.0"
+          bash scripts/smoke_test.sh "${BUILD_ARCH}-apple-macos14.0"
+
+  package:
+    needs: [source, verify]
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          path: source
+      - name: Use current packaging tools with tagged application source
+        run: cp scripts/{build_app,build_dmg}.sh source/scripts/
+      - name: Build and verify universal DMG
+        working-directory: source
+        env:
+          RELEASE_TAG: ${{ needs.source.outputs.tag }}
+        run: bash scripts/build_dmg.sh "${RELEASE_TAG#v}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dmg
+          path: source/build/dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    needs: [source, package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-dmg
+          path: dist
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.source.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<'NOTES'
+          下载 universal.dmg，适用于 macOS 14+ 的 Apple Silicon 和 Intel Mac。
+          打开 DMG，将 ProxyBridge.app 拖入 Applications 文件夹。
+          当前为 ad-hoc 签名，未经 Apple 公证；首次打开可能需要在系统设置的「隐私与安全性」中允许运行。
+          每台 Mac 需自行配置本地代理、服务器和主机指纹，安装包不包含用户凭据。
+          同时提供 SHA-256 文件用于校验下载内容。
+          NOTES
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "ProxyBridge ${RELEASE_TAG#v}" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

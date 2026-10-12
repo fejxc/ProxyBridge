@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET="arm64-apple-macos14.0"
+TARGET="${1:-$(uname -m)-apple-macos14.0}"
 OUT="build/smoke"
 mkdir -p build
 

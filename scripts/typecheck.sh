@@ -7,7 +7,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET="arm64-apple-macos14.0"
+TARGET="${1:-$(uname -m)-apple-macos14.0}"
 BUILD_DIR="build/typecheck"
 mkdir -p "$BUILD_DIR"
 
