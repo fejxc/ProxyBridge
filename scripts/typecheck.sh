@@ -1,23 +1,25 @@
 #!/bin/bash
 # 阶段 A 本地验证 ①：swiftc 全模块类型检查（App + XCTest 测试代码）
-# 适用：只装了 Command Line Tools（无完整 Xcode）的开发机。
-# 说明：XCTest 断言运行需完整 Xcode；这里用 tools/xctest-shim 做编译级检查，
-#       真实测试执行请在装有 Xcode 的 Mac 上跑 scripts/xcode_test.sh。
-
+# 两套环境自适应：
+# - 完整 Xcode 环境（CI/开发机）：测试代码直接对真实 XCTest 做类型检查（跳过 shim，
+#   避免与 SDK 里的真实 XCTest.swiftmodule 撞车）
+# - 仅 CLT 环境（本地开发机）：生成 XCTest shim 后做编译级检查
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-TARGET="${1:-$(uname -m)-apple-macos14.0}"
+TARGET="arm64-apple-macos14.0"
 BUILD_DIR="build/typecheck"
 mkdir -p "$BUILD_DIR"
 
-echo "== [1/4] 生成 XCTest shim swiftmodule（仅本机类型检查用）=="
-swiftc -emit-module tools/xctest-shim/XCTest.swift \
-  -module-name XCTest \
-  -emit-module-path "$BUILD_DIR/XCTest.swiftmodule" \
-  -swift-version 5 -target "$TARGET" || exit 1
+if command -v xcodebuild >/dev/null 2>&1 && xcodebuild -version >/dev/null 2>&1; then
+  HAS_XCODE=1
+  echo "== 环境检测：完整 Xcode（使用真实 XCTest）=="
+else
+  HAS_XCODE=0
+  echo "== 环境检测：仅 Command Line Tools =="
+fi
 
-echo "== [2/4] App 模块编译检查（-emit-module，等价完整编译前端）=="
+echo "== [1/4] App 模块编译检查（-emit-module，等价完整编译前端）=="
 swiftc -emit-module \
   ProxyBridge/App/*.swift ProxyBridge/Models/*.swift ProxyBridge/Persistence/*.swift \
   ProxyBridge/Services/*.swift ProxyBridge/Presentation/*.swift \
@@ -26,11 +28,25 @@ swiftc -emit-module \
   -swift-version 5 -target "$TARGET" || exit 1
 echo "App 模块检查通过（0 error）"
 
-echo "== [3/4] 测试代码类型检查（@testable import ProxyBridge + XCTest shim）=="
-swiftc -typecheck ProxyBridgeTests/*.swift \
-  -I "$BUILD_DIR" \
-  -swift-version 5 -target "$TARGET" || exit 1
-echo "测试代码检查通过（0 error）"
+if [ "$HAS_XCODE" = "0" ]; then
+  echo "== [2/4] 生成 XCTest shim swiftmodule（仅本机类型检查用）=="
+  swiftc -emit-module tools/xctest-shim/XCTest.swift \
+    -module-name XCTest \
+    -emit-module-path "$BUILD_DIR/XCTest.swiftmodule" \
+    -swift-version 5 -target "$TARGET" || exit 1
+
+  echo "== [3/4] 测试代码类型检查（XCTest shim）=="
+  swiftc -typecheck ProxyBridgeTests/*.swift \
+    -I "$BUILD_DIR" \
+    -swift-version 5 -target "$TARGET" || exit 1
+  echo "测试代码检查通过（0 error）"
+else
+  echo "== [3/4] 测试代码类型检查（真实 XCTest + @testable 模块）=="
+  swiftc -typecheck ProxyBridgeTests/*.swift \
+    -I "$BUILD_DIR" \
+    -swift-version 5 -target "$TARGET" || exit 1
+  echo "测试代码检查通过（0 error）"
+fi
 
 echo "== [4/4] Swift 6 语言模式兼容性预检（App 模块，允许并发告警）=="
 if swiftc -emit-module \
@@ -41,7 +57,7 @@ if swiftc -emit-module \
   -swift-version 6 -target "$TARGET" 2>"$BUILD_DIR/swift6.log"; then
   echo "Swift 6 语言模式：通过"
 else
-  echo "Swift 6 语言模式：未通过（不影响阶段 A 交付，工程使用 Swift 5 语言模式）—— 详见 $BUILD_DIR/swift6.log"
+  echo "Swift 6 语言模式：未通过（不影响交付，工程使用 Swift 5 语言模式）—— 详见 $BUILD_DIR/swift6.log"
 fi
 
 echo "typecheck: OK"

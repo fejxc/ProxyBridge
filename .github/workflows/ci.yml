@@ -27,33 +27,48 @@ jobs:
           xcodebuild -version
           swift --version
 
-      - name: 编译检查（App 模块 + 测试代码 + Swift 6 预检）
-        run: bash scripts/typecheck.sh
+      # 每个验证步骤都把完整输出落到日志文件；失败时由「报告错误」步骤
+      # 把首个 error 行转成 ::error:: annotation（公开仓库可匿名读取）
+      - name: 编译检查
+        run: |
+          set -o pipefail
+          bash scripts/typecheck.sh 2>&1 | tee build-ci-typecheck.log | tail -3
 
-      - name: 冒烟测试（生产代码直连断言）
-        run: bash scripts/smoke_test.sh
+      - name: 冒烟测试
+        run: |
+          set -o pipefail
+          bash scripts/smoke_test.sh 2>&1 | tee build-ci-smoke.log | tail -3
 
-      # 云端 runner 有完整 Xcode：补齐本地一直欠着的 xcodebuild + XCTest 真实执行
       - name: xcodebuild build（Debug）
-        run: >
-          xcodebuild -project ProxyBridge.xcodeproj
-          -scheme ProxyBridge
-          -configuration Debug
-          CODE_SIGNING_ALLOWED=NO
-          build
+        run: |
+          set -o pipefail
+          xcodebuild -project ProxyBridge.xcodeproj -scheme ProxyBridge \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO build \
+            2>&1 | tee build-ci-xcodebuild-build.log | tail -5
 
       - name: xcodebuild test（XCTest 全量）
-        run: >
-          xcodebuild -project ProxyBridge.xcodeproj
-          -scheme ProxyBridge
-          -configuration Debug
-          CODE_SIGNING_ALLOWED=NO
-          test
+        run: |
+          set -o pipefail
+          xcodebuild -project ProxyBridge.xcodeproj -scheme ProxyBridge \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO test \
+            2>&1 | tee build-ci-xcodebuild-test.log | tail -8
 
       - name: 构建可分发的 .app
         run: bash scripts/build_app.sh
 
+      - name: 报告错误（失败日志 → annotation）
+        if: failure()
+        run: |
+          for f in build-ci-typecheck.log build-ci-smoke.log build-ci-xcodebuild-build.log build-ci-xcodebuild-test.log; do
+            [ -f "$f" ] || continue
+            grep -E "error:|FAIL |failing" "$f" | sort -u | head -20 | while IFS= read -r line; do
+              echo "::error::$f :: ${line:0:300}"
+            done
+          done
+          exit 1
+
       - name: 上传 App 产物
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: ProxyBridge-app
