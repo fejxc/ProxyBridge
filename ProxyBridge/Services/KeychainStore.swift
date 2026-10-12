@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import OSLog
 
 /// SSH 密码的安全存储抽象。
 /// 生产实现为 macOS Keychain（kSecClassGenericPassword，按 profile UUID 隔离）；
@@ -32,7 +33,12 @@ final class KeychainPasswordStore: PasswordStoring, @unchecked Sendable {
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         // upsert：先删后加，语义幂等
         SecItemDelete(baseQuery(for: profileID) as CFDictionary)
-        SecItemAdd(add as CFDictionary, nil)
+        let status = SecItemAdd(add as CFDictionary, nil)
+        if status != errSecSuccess {
+            // 绝不静默：写入失败必须留痕（不含密码内容）
+            Logger(subsystem: "dev.sunyun.ProxyBridge", category: "keychain")
+                .error("钥匙串写入失败（status \(status)）：记住密码未生效")
+        }
     }
 
     func load(for profileID: UUID) -> String? {

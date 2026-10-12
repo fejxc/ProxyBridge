@@ -35,8 +35,8 @@ final class SSHTunnelCoordinator: TunnelService {
         var probingRemote = false
         var profile: ServerProfile?
         /// 密码模式：本次连接的密码（仅内存；断开/退出即丢弃，不落盘不进日志）。
+        /// UI 经 submitPassword 写入；setup 任务轮询此字段（不再用 continuation 挂起）。
         var password: String?
-        var passwordContinuation: CheckedContinuation<String?, Never>?
     }
 
     private var sessions: [UUID: Session] = [:]
@@ -75,8 +75,6 @@ final class SSHTunnelCoordinator: TunnelService {
         // 用户断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
         session.userStopped = true
         session.password = nil // 断开即丢弃
-        session.passwordContinuation?.resume(returning: nil)
-        session.passwordContinuation = nil
         session.task?.cancel()
         session.task = nil
         if let handle = session.handle {
@@ -118,15 +116,11 @@ final class SSHTunnelCoordinator: TunnelService {
         if remember {
             secrets.save(password, for: profileID) // 用户勾选「记住」→ 存入钥匙串
         }
-        session.passwordContinuation?.resume(returning: password)
-        session.passwordContinuation = nil
     }
 
     func cancelPasswordPrompt(profileID: UUID) {
         guard let session = sessions[profileID] else { return }
         session.password = nil
-        session.passwordContinuation?.resume(returning: nil)
-        session.passwordContinuation = nil
         // 用户放弃：等价于一次手动断开（终态，不自动重连）
         disconnect(profileID: profileID)
     }
@@ -138,8 +132,6 @@ final class SSHTunnelCoordinator: TunnelService {
             session.task?.cancel()
             session.task = nil
             session.password = nil
-            session.passwordContinuation?.resume(returning: nil)
-            session.passwordContinuation = nil
             if let handle = session.handle {
                 handle.terminate()
                 scheduleForceKill(handle)
@@ -265,7 +257,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 handle.writePTY(saved + "\n")
                 session.password = saved
             } else {
-                // 请求 UI 输入并挂起等待
+                // 请求 UI 输入，轮询等待（90 秒超时，绝不无限挂起）
                 var connecting = baseSnapshot(profileID: id, phase: .connecting)
                 connecting.localProxyVerified = true
                 connecting.humanReadableDetail = profile.rememberPassword
@@ -274,13 +266,22 @@ final class SSHTunnelCoordinator: TunnelService {
                 onEvent?(.snapshot(connecting))
                 onEvent?(.passwordPromptRequested(profileID: id))
 
-                let submitted = await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
-                    session.passwordContinuation = continuation
+                let waitDeadline = Date().addingTimeInterval(90)
+                while session.password == nil && Date() < waitDeadline {
+                    if session.userStopped || Task.isCancelled { return }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
                 }
                 guard !session.userStopped, !Task.isCancelled else { return }
-                guard let password = submitted, !password.isEmpty else {
+                guard let password = session.password, !password.isEmpty else {
                     session.password = nil
-                    return // cancelPasswordPrompt 已发出 disconnecting→idle
+                    handle.terminate()
+                    finishSetup(session: session, profileID: id) {
+                        var errorState = self.baseSnapshot(profileID: id, phase: .error)
+                        errorState.humanReadableDetail = "等待密码输入超时（90 秒）：已取消本次连接，请重新点「连接」"
+                        session.phase = .error
+                        return errorState
+                    }
+                    return
                 }
                 handle.writePTY(password + "\n")
             }
@@ -423,10 +424,10 @@ final class SSHTunnelCoordinator: TunnelService {
         if case .authRequired = classification,
            session.profile?.authMode == .password {
             detail = "密码认证被拒绝：密码不正确，或服务器已关闭密码登录（PasswordAuthentication no）"
-            if session.profile?.rememberPassword == true {
-                if let pid = session.profile?.id {
-                    secrets.delete(for: pid)
-                }
+            // 以钥匙串实际内容为准清除（不能用连接时捕获的旧 profile 副本判断——
+            // 「记住」往往是在连接发起后才勾选的，旧副本还是 false）
+            if let pid = session.profile?.id, secrets.exists(for: pid) {
+                secrets.delete(for: pid)
                 detail += "；已清除记住的密码，下次连接将重新询问"
             }
         }

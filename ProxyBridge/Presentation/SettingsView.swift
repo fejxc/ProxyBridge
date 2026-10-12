@@ -94,6 +94,10 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 titleBar
+                // 密码请求卡放在设置窗口顶部：面板关闭时用户也不会错过
+                if model.pendingPasswordProfileId != nil {
+                    PasswordPromptCard()
+                }
                 switch model.settingsTab {
                 case .servers:
                     ServerEditorView()
