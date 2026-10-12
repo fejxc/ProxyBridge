@@ -77,7 +77,18 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testAuthRequiredAndErrorAreRed() {
-        XCTAssertEqual(TunnelStatusPresentation.overall(for: snap(phase: .authRequired)).tone, .red)
+        let auth = TunnelStatusPresentation.overall(for: snap(phase: .authRequired))
+        XCTAssertEqual(auth.tone, .red)
+        XCTAssertEqual(auth.title, "需要处理")
+        XCTAssertEqual(auth.detail, "测试", "authRequired 应透传具体原因（快照 detail）")
+
+        let empty = TunnelStatusPresentation.overall(for: TunnelSnapshot(
+            profileId: pid, phase: .authRequired, localProxyVerified: nil,
+            sshProcessRunning: false, remoteProbeVerified: nil,
+            lastRemoteProbeAt: nil, humanReadableDetail: ""
+        ))
+        XCTAssertEqual(empty.detail, "检查服务器指纹或 SSH 密钥", "空 detail 回退通用提示")
+
         let err = TunnelStatusPresentation.overall(for: snap(phase: .error))
         XCTAssertEqual(err.title, "连接失败")
         XCTAssertEqual(err.tone, .red)

@@ -419,13 +419,16 @@ final class SSHTunnelCoordinator: TunnelService {
         let classification = SSHErrorClassifier.classify(exitCode: exitCode, stderr: stderr)
         var (phase, detail) = SSHErrorClassifier.phaseAndDetail(for: classification)
 
-        // 密码模式认证失败：已记住的密码一定是错的 → 清除钥匙串，下次重新询问
+        // 密码模式认证失败：给出密码语向的具体原因（而非泛化的密钥/agent 提示）
         if case .authRequired = classification,
-           session.profile?.authMode == .password, session.profile?.rememberPassword == true {
-            if let pid = session.profile?.id {
-                secrets.delete(for: pid)
+           session.profile?.authMode == .password {
+            detail = "密码认证被拒绝：密码不正确，或服务器已关闭密码登录（PasswordAuthentication no）"
+            if session.profile?.rememberPassword == true {
+                if let pid = session.profile?.id {
+                    secrets.delete(for: pid)
+                }
+                detail += "；已清除记住的密码，下次连接将重新询问"
             }
-            detail += "（已清除记住的密码，下次连接将重新询问）"
         }
         session.phase = phase
         session.handle = nil

@@ -115,7 +115,12 @@ enum TunnelStatusPresentation {
             }
             return StatusPresentation(title: "部分可用", detail: snapshot.humanReadableDetail, tone: .orange)
         case .authRequired:
-            return StatusPresentation(title: "需要处理", detail: "检查服务器指纹或 SSH 密钥", tone: .red)
+            let specific = snapshot.humanReadableDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+            return StatusPresentation(
+                title: "需要处理",
+                detail: specific.isEmpty ? "检查服务器指纹或 SSH 密钥" : specific,
+                tone: .red
+            )
         case .error:
             return StatusPresentation(title: "连接失败", detail: snapshot.humanReadableDetail.isEmpty ? "发生错误，请查看日志" : snapshot.humanReadableDetail, tone: .red)
         case .disconnecting:
