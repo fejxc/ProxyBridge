@@ -34,7 +34,7 @@ ProxyBridge/
 │   └── Presentation/            # AppViewModel + 全部 SwiftUI 视图与设计令牌
 ├── ProxyBridgeTests/            # XCTest 与仅测试目标使用的替身
 ├── tools/
-│   ├── smoke/SmokeMain.swift    # 无 Xcode 环境的冒烟测试（142 项断言，真实执行）
+│   ├── smoke/SmokeMain.swift    # 无 Xcode 环境的冒烟测试（143 项断言，真实执行）
 │   ├── smoke/SmokeFakes.swift   # 冒烟专用进程替身（驱动生产协调器）
 │   └── xctest-shim/             # XCTest 编译级类型检查 shim（仅本地检查用，不入工程）
 ├── scripts/
@@ -72,7 +72,7 @@ bash scripts/xcode_test.sh          # 构建 + XCTest 全量测试
 
 ```bash
 bash scripts/typecheck.sh           # swiftc 全模块类型检查（App + 测试代码）
-bash scripts/smoke_test.sh          # 142 项核心逻辑断言（真实执行，含状态机序列与真实 ssh 进程证据）
+bash scripts/smoke_test.sh          # 143 项核心逻辑断言（真实执行，含状态机序列与真实 ssh 进程证据）
 
 # 日常安装（推荐）：构建 + 装入 /Applications + 自动启动
 bash scripts/install_app.sh

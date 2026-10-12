@@ -192,7 +192,7 @@ final class CurlProxyProbe: ProxyProbeExecuting {
 
     /// 探测主机白名单校验（IP/主机名/IPv6 字面量字符集；防 curl 参数注入面）。
     static func isValidProbeHost(_ host: String) -> Bool {
-        guard !host.isEmpty, host.count <= 253 else { return false }
+        guard !host.isEmpty, !host.hasPrefix("-"), host.count <= 253 else { return false }
         return host.allSatisfy { char in
             char.isASCII && (char.isLetter || char.isNumber || char == "." || char == "-" || char == ":")
         }

@@ -92,6 +92,8 @@ struct SmokeMain {
 
     @MainActor
     static func probeRegressionChecks() async {
+        check("R06", "拒绝选项样式的代理主机，允许合法连字符主机",
+              !CurlProxyProbe.isValidProbeHost("--evil-flag") && CurlProxyProbe.isValidProbeHost("proxy-host.example"))
         let script = RemoteProbeCommand.script(remotePort: 1, protocol: .http,
                                                urlString: CurlProxyProbe.verificationURL)
         func run(_ environment: [String: String]) async -> (Int32, String, String) {

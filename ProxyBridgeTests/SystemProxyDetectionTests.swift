@@ -181,18 +181,18 @@ final class SystemProxyDetectionTests: XCTestCase {
             host: "::1", port: 7897, protocol: .http,
             urlString: "https://www.example.com/", connectTimeout: 2, maxTime: 8
         )
-        XCTAssertEqual(http[5], "http://[::1]:7897")
+        XCTAssertEqual(http[4], "http://[::1]:7897")
         let socks = CurlProxyProbe.arguments(
             host: "::1", port: 1080, protocol: .socks5,
             urlString: "https://www.example.com/", connectTimeout: 2, maxTime: 8
         )
-        XCTAssertEqual(socks[5], "[::1]:1080")
+        XCTAssertEqual(socks[4], "[::1]:1080")
         // 已带方括号的不重复包
         let bracketed = CurlProxyProbe.arguments(
             host: "[::1]", port: 1080, protocol: .socks5,
             urlString: "https://www.example.com/", connectTimeout: 2, maxTime: 8
         )
-        XCTAssertEqual(bracketed[5], "[::1]:1080")
+        XCTAssertEqual(bracketed[4], "[::1]:1080")
     }
 
     func testCurlSOCKSArgumentsUseSocks5Hostname() {
@@ -200,8 +200,9 @@ final class SystemProxyDetectionTests: XCTestCase {
             host: "127.0.0.1", port: 7890, protocol: .socks5,
             urlString: "https://www.example.com/", connectTimeout: 2, maxTime: 8
         )
-        XCTAssertEqual(args[4], "--socks5-hostname", "SOCKS 探测必须让 DNS 经代理解析")
-        XCTAssertEqual(args[5], "127.0.0.1:7890")
+        XCTAssertEqual(args[3], "--socks5-hostname", "SOCKS 探测必须让 DNS 经代理解析")
+        XCTAssertEqual(args[4], "127.0.0.1:7890")
+        XCTAssertEqual(args.first, "-q", "探测不能被 curlrc 覆盖")
     }
 
     func testCurlArgumentsRejectNonWhitelistURL() {

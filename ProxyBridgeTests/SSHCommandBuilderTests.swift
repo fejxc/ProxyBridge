@@ -24,12 +24,12 @@ final class SSHCommandBuilderTests: XCTestCase {
         XCTAssertEqual(args, [
             "-p", "20064",
             "-N", "-T",
-            "-o", "BatchMode=yes",
             "-o", "ServerAliveInterval=30",
             "-o", "ServerAliveCountMax=3",
             "-o", "ExitOnForwardFailure=yes",
             "-o", "StrictHostKeyChecking=yes",      // 安全红线：强制主机密钥校验
             "-o", "ConnectTimeout=10",
+            "-o", "BatchMode=yes",
             "-R", "127.0.0.1:7890:127.0.0.1:7897",  // 安全红线：远端固定 loopback
             "sunyun@10.11.154.192",
         ])
@@ -75,7 +75,8 @@ final class SSHCommandBuilderTests: XCTestCase {
             return XCTFail("identityFile 模式必须有 -i")
         }
         XCTAssertEqual(args[index + 1], spaced, "路径必须作为独立参数逐字保真")
-        XCTAssertEqual(args.count - 1, index + 1, "-i 后只有路径一个参数")
+        XCTAssertEqual(args.count - 1, index + 2, "-i 后是一个路径参数及目的地参数")
+        XCTAssertEqual(args[index + 2], "sunyun@10.11.154.192")
     }
 
     func testLocalEndpointForwardedExactly() {
@@ -108,9 +109,9 @@ final class SSHCommandBuilderTests: XCTestCase {
         // agent 模式：10 元素，逐字精确断言
         XCTAssertEqual(args, [
             "-p", "20064",
-            "-o", "BatchMode=yes",
             "-o", "StrictHostKeyChecking=yes",   // 远端探测同样强制主机密钥校验
             "-o", "ConnectTimeout=10",
+            "-o", "BatchMode=yes",
             "sunyun@10.11.154.192",
             RemoteProbeCommand.script(remotePort: 7890, protocol: .http, urlString: "https://www.example.com/"),
         ])
