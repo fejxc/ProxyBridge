@@ -1,6 +1,6 @@
 # KNOWN_LIMITATIONS · 已知限制（阶段 C）
 
-> 原则：没实现的功能不标注「可用」；演示数据永远带「演示」标记。
+> 原则：没实现的功能不标注「可用」；测试替身仅编入测试目标。
 
 ## 功能边界（按计划属于后续阶段）
 
@@ -25,13 +25,12 @@
 - 远程绑定只允许 `127.0.0.1`——不提供、也不接受 `0.0.0.0`/公网监听配置（模型层常量 + 校验）。
 - IPv6 字面量 SSH 主机（`::1` 等）：校验层拒绝并提示改用主机名；`::1` 作为**本地代理地址**是允许的。
 - 非 loopback 的本地代理主机（如局域网代理）：UI 明确提示 MVP 不转发。
-- 不「记住」SSH 密码：密码模式每次连接都需在面板输入（安全取舍——不落盘是红线；如需免输可改用密钥并加载进 ssh-agent）。
 - 跨用户 `~otheruser` 形式的密钥路径不展开（仅 `~` 与 `~/...`）。
 - 多语言：当前简体中文硬编码于视图常量（文案已集中，`Localizable.strings` 基础设施就位，键值化在后续阶段做）。
 
 ## 技术性已知限制
 
-- **测试执行的双轨制**：XCTest 断言需要完整 Xcode 才能运行；本仓库在无 Xcode 环境用 `scripts/smoke_test.sh`（93 项断言，已全部通过，含生产 SSHTunnelCoordinator 状态机序列与真实 /usr/bin/ssh 进程证据）+ `scripts/typecheck.sh`（XCTest shim 编译级检查）作为证据。XCTest 在你机器上的实际通过状态以 `scripts/xcode_test.sh` 输出为准。
+- **测试执行的双轨制**：XCTest 断言需要完整 Xcode 才能运行；本仓库在无 Xcode 环境用 `scripts/smoke_test.sh`（114 项断言，已全部通过，含生产 SSHTunnelCoordinator 状态机序列与真实 /usr/bin/ssh 进程证据）+ `scripts/typecheck.sh`（XCTest shim 编译级检查）作为证据。XCTest 在你机器上的实际通过状态以 `scripts/xcode_test.sh` 输出为准。
 - **菜单栏图标颜色**：图标按状态切换符号形态并带 VoiceOver 文本；macOS 菜单栏模板渲染下单色为主，五色语义完整呈现在面板内的彩色状态标签（颜色+文字成对）。
 - **时序测试的裕量**：`MockTunnelServiceTests` 使用 20ms 轮询 + 3s 超时，在极端负载的 CI 机器上理论上有 flaky 可能（失败重跑即可判断）。
 - **MenuBarExtra 窗口宽度**：面板固定 368pt（原型 360–380pt 区间内），超小屏/超大字号下未做自适应验证（无障碍人工验收待做，见报告「未验证」节）。

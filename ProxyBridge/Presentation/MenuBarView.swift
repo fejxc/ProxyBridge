@@ -22,9 +22,6 @@ struct MenuBarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            if let bannerText = model.demoBannerText {
-                DemoModeBanner(text: bannerText)
-            }
             if model.profiles.isEmpty {
                 emptyState
             } else {
@@ -230,9 +227,8 @@ struct MenuBarView: View {
     }
 
     private func localDetail(for display: HealthCheckDisplay) -> String {
-        let suffix = model.isDemoMode ? "（演示）" : ""
         switch display {
-        case .ok: return "本地代理已通过协议验证" + suffix
+        case .ok: return "本地代理已通过协议验证"
         case .unknown: return "尚未验证本地代理可用性"
         case .failed: return "本地代理验证失败：请确认代理已启动或改用手动配置"
         }
@@ -242,18 +238,17 @@ struct MenuBarView: View {
         switch display {
         case .ok:
             let base = "隧道运行中"
-            return model.isDemoMode ? base + "（演示，未启动真实 SSH）" : base
+            return base
         case .unknown: return "正在建立 SSH 连接…"
         case .failed: return model.currentSnapshot.phase == .authRequired
-            ? "需要核对服务器指纹或 SSH 密钥"
+            ? "需要核对服务器指纹或 SSH 身份验证"
             : "SSH 未连接"
         }
     }
 
     private func remoteDetail(for display: HealthCheckDisplay) -> String {
-        let suffix = model.isDemoMode ? "（演示）" : ""
         switch display {
-        case .ok: return "远端代理端到端验证通过" + suffix
+        case .ok: return "远端代理端到端验证通过"
         case .unknown: return "远端代理未验证（未验证 ≠ 可用）"
         case .failed: return "远端验证失败，请查看日志定位原因"
         }

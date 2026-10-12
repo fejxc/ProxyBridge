@@ -38,16 +38,13 @@ final class LogStore {
     private let osLog = Logger(subsystem: "dev.sunyun.ProxyBridge", category: "app")
 
     /// 记录一条日志。raw 内容会先脱敏再入库。
-    /// `demoPrefix`：阶段 A 演示事件以「演示」开头，明确与真实行为区分。
     @discardableResult
     func append(
         raw message: String,
         level: LogLevel,
-        profileId: UUID? = nil,
-        isDemoEvent: Bool = false
+        profileId: UUID? = nil
     ) -> LogEntry {
-        let sanitized = LogRedaction.sanitizeForStorage(message)
-        let text = isDemoEvent ? "[演示] " + sanitized : sanitized
+        let text = LogRedaction.sanitizeForStorage(message)
         let entry = LogEntry(
             id: UUID(),
             timestamp: Date(),

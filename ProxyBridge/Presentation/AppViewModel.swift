@@ -9,7 +9,7 @@ enum SettingsTab: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// 应用级 ViewModel：持有全部 UI 状态，桥接服务与持久化。
-/// View 层只读状态、调用方法，不包含业务逻辑（阶段 A 要求）。
+/// View 层只读状态、调用方法，不包含业务逻辑。
 @MainActor
 @Observable
 final class AppViewModel {
@@ -20,18 +20,8 @@ final class AppViewModel {
     let tunnel: TunnelService
     let proxyDetector: ProxyDetectorService
     let logStore: LogStore
-    /// SSH 密码的安全存储（生产 Keychain；测试/演示内存实现）。
+    /// SSH 密码的安全存储（生产 Keychain；测试内存实现）。
     let secrets: any PasswordStoring
-
-    /// 阶段标识：false = SSH 隧道与本地检测均为真实实现；UI 据此去除演示标注。
-    let isDemoMode: Bool
-
-    /// 阶段横幅文案（nil = 不展示）。
-    var demoBannerText: String? {
-        isDemoMode
-            ? "演示模式：SSH 隧道为模拟（阶段 C 前）；本地代理检测已真实"
-            : nil
-    }
 
     // MARK: - 状态
 
@@ -48,6 +38,7 @@ final class AppViewModel {
     var settingsTab: SettingsTab = .servers
 
     private var document: ProfilesDocument = .empty()
+    private var connectionEndpoints: [UUID: LocalProxyEndpoint] = [:]
     /// App 退出清理观察者（PRD F05：退出时清理自身 SSH 子进程）。
     private var terminateObserver: (any NSObjectProtocol)?
 
@@ -59,8 +50,7 @@ final class AppViewModel {
         tunnel: TunnelService,
         proxyDetector: ProxyDetectorService,
         logStore: LogStore,
-        secrets: any PasswordStoring,
-        isDemoMode: Bool
+        secrets: any PasswordStoring
     ) {
         self.profileStore = profileStore
         self.settingsStore = settingsStore
@@ -68,22 +58,8 @@ final class AppViewModel {
         self.proxyDetector = proxyDetector
         self.logStore = logStore
         self.secrets = secrets
-        self.isDemoMode = isDemoMode
 
         bootstrap()
-    }
-
-    /// 演示装配（UI 预览/降级演示）：全部 Mock，横幅明示。
-    static func demo() -> AppViewModel {
-        AppViewModel(
-            profileStore: ProfileRepository(),
-            settingsStore: AppSettingsStore(),
-            tunnel: MockTunnelService(),
-            proxyDetector: MockProxyDetector(),
-            logStore: LogStore(),
-            secrets: InMemoryPasswordStore(),
-            isDemoMode: true
-        )
     }
 
     /// 生产装配：本地代理检测与 SSH 隧道均为真实实现
@@ -104,8 +80,7 @@ final class AppViewModel {
                 monitor: SCDynamicStoreChangeMonitor()
             ),
             logStore: LogStore(),
-            secrets: KeychainPasswordStore(),
-            isDemoMode: false
+            secrets: KeychainPasswordStore()
         )
     }
 
@@ -154,9 +129,7 @@ final class AppViewModel {
         }
 
         logStore.append(
-            raw: isDemoMode
-                ? "ProxyBridge 启动（演示模式：SSH 隧道为模拟）"
-                : "ProxyBridge 启动（本地代理检测与 SSH 隧道为真实实现；自动重连与登录启动等待阶段 D）",
+            raw: "ProxyBridge 启动",
             level: .info
         )
         if profiles.isEmpty {
@@ -378,18 +351,18 @@ final class AppViewModel {
             logStore.append(raw: "未解析到可用本地代理：\(reason)。可在设置中手动指定。", level: .warning, profileId: profile.id)
         }
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpointValue(of: resolved))
+        connectionEndpoints[profile.id] = config.localEndpoint
         logStore.append(
-            raw: isDemoMode ? "请求连接「\(profile.name)」（演示模式：不会启动真实 SSH）" : "请求连接「\(profile.name)」",
+            raw: "请求连接「\(profile.name)」",
             level: .info,
-            profileId: profile.id,
-            isDemoEvent: isDemoMode
+            profileId: profile.id
         )
         tunnel.connect(configuration: config)
     }
 
     func disconnect() {
         guard let profile = currentProfile else { return }
-        logStore.append(raw: "用户手动断开「\(profile.name)」（演示）", level: .info, profileId: profile.id, isDemoEvent: true)
+        logStore.append(raw: "用户手动断开「\(profile.name)」", level: .info, profileId: profile.id)
         tunnel.disconnect(profileID: profile.id)
     }
 
@@ -436,12 +409,11 @@ final class AppViewModel {
             logStore.append(
                 raw: "尚未连接，请先连接再检查",
                 level: .warning,
-                profileId: profile.id,
-                isDemoEvent: isDemoMode
+                profileId: profile.id
             )
             return
         }
-        logStore.append(raw: "开始检查连接：本地代理 / SSH 隧道 / 远端代理（演示数据，非真实探测）", level: .info, profileId: profile.id, isDemoEvent: true)
+        logStore.append(raw: "开始检查连接：本地代理 / SSH 隧道 / 远端代理", level: .info, profileId: profile.id)
         tunnel.runHealthCheck(profileID: profile.id)
     }
 
@@ -521,12 +493,10 @@ final class AppViewModel {
             logStore.append(raw: "服务器「\(profile.name)」的远程端口 \(profile.remotePort) 非法，已拒绝生成命令；请修正配置", level: .error, profileId: profile.id)
             return nil
         }
-        let proto: ProxyProtocol
-        if case .manual(let ep) = EndpointResolver.resolve(profile: profile, detection: detection) {
-            proto = ep.protocol
-        } else {
-            proto = profile.preferredProtocol
-        }
+        let activeEndpoint = snapshots[profile.id]?.sshProcessRunning == true
+            ? connectionEndpoints[profile.id] : nil
+        let endpoint = activeEndpoint ?? endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection))
+        let proto = endpoint?.protocol ?? profile.preferredProtocol
         return RemoteCommandTemplate.clipboardText(
             remotePort: profile.remotePort,
             protocol: proto,
@@ -563,9 +533,12 @@ final class AppViewModel {
     }
 
     private func applySnapshot(_ snap: TunnelSnapshot) {
-        let previous = snapshots[snap.profileId]?.phase
+        let previous = snapshots[snap.profileId]
         snapshots[snap.profileId] = snap
-        guard previous != snap.phase else { return }
+        if !snap.sshProcessRunning && [.idle, .error, .authRequired].contains(snap.phase) {
+            connectionEndpoints[snap.profileId] = nil
+        }
+        guard previous?.phase != snap.phase || previous?.humanReadableDetail != snap.humanReadableDetail else { return }
         let name = profiles.first { $0.id == snap.profileId }?.name ?? "?"
         let level: LogLevel
         switch snap.phase {
@@ -574,11 +547,11 @@ final class AppViewModel {
         default: level = .info
         }
         let phrase = TunnelStatusPresentation.overall(for: snap)
+        let detail = snap.humanReadableDetail.isEmpty ? phrase.detail : snap.humanReadableDetail
         logStore.append(
-            raw: "「\(name)」状态：\(phrase.title)（\(phrase.detail)）",
+            raw: "「\(name)」状态：\(phrase.title)（\(detail)）",
             level: level,
-            profileId: snap.profileId,
-            isDemoEvent: isDemoMode
+            profileId: snap.profileId
         )
     }
 

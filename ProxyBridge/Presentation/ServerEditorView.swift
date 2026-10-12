@@ -63,9 +63,6 @@ struct ServerEditorView: View {
             set: { draft = $0 }
         )
         return VStack(alignment: .leading, spacing: 16) {
-            if model.editorIsNewDraft, let bannerText = model.demoBannerText {
-                DemoModeBanner(text: bannerText)
-            }
             if showUnsavedBanner {
                 InfoBlock(text: "正在编辑「\(draftBinding.wrappedValue.name)」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器不会丢弃它们，但当前显示的是草稿而非已保存配置。")
             }

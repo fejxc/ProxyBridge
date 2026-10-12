@@ -1,8 +1,15 @@
 import SwiftUI
 
 @main
+struct ProxyBridgeEntry {
+    static func main() {
+        SSHProcessLauncher.runPTYChildIfRequested()
+        ProxyBridgeApp.main()
+    }
+}
+
 struct ProxyBridgeApp: App {
-    /// 生产装配：本地代理检测为真实实现；SSH 隧道在阶段 C 前为 Mock。
+    /// 生产装配：系统代理检测与 SSH 隧道。
     @State private var model = AppViewModel.live()
 
     var body: some Scene {

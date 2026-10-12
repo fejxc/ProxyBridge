@@ -34,6 +34,7 @@ final class SSHTunnelCoordinator: TunnelService {
         var lastRemoteProbeAt: Date?
         var probingRemote = false
         var profile: ServerProfile?
+        var localEndpoint: LocalProxyEndpoint?
         /// 密码模式：本次连接的密码（仅内存；断开/退出即丢弃，不落盘不进日志）。
         /// UI 经 submitPassword 写入；setup 任务轮询此字段（不再用 continuation 挂起）。
         var password: String?
@@ -181,6 +182,7 @@ final class SSHTunnelCoordinator: TunnelService {
             return
         }
         session.localVerified = true
+        session.localEndpoint = localEndpoint
 
         // 2) 前置检查（ssh 二进制 / 密钥文件）
         if let failure = Self.preflightFailure(profile: profile) {
@@ -207,9 +209,10 @@ final class SSHTunnelCoordinator: TunnelService {
             : processFactory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
         session.handle = handle
         let sessionID = id
-        handle.onExit = { [weak self] code in
+        handle.onExit = { [weak self, weak handle] code in
             Task { @MainActor in
-                self?.handleProcessExit(profileID: sessionID, exitCode: code)
+                guard let self, let handle, self.sessions[sessionID]?.handle === handle else { return }
+                self.handleProcessExit(profileID: sessionID, exitCode: code)
             }
         }
         do {
@@ -238,14 +241,24 @@ final class SSHTunnelCoordinator: TunnelService {
             while Date() < promptDeadline {
                 if session.userStopped || Task.isCancelled { return }
                 if handle.exitCode != nil { return } // 已退出 → handleProcessExit 分类
-                if handle.stderrTail.lowercased().contains("password") {
+                if SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail) {
                     sawPrompt = true
                     break
                 }
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
             guard !session.userStopped, !Task.isCancelled else { return }
-            guard sawPrompt else { return } // 超时/退出已由其他路径处理
+            guard sawPrompt else {
+                handle.terminate()
+                scheduleForceKill(handle)
+                finishSetup(session: session, profileID: id) {
+                    session.phase = .error
+                    var error = self.baseSnapshot(profileID: id, phase: .error)
+                    error.humanReadableDetail = "等待 SSH 密码提示超时：已取消本次连接"
+                    return error
+                }
+                return
+            }
 
             // 已记住的密码（钥匙串）：自动应答，不打扰用户
             var autoPassword: String?
@@ -275,6 +288,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 guard let password = session.password, !password.isEmpty else {
                     session.password = nil
                     handle.terminate()
+                    scheduleForceKill(handle)
                     finishSetup(session: session, profileID: id) {
                         var errorState = self.baseSnapshot(profileID: id, phase: .error)
                         errorState.humanReadableDetail = "等待密码输入超时（90 秒）：已取消本次连接，请重新点「连接」"
@@ -349,9 +363,9 @@ final class SSHTunnelCoordinator: TunnelService {
         guard let handle = session.handle, handle.isRunning else { return }
         guard session.phase == .connected || session.phase == .degraded else { return }
 
-        // 本地复核（用当前解析到的手动端点；自动候选的复核由代理检测层负责）
+        // 复核本次隧道实际使用的端点（自动与手动配置均适用）。
         var localOK = session.localVerified == true
-        if let endpoint = resolvedEndpoint(of: profile) {
+        if let endpoint = session.localEndpoint {
             let outcome = await localProber.probe(
                 host: endpoint.host, port: endpoint.port, protocol: endpoint.protocol
             )
@@ -450,13 +464,9 @@ final class SSHTunnelCoordinator: TunnelService {
         return await remoteProber.probe(
             profile: profile,
             remotePort: profile.remotePort,
-            protocol: profile.preferredProtocol,
+            protocol: session.localEndpoint?.protocol ?? profile.preferredProtocol,
             password: session.password
         )
-    }
-
-    private func resolvedEndpoint(of profile: ServerProfile) -> LocalProxyEndpoint? {
-        profile.manualEndpoint
     }
 
     private func baseSnapshot(profileID: UUID, phase: TunnelPhase) -> TunnelSnapshot {

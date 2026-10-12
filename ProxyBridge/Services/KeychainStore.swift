@@ -59,33 +59,3 @@ final class KeychainPasswordStore: PasswordStoring, @unchecked Sendable {
         load(for: profileID) != nil
     }
 }
-
-/// 测试/冒烟实现：内存字典（进程内隔离，不触碰用户钥匙串）。
-final class InMemoryPasswordStore: PasswordStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var storage: [UUID: String] = [:]
-
-    init() {}
-
-    func save(_ password: String, for profileID: UUID) {
-        lock.lock()
-        storage[profileID] = password
-        lock.unlock()
-    }
-
-    func load(for profileID: UUID) -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return storage[profileID]
-    }
-
-    func delete(for profileID: UUID) {
-        lock.lock()
-        storage.removeValue(forKey: profileID)
-        lock.unlock()
-    }
-
-    func exists(for profileID: UUID) -> Bool {
-        load(for: profileID) != nil
-    }
-}

@@ -15,6 +15,7 @@ echo "== 编译冒烟测试可执行文件（App 生产源码 + tools/smoke）==
 swiftc -o "$OUT" -swift-version 5 -target "$TARGET" \
   ProxyBridge/Models/*.swift ProxyBridge/Persistence/*.swift ProxyBridge/Services/*.swift \
   ProxyBridge/Presentation/AppViewModel.swift \
+  ProxyBridgeTests/MockServices.swift \
   tools/smoke/SmokeFakes.swift \
   tools/smoke/SmokeMain.swift
 

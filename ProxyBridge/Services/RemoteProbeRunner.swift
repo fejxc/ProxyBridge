@@ -58,7 +58,7 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
                 let promptDeadline = Date().addingTimeInterval(15)
                 var sawPrompt = false
                 while handle.isRunning && Date() < promptDeadline {
-                    if handle.stderrTail.lowercased().contains("password") {
+                    if SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail) {
                         sawPrompt = true
                         break
                     }
@@ -106,7 +106,7 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
     /// 解析（纯函数）：stdout 优先，exit 255 视为 SSH 层失败并按 stderr 细分。
     static func parse(exitCode: Int32, stdout: String, stderr: String) -> RemoteProbeOutcome {
         let trimmed = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.contains(RemoteProbeCommand.noCurlMarker) {
+        if exitCode == 0 && trimmed == RemoteProbeCommand.noCurlMarker {
             return .remoteCurlMissing
         }
         if exitCode == 255 {
@@ -119,7 +119,10 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
                 return .connectionFailure(reason: "SSH 连接失败（exit \(code)）")
             }
         }
-        guard let code = Int(trimmed), code > 0 else {
+        guard exitCode == 0 else {
+            return .connectionFailure(reason: "远端代理请求失败（curl exit \(exitCode)）")
+        }
+        guard let code = Int(trimmed), (100...599).contains(code) else {
             return .unknown(reason: trimmed.isEmpty ? "远端无有效输出" : "远端输出无法解析：\(trimmed.prefix(80))")
         }
         if (200...399).contains(code) {

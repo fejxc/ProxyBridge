@@ -15,11 +15,11 @@ final class LogStoreTests: XCTestCase {
         XCTAssertEqual(store.entries.last?.message, "event-\(LogStore.capacity + 1)", "最新一条保留")
     }
 
-    func testDemoEventPrefixAndSanitization() {
+    func testSanitizationPreservesNormalText() {
         let store = LogStore()
-        store.append(raw: "hello \u{1B}[31mworld\u{1B}[0m ~/.ssh/id_rsa", level: .info, isDemoEvent: true)
+        store.append(raw: "hello \u{1B}[31mworld\u{1B}[0m ~/.ssh/id_rsa", level: .info)
         let entry = store.entries.last
-        XCTAssertTrue(entry?.message.hasPrefix("[演示] ") == true, "演示事件必须带前缀")
+        XCTAssertTrue(entry?.message.hasPrefix("hello world ") == true, "日志保留普通文本")
         XCTAssertFalse(entry?.message.contains("\u{1B}") == true)
         XCTAssertFalse(entry?.message.contains(".ssh/") == true, "密钥路径入库即遮挡")
     }

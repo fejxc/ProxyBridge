@@ -154,19 +154,19 @@ final class SSHCommandBuilderTests: XCTestCase {
             RemoteProbeCommand.script(
                 remotePort: 7890, protocol: .http, urlString: "https://www.example.com/"
             ),
-            "command -v curl >/dev/null 2>&1 && curl --noproxy \"\" --proxy http://127.0.0.1:7890 "
+            "if ! command -v curl >/dev/null 2>&1; then echo \(RemoteProbeCommand.noCurlMarker); exit 0; fi; "
+                + "exec curl --noproxy \"\" --proxy http://127.0.0.1:7890 "
                 + "--connect-timeout 3 --max-time 8 --silent --show-error "
-                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/ "
-                + "|| echo \(RemoteProbeCommand.noCurlMarker)"
+                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/"
         )
         XCTAssertEqual(
             RemoteProbeCommand.script(
                 remotePort: 1080, protocol: .socks5, urlString: "https://www.example.com/"
             ),
-            "command -v curl >/dev/null 2>&1 && curl --noproxy \"\" --socks5-hostname 127.0.0.1:1080 "
+            "if ! command -v curl >/dev/null 2>&1; then echo \(RemoteProbeCommand.noCurlMarker); exit 0; fi; "
+                + "exec curl --noproxy \"\" --socks5-hostname 127.0.0.1:1080 "
                 + "--connect-timeout 3 --max-time 8 --silent --show-error "
-                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/ "
-                + "|| echo \(RemoteProbeCommand.noCurlMarker)"
+                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/"
         )
     }
 }

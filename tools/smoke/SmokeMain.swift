@@ -12,6 +12,7 @@ struct SmokeMain {
 
     @MainActor
     static func main() async {
+        SSHProcessLauncher.runPTYChildIfRequested()
         print("== ProxyBridge 阶段 A 冒烟测试（生产代码直连断言）==")
 
         validationChecks()
@@ -25,6 +26,8 @@ struct SmokeMain {
         logStoreChecks()
         await liveProxyChecks()
         sshChecks()
+        await ptyChecks()
+        await probeRegressionChecks()
         await tunnelCoordinatorChecks()
         loopbackGuardChecks()
 
@@ -47,6 +50,91 @@ struct SmokeMain {
             failed += 1
             print("FAIL  \(id)  \(name)")
         }
+    }
+
+    // Exercise the production spawn/ctty/read/write/exit path without a server.
+    static func ptyChecks() async {
+        check("PTY01", "完整密码提示", SSHProcessLauncher.hasPasswordPrompt("\rroot@host's password: "))
+        check("PTY02", "部分提示不应答", !SSHProcessLauncher.hasPasswordPrompt("root@host's password"))
+        check("PTY03", "认证方法列表不应答", !SSHProcessLauncher.hasPasswordPrompt("publickey,password"))
+        check("PTY04", "拒绝认证文本不应答", !SSHProcessLauncher.hasPasswordPrompt("Permission denied (password)."))
+        let script = "stty -echo; printf 'password' >/dev/tty; sleep 0.1; "
+            + "printf ': ' >/dev/tty; IFS= read -r value </dev/tty; "
+            + "printf 204; printf 'final diagnostic' >&2; exit 0"
+        let handle = FoundationSSHProcessHandle(arguments: ["-c", script],
+            environment: SSHProcessLauncher.sshEnvironment(),
+            executableURL: URL(fileURLWithPath: "/bin/sh"), usesPTY: true)
+        do { try handle.start() } catch {
+            check("PTY05", "PTY 启动", false)
+            return
+        }
+        let deadline = Date().addingTimeInterval(5)
+        while !SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail),
+              handle.isRunning, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        check("PTY05", "子进程可打开控制终端 /dev/tty", SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail))
+        let secret = UUID().uuidString
+        handle.writePTY(secret + "\n")
+        while handle.isRunning, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        if handle.isRunning { handle.forceTerminate() }
+        check("PTY06", "PTY 应答与退出", handle.exitCode == 0)
+        check("PTY07", "stdout 独立收集", handle.stdoutTail == "204")
+        check("PTY08", "退出前排空诊断", handle.stderrTail.contains("final diagnostic"))
+        check("PTY09", "密码不回显", !handle.stderrTail.contains(secret) && !handle.stdoutTail.contains(secret))
+        check("PTY10", "真实 PTY 输出可解析远端状态码",
+              SSHRemoteProbe.parse(exitCode: handle.exitCode ?? 255,
+                  stdout: handle.stdoutTail, stderr: handle.stderrTail) == .verified(statusCode: 204))
+    }
+
+    @MainActor
+    static func probeRegressionChecks() async {
+        let script = RemoteProbeCommand.script(remotePort: 1, protocol: .http,
+                                               urlString: CurlProxyProbe.verificationURL)
+        func run(_ environment: [String: String]) async -> (Int32, String, String) {
+            let handle = FoundationSSHProcessHandle(arguments: ["-c", script],
+                environment: environment, executableURL: URL(fileURLWithPath: "/bin/sh"))
+            do { try handle.start() } catch { return (-1, "", "start failed") }
+            let deadline = Date().addingTimeInterval(10)
+            while handle.isRunning, Date() < deadline {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            if handle.isRunning { handle.forceTerminate(); return (-1, "", "timeout") }
+            return (handle.exitCode ?? -1, handle.stdoutTail, handle.stderrTail)
+        }
+        let missing = await run(["PATH": "/nonexistent"])
+        check("R01", "远端脚本仅在 curl 不存在时报告缺失",
+              SSHRemoteProbe.parse(exitCode: missing.0, stdout: missing.1, stderr: missing.2) == .remoteCurlMissing)
+        let refused = await run(SSHProcessLauncher.sshEnvironment())
+        let failed = SSHRemoteProbe.parse(exitCode: refused.0, stdout: refused.1, stderr: refused.2)
+        if case .connectionFailure = failed {
+            check("R02", "实际 curl 连接失败保留失败原因，不误报缺 curl", refused.0 != 0 && !refused.1.contains(RemoteProbeCommand.noCurlMarker))
+        } else { check("R02", "实际 curl 连接失败保留失败原因，不误报缺 curl", false) }
+        check("R03", "失败退出码不得显示已验证",
+              !SSHRemoteProbe.parse(exitCode: 7, stdout: "200", stderr: "").isVerified)
+
+        let local = SmokeLocalProber(outcome: .verified(statusCode: 200))
+        let remote = SmokeRemoteProber(outcome: .verified(statusCode: 200))
+        let coordinator = SSHTunnelCoordinator(processFactory: SmokeSSHFactory(),
+            localProber: local, remoteProber: remote, secrets: InMemoryPasswordStore())
+        coordinator.graceSeconds = 0.1
+        coordinator.remoteProbeCooldown = 0
+        let profile = ServerProfile(name: "regression", host: "test.invalid", sshPort: 22, username: "test",
+                                    remotePort: 7890, preferredProtocol: .socks5)
+        let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+        var latest: TunnelSnapshot?
+        coordinator.onEvent = { if case .snapshot(let snapshot) = $0 { latest = snapshot } }
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: endpoint))
+        _ = await waitSmokeUntil { latest?.phase == .connected }
+        check("R04", "远端探测使用隧道实际协议", remote.lastProtocol == .http)
+        local.outcome = .connectionRefused
+        coordinator.runHealthCheck(profileID: profile.id)
+        _ = await waitSmokeUntil { latest?.phase == .degraded }
+        check("R05", "健康检查重新验证自动端点，失败时降级",
+              local.callCount == 2 && latest?.localProxyVerified == false && latest?.phase == .degraded)
+        coordinator.terminateAllSessions()
     }
 
     // MARK: S01–S07 校验
@@ -364,8 +452,7 @@ struct SmokeMain {
             tunnel: spy,
             proxyDetector: detector,
             logStore: LogStore(),
-            secrets: InMemoryPasswordStore(),
-            isDemoMode: true
+            secrets: InMemoryPasswordStore()
         )
         check("S26a", "空启动 → 未配置状态", model.profiles.isEmpty && model.overallPresentation.title == "未配置")
 
@@ -377,11 +464,14 @@ struct SmokeMain {
                 capability: .verified)]
             return s
         }() )
-        var profile = ServerProfile(name: "冒烟机", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        var profile = ServerProfile(name: "冒烟机", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890, preferredProtocol: .socks5)
         model.saveDraftProfile(profile)
         model.connect()
         check("S26b", "连接经校验并把已验证端点传给服务",
               spy.box.connects.count == 1 && spy.box.connects.first?.localEndpoint?.port == 7897)
+
+        check("S26k", "复制命令采用实际 HTTP 候选而非 SOCKS5 偏好",
+              model.remoteCommandText()?.contains("http://127.0.0.1:7890") == true)
 
         // 无效配置拦截（U06 两个半边）
         profile.host = "bad host"
@@ -399,6 +489,15 @@ struct SmokeMain {
             sshProcessRunning: true, remoteProbeVerified: true, lastRemoteProbeAt: Date(),
             humanReadableDetail: "ok"
         )))
+        let priorLogs = model.logStore.entries.count
+        spy.onEvent?(.snapshot(TunnelSnapshot(
+            profileId: profile.id, phase: .connected, localProxyVerified: true,
+            sshProcessRunning: true, remoteProbeVerified: true, lastRemoteProbeAt: Date(),
+            humanReadableDetail: "手动检查完成：远端验证通过（HTTP 200）"
+        )))
+        check("S26l", "状态不变时仍记录真实健康检查结果",
+              model.logStore.entries.count == priorLogs + 1
+              && model.logStore.entries.last?.message.contains("HTTP 200") == true)
         profile.remotePort = 7891
         model.upsertProfile(profile)
         check("S26d", "活跃连接改参数 → degraded + 需重连", model.snapshots[profile.id]?.phase == .degraded)
@@ -443,10 +542,10 @@ struct SmokeMain {
         check("S27a", "日志环形容量收敛并保留最新",
               store.entries.count == LogStore.capacity && store.entries.last?.message == "e-\(LogStore.capacity + 1)")
 
-        store.append(raw: "demo \u{1B}[31mx\u{1B}[0m ~/.ssh/id_rsa", level: .info, isDemoEvent: true)
+        store.append(raw: "event \u{1B}[31mx\u{1B}[0m ~/.ssh/id_rsa", level: .info)
         let last = store.entries.last?.message ?? ""
-        check("S27b", "演示前缀 + ANSI 剥离 + 密钥遮挡",
-              last.hasPrefix("[演示] ") && !last.contains("\u{1B}") && !last.contains(".ssh/"))
+        check("S27b", "正常日志 + ANSI 剥离 + 密钥遮挡",
+              last.hasPrefix("event x ") && !last.contains("\u{1B}") && !last.contains(".ssh/"))
 
         store.append(raw: "ip 10.11.154.192 sunyun@10.11.154.192", level: .success)
         let redacted = store.exportText(redacted: true)

@@ -15,7 +15,6 @@
 		51A300000000000000000006 /* ProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000006 /* ProfileRepository.swift */; };
 		51A300000000000000000007 /* LogRedaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000007 /* LogRedaction.swift */; };
 		51A300000000000000000008 /* LogStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000008 /* LogStore.swift */; };
-		51A300000000000000000009 /* MockTunnelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000009 /* MockTunnelService.swift */; };
 		51A30000000000000000000A /* ProxyDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000A /* ProxyDetector.swift */; };
 		51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000B /* RemoteCommandTemplate.swift */; };
 		51A30000000000000000000C /* TunnelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000000C /* TunnelService.swift */; };
@@ -53,6 +52,7 @@
 		51A300000000000000000112 /* SSHCommandBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000112 /* SSHCommandBuilderTests.swift */; };
 		51A300000000000000000113 /* SSHErrorClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000113 /* SSHErrorClassifierTests.swift */; };
 		51A300000000000000000114 /* SSHTunnelCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */; };
+		51A300000000000000000115 /* MockServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000115 /* MockServices.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,7 +74,6 @@
 		51A200000000000000000006 /* ProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepository.swift; sourceTree = "<group>"; };
 		51A200000000000000000007 /* LogRedaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogRedaction.swift; sourceTree = "<group>"; };
 		51A200000000000000000008 /* LogStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStore.swift; sourceTree = "<group>"; };
-		51A200000000000000000009 /* MockTunnelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockTunnelService.swift; sourceTree = "<group>"; };
 		51A20000000000000000000A /* ProxyDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyDetector.swift; sourceTree = "<group>"; };
 		51A20000000000000000000B /* RemoteCommandTemplate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCommandTemplate.swift; sourceTree = "<group>"; };
 		51A20000000000000000000C /* TunnelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelService.swift; sourceTree = "<group>"; };
@@ -114,6 +113,7 @@
 		51A20000000000000000010A /* LogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStoreTests.swift; sourceTree = "<group>"; };
 		51A100000000000000000041 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		51A100000000000000000042 /* ProxyBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		51A200000000000000000115 /* MockServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockServices.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -205,7 +205,6 @@
 			children = (
 				51A200000000000000000007 /* LogRedaction.swift */,
 				51A200000000000000000008 /* LogStore.swift */,
-				51A200000000000000000009 /* MockTunnelService.swift */,
 				51A20000000000000000000A /* ProxyDetector.swift */,
 				51A20000000000000000000B /* RemoteCommandTemplate.swift */,
 				51A20000000000000000000C /* TunnelService.swift */,
@@ -257,6 +256,7 @@
 				51A200000000000000000106 /* MockTunnelServiceTests.swift */,
 				51A200000000000000000107 /* EndpointResolverTests.swift */,
 				51A200000000000000000108 /* TestSupport.swift */,
+				51A200000000000000000115 /* MockServices.swift */,
 				51A200000000000000000109 /* AppViewModelTests.swift */,
 				51A20000000000000000010A /* LogStoreTests.swift */,
 				51A200000000000000000110 /* SystemProxyDetectionTests.swift */,
@@ -372,7 +372,6 @@
 				51A300000000000000000006 /* ProfileRepository.swift in Sources */,
 				51A300000000000000000007 /* LogRedaction.swift in Sources */,
 				51A300000000000000000008 /* LogStore.swift in Sources */,
-				51A300000000000000000009 /* MockTunnelService.swift in Sources */,
 				51A30000000000000000000A /* ProxyDetector.swift in Sources */,
 				51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */,
 				51A30000000000000000000C /* TunnelService.swift in Sources */,
@@ -409,6 +408,7 @@
 				51A300000000000000000106 /* MockTunnelServiceTests.swift in Sources */,
 				51A300000000000000000107 /* EndpointResolverTests.swift in Sources */,
 				51A300000000000000000108 /* TestSupport.swift in Sources */,
+				51A300000000000000000115 /* MockServices.swift in Sources */,
 				51A300000000000000000109 /* AppViewModelTests.swift in Sources */,
 				51A30000000000000000010A /* LogStoreTests.swift in Sources */,
 				51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */,
@@ -484,7 +484,7 @@
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.0.0;
 				INFOPLIST_KEY_CFBundleVersion = 1;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -493,7 +493,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -511,7 +511,7 @@
 				ENABLE_TESTABILITY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 0.1.0;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.0.0;
 				INFOPLIST_KEY_CFBundleVersion = 1;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -520,7 +520,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -540,7 +540,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -560,7 +560,7 @@
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;

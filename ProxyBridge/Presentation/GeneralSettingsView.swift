@@ -1,7 +1,6 @@
 import SwiftUI
 
-/// 「通用设置」Tab。登录启动在阶段 D 通过 SMAppService 真正落地；
-/// 阶段 A 的开关只保存用户意图并明确标注未生效。
+/// 通用设置。尚未实现的行为禁用展示。
 struct GeneralSettingsView: View {
     @Environment(AppViewModel.self) private var model
 
@@ -11,20 +10,21 @@ struct GeneralSettingsView: View {
                 VStack(spacing: 0) {
                     settingRow(
                         title: "登录时启动 ProxyBridge",
-                        subtitle: "使用系统登录项（SMAppService），需要 macOS 用户授权。"
+                        subtitle: "尚未支持；可在系统设置的「登录项」中手动添加应用。"
                     ) {
                         Toggle("登录时启动", isOn: launchBinding)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
-                            .disabled(true) // 阶段 D 实现；当前不可用
+                            .disabled(true)
                     }
                     divider
                     settingRow(
                         title: "显示连接异常通知",
-                        subtitle: "连接失败、认证问题或长时间降级时提醒。"
+                        subtitle: "尚未支持；当前请在应用面板与日志中查看连接异常。"
                     ) {
                         Toggle("通知", isOn: notificationBinding)
+                            .disabled(true)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
@@ -32,7 +32,7 @@ struct GeneralSettingsView: View {
                     divider
                     settingRow(
                         title: "远端健康检查间隔",
-                        subtitle: "远端探测依赖远程 curl 可用；避免过度探测。"
+                        subtitle: "周期检查尚未支持；可使用「检查连接」手动验证。"
                     ) {
                         Picker("间隔", selection: remoteIntervalBinding) {
                             ForEach(AppSettings.allowedRemoteIntervals, id: \.self) { seconds in
@@ -40,11 +40,12 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .frame(width: 110)
+                        .disabled(true)
                     }
                     divider
                     settingRow(
                         title: "本地轻量检查间隔",
-                        subtitle: "只检查本地代理可用性，不触碰远端。"
+                        subtitle: "周期检查尚未支持；连接及手动检查时会验证本地代理。"
                     ) {
                         Picker("间隔", selection: localIntervalBinding) {
                             ForEach(AppSettings.allowedLocalIntervals, id: \.self) { seconds in
@@ -52,6 +53,7 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .frame(width: 110)
+                        .disabled(true)
                     }
                     divider
                     settingRow(
@@ -66,17 +68,17 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            InfoBlock(text: "「登录时启动」将在阶段 D 接入 SMAppService 注册（可随时在 系统设置 → 通用 → 登录项 中管理）。当前开关仅保存你的偏好，尚未向系统注册，也不会在未授权时自动启动连接。")
+            InfoBlock(text: "连接和手动检查会验证本地代理、SSH 隧道及远端代理。当前不支持自动重连、周期检查或系统异常通知。")
 
             SectionCard(title: "关于") {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("ProxyBridge · SSH 反向代理管理工具")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
-                    Text("版本：MVP 0.1.0 · 阶段 C（SSH 隧道）")
+                    Text("版本：1.0.0")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
-                    Text("阶段状态：工程与 UI 已完成 · 本地代理真实检测已完成 · SSH 隧道真实实现（/usr/bin/ssh，StrictHostKeyChecking 强制） · 自动重连与登录启动（阶段 D）未开始")
+                    Text("通过 SSH 将 Mac 本地代理转发至服务器的回环端口。")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)

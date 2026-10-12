@@ -140,31 +140,6 @@ struct HealthCheckRow: View {
     }
 }
 
-/// 阶段性说明横幅（明确告知哪些能力是真实的、哪些仍是演示）。
-struct DemoModeBanner: View {
-    var text: String = "演示模式：SSH 隧道与远端探测为模拟，未连接任何服务器"
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "flask")
-                .font(.system(size: 11, weight: .semibold))
-            Text(text)
-                .font(.system(size: 10.5))
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .foregroundStyle(Palette.blue)
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.blue.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Palette.blue.opacity(0.25), lineWidth: 1)
-        )
-        .accessibilityElement(children: .combine)
-    }
-}
-
 /// 表单行：左标签 + 右控件。
 struct FormRow<Control: View>: View {
     let label: String

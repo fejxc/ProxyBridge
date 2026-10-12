@@ -73,7 +73,7 @@ struct ProxySettingsView: View {
             if model.detection.isScanning {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text(model.detection.isLive ? "正在检测本地代理（读取系统设置 + curl 实测）…" : "正在检测本地代理…（演示）")
+                    Text("正在检测本地代理…")
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }
@@ -116,9 +116,7 @@ struct ProxySettingsView: View {
                 Text("未发现可用的本地代理候选")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text(model.detection.isLive
-                     ? "系统当前未启用代理端口，或候选未通过协议实测。可手动指定端口，或检查代理客户端是否运行。"
-                     : "演示模式未产出候选。可手动指定端口。")
+                Text("未检测到系统代理端口。可手动指定端口，或检查代理客户端是否运行。")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -153,8 +151,7 @@ struct ProxySettingsView: View {
                         .foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                MiniBadge(text: model.detection.isLive ? "系统实测" : "演示数据",
-                          tone: model.detection.isLive ? .green : .orange)
+                MiniBadge(text: "系统检测", tone: .gray)
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
@@ -176,17 +173,8 @@ struct ProxySettingsView: View {
     private var scannedAtText: String {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
-        if model.detection.isLive {
-            let base = "已读取 macOS 系统代理设置并经 curl 实测（验证目标 www.example.com）"
-            if let date = model.detection.lastScanAt {
-                return "最近检测 \(formatter.string(from: date)) · \(base)"
-            }
-            return base
-        }
-        if let date = model.detection.lastScanAt {
-            return "最近检测 \(formatter.string(from: date)) · 演示值（未读取系统）"
-        }
-        return "演示值（未读取系统）"
+        guard let date = model.detection.lastScanAt else { return "尚未完成检测" }
+        return "最近检测 \(formatter.string(from: date)) · 各协议验证结果见下方"
     }
 
     private func candidateCard(_ candidate: ProxyCandidate) -> some View {
@@ -222,10 +210,9 @@ struct ProxySettingsView: View {
 
     @ViewBuilder
     private func capabilityBadge(_ capability: ProxyCandidate.Capability) -> some View {
-        let isLive = model.detection.isLive
         switch capability {
         case .verified:
-            MiniBadge(text: isLive ? "已验证" : "已验证 · 演示", tone: .green)
+            MiniBadge(text: "已验证", tone: .green)
         case .reachable:
             MiniBadge(text: "端口可达 · 不可用作代理", tone: .orange)
         case .failed:

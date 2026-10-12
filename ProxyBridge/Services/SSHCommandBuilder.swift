@@ -113,9 +113,9 @@ enum RemoteProbeCommand {
         case .http: proxyArg = "--proxy http://127.0.0.1:\(remotePort)"
         case .socks5: proxyArg = "--socks5-hostname 127.0.0.1:\(remotePort)" // DNS 经代理解析
         }
-        return "command -v curl >/dev/null 2>&1 && curl --noproxy \"\" \(proxyArg) "
+        return "if ! command -v curl >/dev/null 2>&1; then echo \(noCurlMarker); exit 0; fi; "
+            + "exec curl --noproxy \"\" \(proxyArg) "
             + "--connect-timeout 3 --max-time 8 --silent --show-error "
-            + "--output /dev/null --write-out '%{http_code}' \(urlString) "
-            + "|| echo \(noCurlMarker)"
+            + "--output /dev/null --write-out '%{http_code}' \(urlString)"
     }
 }

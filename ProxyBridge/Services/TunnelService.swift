@@ -1,7 +1,6 @@
 import Foundation
 
-/// 隧道服务的抽象。UI 只认识这个协议；阶段 A 由 MockTunnelService 演示，
-/// 阶段 C 由真实 SSH 进程管理器实现。协议演进以真实实现为准。
+/// 隧道服务的抽象。UI 通过协议调用 SSH 隧道协调器。
 @MainActor
 protocol TunnelService: AnyObject {
     /// 服务→UI 的事件回调。事件按 profile 分组，乱序由实现方保证不发生。

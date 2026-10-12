@@ -59,8 +59,7 @@ final class AppViewModelTests: XCTestCase {
             tunnel: spy,
             proxyDetector: detector,
             logStore: LogStore(),
-            secrets: InMemoryPasswordStore(),
-            isDemoMode: true
+            secrets: InMemoryPasswordStore()
         )
         return (model, spy, detector)
     }
@@ -83,8 +82,8 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(model.profiles.isEmpty)
         XCTAssertTrue(model.overallPresentation.title == "未配置")
         let gotCandidates = await waitUntilMain { !model.detection.candidates.isEmpty }
-        XCTAssertTrue(gotCandidates, "Mock 检测器应产出候选（演示）")
-        XCTAssertFalse(model.detection.limitations.isEmpty, "演示模式必须带限制说明")
+        XCTAssertTrue(gotCandidates, "Mock 检测器应产出候选（测试替身）")
+        XCTAssertFalse(model.detection.limitations.isEmpty, "测试替身必须注明非实测")
     }
 
     func testBootstrapLoadsPersistedProfiles() {

@@ -80,12 +80,14 @@ final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
 
 final class SmokeLocalProber: ProxyProbeExecuting, @unchecked Sendable {
     var outcome: ProbeOutcome
+    private(set) var callCount = 0
     init(outcome: ProbeOutcome) { self.outcome = outcome }
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome { outcome }
+    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome { callCount += 1; return outcome }
 }
 
 final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     var outcome: RemoteProbeOutcome
+    private(set) var lastProtocol: ProxyProtocol?
     init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome { outcome }
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome { lastProtocol = `protocol`; return outcome }
 }
