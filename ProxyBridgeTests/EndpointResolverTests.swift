@@ -63,14 +63,29 @@ final class EndpointResolverTests: XCTestCase {
         XCTAssertEqual(ep.protocol, .socks5)
     }
 
-    func testAutoWithOnlyUnverifiedCandidatesIsNone() {
+    /// 未验证候选作为回退返回——连接时由协调器 curl 实测定生死（修复缓存假阴性）。
+    func testAutoWithOnlyUnverifiedCandidatesFallsBackForLiveProbe() {
         var state = detectedState
-        state.candidates = state.candidates.map { ProxyCandidate(endpoint: $0.endpoint, capability: .untested) }
+        state.candidates = state.candidates.map { ProxyCandidate(endpoint: $0.endpoint, capability: .failed) }
         let resolved = EndpointResolver.resolve(profile: profile(), detection: state)
-        guard case .none(let reason) = resolved else {
-            return XCTFail("未验证候选不得被采用，实际 \(resolved)")
+        guard case .auto(let ep) = resolved else {
+            return XCTFail("应有回退候选，实际 \(resolved)")
         }
-        XCTAssertTrue(reason.contains("验证"))
+        XCTAssertEqual(ep.port, 7897, "回退候选是回环端点，可用性由连接时实测决定")
+    }
+
+    func testAutoFallbackSkipsNonLoopbackCandidates() {
+        var state = ProxyDetectionState()
+        state.candidates = [
+            ProxyCandidate(
+                endpoint: LocalProxyEndpoint(host: "10.0.0.2", port: 3128, protocol: .http, origin: .systemHTTP),
+                capability: .untested
+            ),
+        ]
+        let resolved = EndpointResolver.resolve(profile: profile(), detection: state)
+        guard case .none = resolved else {
+            return XCTFail("非回环候选不得回退，实际 \(resolved)")
+        }
     }
 
     func testNoCandidatesExplainsNotFound() {

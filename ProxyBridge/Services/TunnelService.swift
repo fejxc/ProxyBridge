@@ -47,8 +47,9 @@ enum TunnelEvent: Sendable {
 // MARK: - 端点解析（纯函数）
 
 /// 解析「当前应使用的本地代理端点」。优先级（PRD F01）：
-/// 用户手动指定 > 可验证且当前系统启用的代理 > 未发现。
-/// 返回值只包含已通过验证的端点；未验证的自动候选不会顶替手动配置。
+/// 用户手动指定 > 已验证的自动候选 > 未验证的回环候选（交由连接时实时探测定生死）> 未发现。
+/// 注意：`.auto` 返回的端点不保证可用——协调器在连接序列里会用 curl 实测，
+/// 失败照样 degraded。这样避免「启动时探测失败 → 缓存导致永远连不上」的假阴性。
 enum EndpointResolver {
     enum Resolved: Equatable, Sendable {
         case manual(LocalProxyEndpoint)
@@ -66,7 +67,11 @@ enum EndpointResolver {
         if let best = detection.bestVerifiedEndpoint(preferred: profile.preferredProtocol) {
             return .auto(best)
         }
-        return .none(reason: detection.candidates.isEmpty ? "未发现本地系统代理" : "候选端点未通过协议验证")
+        // 无已验证候选：回退到回环候选（可能只是上次探测时节点临时不通）
+        if let fallback = detection.bestLoopbackCandidate(preferred: profile.preferredProtocol) {
+            return .auto(fallback)
+        }
+        return .none(reason: detection.candidates.isEmpty ? "未发现本地系统代理" : "未发现回环代理候选")
     }
 
     /// 展示用描述（面板「本地代理」行）。

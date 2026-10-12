@@ -26,6 +26,7 @@ struct SmokeMain {
         await liveProxyChecks()
         sshChecks()
         await tunnelCoordinatorChecks()
+        loopbackGuardChecks()
 
         print("----------------------------------------")
         print("通过 \(passed) 项，失败 \(failed) 项")
@@ -243,10 +244,10 @@ struct SmokeMain {
             check("S25b", "自动模式取已验证端点", false)
         }
         state.candidates = state.candidates.map { ProxyCandidate(endpoint: $0.endpoint, capability: .untested) }
-        if case .none = EndpointResolver.resolve(profile: autoProfile, detection: state) {
-            check("S25c", "未验证候选不被采用", true)
+        if case .auto(let fallback) = EndpointResolver.resolve(profile: autoProfile, detection: state) {
+            check("S25c", "未验证回环候选作为回退（连接时实时探测定生死）", fallback.port == 7897)
         } else {
-            check("S25c", "未验证候选不被采用", false)
+            check("S25c", "未验证回环候选作为回退（连接时实时探测定生死）", false)
         }
     }
 
@@ -513,6 +514,15 @@ struct SmokeMain {
         } else {
             print("   实测  = 本机未启用 HTTP 系统代理，跳过端到端实测")
         }
+    }
+
+    // MARK: S36 回环判定（真实检测链路的关键闸门，曾因实现 bug 静默跳过探测）
+
+    static func loopbackGuardChecks() {
+        check("S36a", "isLoopback(127.0.0.1) == true（用户场景）", ProxyCandidateBuilder.isLoopback("127.0.0.1"))
+        check("S36b", "isLoopback 覆盖 127/8", ProxyCandidateBuilder.isLoopback("127.8.8.8"))
+        check("S36c", "isLoopback 覆盖 ::1 与 localhost", ProxyCandidateBuilder.isLoopback("::1") && ProxyCandidateBuilder.isLoopback("localhost"))
+        check("S36d", "非回环不被误判", !ProxyCandidateBuilder.isLoopback("10.0.0.2") && !ProxyCandidateBuilder.isLoopback("::2"))
     }
 
     // MARK: S31–S33 SSH 命令构建 / 错误分类 / 真实 ssh 进程

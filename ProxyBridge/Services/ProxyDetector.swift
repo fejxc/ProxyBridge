@@ -42,6 +42,18 @@ struct ProxyDetectionState: Equatable, Sendable {
         return verified.first?.endpoint
     }
 
+    /// 最佳回环候选（不限验证状态）：preferred 协议优先，其次未测试 > 可达 > 失败。
+    /// 供连接时实时探测回退使用（探测失败依然会在协调器中如实降级）。
+    func bestLoopbackCandidate(preferred: ProxyProtocol? = nil) -> LocalProxyEndpoint? {
+        let loopback = candidates.filter { ProxyCandidateBuilder.isLoopback($0.endpoint.host) }
+        guard !loopback.isEmpty else { return nil }
+        if let p = preferred,
+           let match = loopback.first(where: { $0.endpoint.protocol == p })?.endpoint {
+            return match
+        }
+        return loopback.first?.endpoint
+    }
+
     var verifiedCandidates: [ProxyCandidate] {
         candidates.filter { $0.capability == .verified }
     }

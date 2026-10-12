@@ -578,7 +578,7 @@ final class AppViewModel {
             raw: "「\(name)」状态：\(phrase.title)（\(phrase.detail)）",
             level: level,
             profileId: snap.profileId,
-            isDemoEvent: true
+            isDemoEvent: isDemoMode
         )
     }
 

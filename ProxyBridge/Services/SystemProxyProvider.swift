@@ -142,10 +142,11 @@ enum ProxyCandidateBuilder {
         if h == "localhost" || h == "::1" || h == "[::1]" || h == "0:0:0:0:0:0:0:1" {
             return true
         }
-        // 127.0.0.0/8：四段点分且首段 127
+        // 127.0.0.0/8：完整四段点分、首段为 127
         if h.hasPrefix("127.") {
-            let rest = h.dropFirst(4).split(separator: ".", omittingEmptySubsequences: false)
-            if rest.count == 4, rest.allSatisfy({ !($0.isEmpty) && Int($0) != nil && Int($0)! <= 255 }) {
+            let parts = h.split(separator: ".", omittingEmptySubsequences: false)
+            if parts.count == 4, parts[0] == "127",
+               parts.allSatisfy({ !$0.isEmpty && Int($0) != nil && Int($0)! <= 255 }) {
                 return true
             }
         }
