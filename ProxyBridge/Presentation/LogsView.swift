@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// 「连接日志」Tab：按时间/级别/服务器筛选，复制（默认脱敏）日志。
+@MainActor
 struct LogsView: View {
     @Environment(AppViewModel.self) private var model
 

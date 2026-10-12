@@ -3,6 +3,7 @@ import AppKit
 
 /// 服务器编辑表单（设置窗口「服务器」Tab，对应原型 tab-servers）。
 /// 外层管理草稿生命周期（新建/切换/保存/删除），内层表单只读写 Binding。
+@MainActor
 struct ServerEditorView: View {
     @Environment(AppViewModel.self) private var model
 
@@ -116,6 +117,7 @@ extension ServerProfile {
 }
 
 /// 表单主体。
+@MainActor
 struct ServerEditorForm: View {
     @Binding var profile: ServerProfile
     let isNew: Bool
@@ -328,6 +330,7 @@ struct ServerEditorForm: View {
 }
 
 /// 端口输入框：数字、等宽。
+@MainActor
 struct PortField: View {
     @Binding var value: Int
     var prompt: String

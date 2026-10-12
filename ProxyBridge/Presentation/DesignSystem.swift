@@ -54,6 +54,7 @@ extension NSColor {
 // MARK: - 复用组件
 
 /// 卡片容器（圆角 10、细描边）。
+@MainActor
 struct SectionCard<Content: View>: View {
     var title: String?
     @ViewBuilder var content: Content
@@ -79,6 +80,7 @@ struct SectionCard<Content: View>: View {
 }
 
 /// 状态胶囊标签（颜色 + 文本，永远成对出现）。
+@MainActor
 struct StatusTag: View {
     let text: String
     let tone: StatusTone
@@ -102,6 +104,7 @@ struct StatusTag: View {
 }
 
 /// 三层健康检查行（图标 + 主文案 + 次文案）。
+@MainActor
 struct HealthCheckRow: View {
     let title: String
     let display: HealthCheckDisplay
@@ -141,6 +144,7 @@ struct HealthCheckRow: View {
 }
 
 /// 表单行：左标签 + 右控件。
+@MainActor
 struct FormRow<Control: View>: View {
     let label: String
     var help: String? = nil
@@ -167,6 +171,7 @@ struct FormRow<Control: View>: View {
 }
 
 /// 等宽数字文本（IP/端口）。
+@MainActor
 struct MonoText: View {
     let text: String
     var weight: Font.Weight = .semibold
@@ -183,6 +188,7 @@ struct MonoText: View {
 }
 
 /// 提示信息块（原型 infoBlock）。
+@MainActor
 struct InfoBlock: View {
     let text: String
 

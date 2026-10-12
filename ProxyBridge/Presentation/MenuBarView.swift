@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 
 /// 菜单栏弹出面板（约 368pt 宽，结构对应原型 01）。
+@MainActor
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
     @State private var confirmQuit = false
@@ -332,6 +333,7 @@ struct MenuBarView: View {
 }
 
 /// 小徽标（原型 mini-qual）。
+@MainActor
 struct MiniBadge: View {
     let text: String
     let tone: StatusTone

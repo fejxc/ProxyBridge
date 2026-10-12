@@ -3,6 +3,7 @@ import AppKit
 import Carbon
 
 @main
+@MainActor
 struct ProxyBridgeEntry {
     static func main() {
         SSHProcessLauncher.runPTYChildIfRequested()
@@ -10,6 +11,7 @@ struct ProxyBridgeEntry {
     }
 }
 
+@MainActor
 struct ProxyBridgeApp: App {
     @NSApplicationDelegateAdaptor(ProxyBridgeAppDelegate.self) private var delegate
     @State private var model: AppViewModel

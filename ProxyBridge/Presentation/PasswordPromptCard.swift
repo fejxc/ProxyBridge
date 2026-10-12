@@ -2,6 +2,7 @@ import SwiftUI
 
 /// SSH 密码输入卡（密码模式）：菜单栏面板与设置窗口共用，
 /// 确保用户无论盯着哪个窗口都能看到密码请求。
+@MainActor
 struct PasswordPromptCard: View {
     @Environment(AppViewModel.self) private var model
 

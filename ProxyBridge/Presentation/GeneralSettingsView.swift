@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// 通用设置与系统授权状态。
+@MainActor
 struct GeneralSettingsView: View {
     @Environment(AppViewModel.self) private var model
 

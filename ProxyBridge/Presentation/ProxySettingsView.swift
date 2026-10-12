@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// 「本地代理」Tab：自动/手动分段、检测结果、协议能力、限制说明（原型 tab-proxy）。
+@MainActor
 struct ProxySettingsView: View {
     @Environment(AppViewModel.self) private var model
 

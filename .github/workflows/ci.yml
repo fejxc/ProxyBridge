@@ -15,8 +15,8 @@ concurrency:
 
 jobs:
   macos:
-    name: Build & Test (macOS 14)
-    runs-on: macos-14
+    name: Build & Test (macOS 15, target 14)
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -76,10 +76,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: 保留 App 包结构及可执行权限
+        if: success()
+        run: ditto -c -k --sequesterRsrc --keepParent build/ProxyBridge.app build/ProxyBridge.app.zip
+
       - name: 上传 App 产物
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ProxyBridge-app
-          path: build/ProxyBridge.app
+          path: build/ProxyBridge.app.zip
           retention-days: 14

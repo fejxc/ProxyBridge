@@ -1,6 +1,7 @@
 import SwiftUI
 
 /// 设置窗口（约 960×680）：左侧栏 + 四个分区（原型 02）。
+@MainActor
 struct SettingsView: View {
     @Environment(AppViewModel.self) private var model
 
@@ -161,6 +162,7 @@ extension SettingsTab {
 
 // MARK: 侧栏小组件
 
+@MainActor
 struct SidebarButton: View {
     let title: String
     let symbol: String
@@ -189,6 +191,7 @@ struct SidebarButton: View {
     }
 }
 
+@MainActor
 struct SidebarProfileRow: View {
     let name: String
     let isCurrent: Bool
