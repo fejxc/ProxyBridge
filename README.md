@@ -1,6 +1,8 @@
 # ProxyBridge
 
-![ProxyBridge 应用图标](ProxyBridge/Resources/AppIcon.png)
+<p align="center">
+  <img src="ProxyBridge/Resources/AppIcon.png" alt="ProxyBridge 应用图标" width="112">
+</p>
 
 **macOS 14+ 菜单栏 SSH 反向代理工具。**将 Mac 上的 HTTP 或 SOCKS5 本地代理，通过 SSH 安全转发到 Linux 服务器的回环地址。
 
