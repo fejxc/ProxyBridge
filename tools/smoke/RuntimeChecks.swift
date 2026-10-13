@@ -4,6 +4,9 @@ extension SmokeMain {
     @MainActor
     static func runtimeChecks() async {
         let profile = ServerProfile(name: "runtime", host: "test.invalid", sshPort: 22, username: "test", remotePort: 7890)
+        check("N07", "Codex HTTP compatibility defaults to port 7890 while SOCKS5 stays distinct",
+              profile.httpAdapterEnabled && profile.remoteHTTPPort == 7_890
+              && profile.remoteSocksPort == 17_890)
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpoint)
         let adapterToken = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -156,6 +159,7 @@ extension SmokeMain {
 
         var dynamicProfile = profile
         dynamicProfile.connectionMode = .reverseDynamic
+        dynamicProfile.httpAdapterEnabled = false // isolate the SOCKS-only lifecycle
         let dynamicFactory = SmokeSSHFactory()
         let dynamicLocal = SmokeLocalProber(outcome: .connectionRefused)
         let dynamicRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
@@ -183,6 +187,7 @@ extension SmokeMain {
 
         var automaticProfile = profile
         automaticProfile.connectionMode = .automatic
+        automaticProfile.httpAdapterEnabled = false // isolate the SOCKS-only fallback
         let automaticFactory = SmokeSSHFactory()
         let automaticLocal = SmokeLocalProber(outcome: .connectionRefused)
         let automaticRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
@@ -250,7 +255,6 @@ extension SmokeMain {
 
         var bPlusProfile = profile
         bPlusProfile.connectionMode = .reverseDynamic
-        bPlusProfile.httpAdapterEnabled = true
         let bPlusRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
         let bPlusManager = SmokeHTTPAdapterManager(result: .started(RemoteHTTPAdapterSession(
             token: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", handle: SmokeSSHHandle()

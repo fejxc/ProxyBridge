@@ -102,7 +102,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         connectionMode: ConnectionMode = .automatic,
         remoteSocksPort: Int = 17_890,
         remoteHTTPPort: Int = 7_890,
-        httpAdapterEnabled: Bool = false
+        httpAdapterEnabled: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -153,7 +153,9 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         remoteSocksPort = try c.decodeIfPresent(Int.self, forKey: .remoteSocksPort) ?? 17_890
         remoteHTTPPort = try c.decodeIfPresent(Int.self, forKey: .remoteHTTPPort) ?? 7_890
         connectionMode = try c.decodeIfPresent(ConnectionMode.self, forKey: .connectionMode) ?? .automatic
-        httpAdapterEnabled = try c.decodeIfPresent(Bool.self, forKey: .httpAdapterEnabled) ?? false
+        // Keep existing Linux Codex HTTP_PROXY/HTTPS_PROXY settings on port 7890
+        // working after upgrade. Users can still explicitly disable the adapter.
+        httpAdapterEnabled = try c.decodeIfPresent(Bool.self, forKey: .httpAdapterEnabled) ?? true
         relayPort = try c.decodeIfPresent(Int.self, forKey: .relayPort)
         proxySelectionMode = try c.decode(ProxySelectionMode.self, forKey: .proxySelectionMode)
         manualEndpoint = try c.decodeIfPresent(LocalProxyEndpoint.self, forKey: .manualEndpoint)

@@ -40,7 +40,7 @@ Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器�
 
 | 模式 | 数据路径 | Linux 代理地址 |
 |---|---|---|
-| 自动（推荐） | 优先使用真实验证成功的本地 upstream；否则尝试 OpenSSH 反向动态 SOCKS5 | 静态入口协议与已选端口，或 SOCKS5 `127.0.0.1:17890` |
+| 自动（推荐） | 优先使用真实验证成功的本地 upstream；否则尝试 OpenSSH 反向动态 SOCKS5 | Codex HTTP `127.0.0.1:7890`（默认）；SOCKS5 `127.0.0.1:17890` |
 | 传统端口转发 | Linux 回环 → SSH `-R remote:local` → Mac 的 HTTP/SOCKS/Mixed 上游 | 按上游协议使用 `remotePort` |
 | 动态 SOCKS5 | Linux SOCKS5 → SSH `-R 127.0.0.1:port` → Mac 网络栈 | SOCKS5 `127.0.0.1:17890` |
 
@@ -59,7 +59,7 @@ curl --socks5-hostname 127.0.0.1:17890 -I \
   --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models
 ```
 
-未认证 API 通常返回 HTTP 401；这表示请求到达 API，不代表账号已认证。若启用 HTTP 兼容入口，ProxyBridge 还会单独验证 HTTP CONNECT。通过后 Linux Codex 可使用：
+未认证 API 通常返回 HTTP 401；这表示请求到达 API，不代表账号已认证。HTTP 兼容入口默认启用，ProxyBridge 会单独验证 HTTP CONNECT。底层 SOCKS5 使用 `17890`，服务器 Codex 的 HTTP 配置继续使用 `7890`：
 
 ```bash
 export http_proxy=http://127.0.0.1:7890
@@ -71,7 +71,7 @@ curl -I --proxy http://127.0.0.1:7890 \
   --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models
 ```
 
-HTTP 入口需要 Linux 已安装 `privoxy`。如果没有，ProxyBridge 会提示但不会安装；请按 Linux 发行版政策由用户或管理员手动安装。应用只创建当前 SSH 用户的 `~/.cache/proxybridge/` 会话配置，Privoxy 与远端 SSH 转发都只绑定 `127.0.0.1`。端口冲突时请在服务器配置页改端口，应用不会终止未知进程。
+HTTP 入口默认开启，需要 Linux 已安装 `privoxy`。如果没有，ProxyBridge 会提示但不会安装；反向 SOCKS5 仍可独立使用。应用只创建当前 SSH 用户的 `~/.cache/proxybridge/` 会话配置，Privoxy 与远端 SSH 转发都只绑定 `127.0.0.1`。端口冲突时请在服务器配置页改端口，应用不会终止未知进程。HTTP 入口可在服务器配置中关闭。
 
 Debian/Ubuntu 示例（需由有权限的用户自行执行；ProxyBridge 不会代为运行）：
 

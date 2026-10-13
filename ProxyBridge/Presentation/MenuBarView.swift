@@ -193,13 +193,15 @@ struct MenuBarView: View {
                         .padding(.top, 12)
                     Spacer(minLength: 0)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(isDynamicMode ? "Linux SOCKS5" : "Linux 远端代理")
+                        Text(isDynamicMode
+                             ? (model.currentProfile?.httpAdapterEnabled == true ? "Linux Codex HTTP" : "Linux SOCKS5")
+                             : "Linux 远端代理")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.muted)
                         MonoText(text: remoteEndpointDisplay)
                         MiniBadge(text: "仅 127.0.0.1 · TCP", tone: .green)
                         if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
-                            MonoText(text: "HTTP \(model.currentProfile?.remoteHTTPListenDisplay ?? "—")", size: 10)
+                            MonoText(text: "SOCKS5 \(model.currentProfile?.remoteSocksListenDisplay ?? "—")", size: 10)
                             MiniBadge(text: adapterBadgeText, tone: adapterBadgeTone)
                         }
                     }
@@ -244,7 +246,11 @@ struct MenuBarView: View {
 
     private var remoteEndpointDisplay: String {
         guard let profile = model.currentProfile else { return "—" }
-        if isDynamicMode { return profile.remoteSocksListenDisplay }
+        if isDynamicMode {
+            return profile.httpAdapterEnabled
+                ? "HTTP \(profile.remoteHTTPListenDisplay)"
+                : "SOCKS5 \(profile.remoteSocksListenDisplay)"
+        }
         let endpoint = model.currentSnapshot.activeLocalEndpoint
         return "\(ServerProfile.remoteBindHost):\(profile.remotePort) · \(endpoint?.protocol.displayName ?? profile.preferredProtocol.displayName)"
     }

@@ -358,6 +358,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         makeCoordinator()
         var profile = configuration(endpoint: nil).profile
         profile.connectionMode = .reverseDynamic
+        profile.httpAdapterEnabled = false // this test covers SOCKS-only mode
         coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
 
         let connected = await waitLastPhase(.connected)
@@ -397,7 +398,6 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         makeCoordinator(adapterManager: manager)
         var profile = configuration(endpoint: nil).profile
         profile.connectionMode = .reverseDynamic
-        profile.httpAdapterEnabled = true
         coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
 
         let connected = await waitLastPhase(.connected)
@@ -419,7 +419,6 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         makeCoordinator(adapterManager: manager)
         var profile = configuration(endpoint: nil).profile
         profile.connectionMode = .reverseDynamic
-        profile.httpAdapterEnabled = true
         coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
 
         let degraded = await waitLastPhase(.degraded)
@@ -542,7 +541,8 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
 
     func testAutomaticWithoutLocalEndpointFallsBackToDynamicSocks() async {
         makeCoordinator()
-        let config = configuration(endpoint: nil)
+        var config = configuration(endpoint: nil)
+        config.profile.httpAdapterEnabled = false // this test covers SOCKS-only fallback
         coordinator.connect(configuration: config)
 
         let connected = await waitLastPhase(.connected)
@@ -556,7 +556,8 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
 
     func testAutomaticFallsBackWhenLocalProxyProbeFails() async {
         makeCoordinator(local: .connectionRefused)
-        let config = configuration(endpoint: endpoint)
+        var config = configuration(endpoint: endpoint)
+        config.profile.httpAdapterEnabled = false // this test covers SOCKS-only fallback
         coordinator.connect(configuration: config)
 
         let connected = await waitLastPhase(.connected)

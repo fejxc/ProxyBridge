@@ -71,6 +71,7 @@ final class ProfileRepositoryTests: XCTestCase {
         XCTAssertEqual(p.identityFilePath, "~/.ssh/id_ed25519")
         XCTAssertFalse(p.reconnectEnabled)
         XCTAssertTrue(p.connectAtLaunch)
+        XCTAssertTrue(p.httpAdapterEnabled, "新建配置默认保留 Codex HTTP 代理入口")
     }
 
     func testDeleteProfilePersists() throws {
@@ -130,8 +131,18 @@ final class ProfileRepositoryTests: XCTestCase {
         XCTAssertEqual(doc.profiles.first?.connectionMode, .automatic, "旧配置应自动迁移到自动选择")
         XCTAssertEqual(doc.profiles.first?.remoteSocksPort, 17_890)
         XCTAssertEqual(doc.profiles.first?.remoteHTTPPort, 7_890)
-        XCTAssertFalse(doc.profiles.first?.httpAdapterEnabled ?? true)
+        XCTAssertTrue(doc.profiles.first?.httpAdapterEnabled ?? false, "旧配置升级后默认保留 Codex 的 7890 HTTP 入口")
         XCTAssertEqual(doc.currentProfileId?.uuidString, id)
+    }
+
+    func testExplicitHTTPAdapterOptOutSurvivesRoundTrip() throws {
+        let repo = makeRepo()
+        var document = sampleDocument()
+        document.profiles[0].httpAdapterEnabled = false
+        try repo.save(document)
+
+        let reloaded = try repo.load()
+        XCTAssertFalse(reloaded.profiles[0].httpAdapterEnabled)
     }
 
     func testStaleCurrentProfileIdFallsBackToFirst() throws {

@@ -265,19 +265,20 @@ final class AppViewModelTests: XCTestCase {
         let (model, _, _) = makeModel(directory: temp.url)
         var profile = validProfile()
         profile.connectionMode = .reverseDynamic
+        XCTAssertTrue(profile.httpAdapterEnabled, "Codex HTTP 兼容入口应默认开启")
         model.saveDraftProfile(profile)
 
-        let socksOnly = model.remoteCommandText()
-        XCTAssertTrue(socksOnly?.contains("--socks5-hostname 127.0.0.1:17890") == true)
-        XCTAssertFalse(socksOnly?.contains("HTTP_PROXY=http://127.0.0.1:17890") == true)
-        XCTAssertNil(model.remoteHTTPCompatibilityText(), "未启用 B+ 时不应提供可误用的 HTTP_PROXY 命令")
-
-        profile.httpAdapterEnabled = true
-        model.upsertProfile(profile)
         let bPlus = model.remoteCommandText()
         XCTAssertNotNil(model.remoteHTTPCompatibilityText())
         XCTAssertTrue(bPlus?.contains("HTTP_PROXY=http://127.0.0.1:7890") == true)
         XCTAssertTrue(bPlus?.contains("--socks5-hostname 127.0.0.1:17890") == true)
         XCTAssertFalse(bPlus?.contains("HTTP_PROXY=http://127.0.0.1:17890") == true)
+
+        profile.httpAdapterEnabled = false
+        model.upsertProfile(profile)
+        let socksOnly = model.remoteCommandText()
+        XCTAssertNil(model.remoteHTTPCompatibilityText(), "明确关闭适配器时不应生成 HTTP_PROXY 命令")
+        XCTAssertTrue(socksOnly?.contains("--socks5-hostname 127.0.0.1:17890") == true)
+        XCTAssertFalse(socksOnly?.contains("HTTP_PROXY=http://127.0.0.1:17890") == true)
     }
 }
