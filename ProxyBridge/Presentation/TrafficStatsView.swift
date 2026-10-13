@@ -4,17 +4,39 @@ import SwiftUI
 struct TrafficStatsView: View {
     let session: TrafficSessionModel
     let connected: Bool
+    let supported: Bool
     @State private var expanded = false
     private let uploadColor = Color(red: 0.28, green: 0.48, blue: 0.70)
     private let downloadColor = Color(red: 0.25, green: 0.56, blue: 0.42)
-    init(session: TrafficSessionModel, connected: Bool, initiallyExpanded: Bool = false) {
-        self.session = session; self.connected = connected
+    init(session: TrafficSessionModel, connected: Bool, supported: Bool = true, initiallyExpanded: Bool = false) {
+        self.session = session; self.connected = connected; self.supported = supported
         _expanded = State(initialValue: initiallyExpanded)
     }
     private var value: TrafficSnapshot { session.snapshot }
     private var live: Bool { connected && value.isRunning }
 
     var body: some View {
+        if supported {
+            statistics
+        } else {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "chart.xyaxis.line")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("流量统计暂不可用")
+                        .font(.caption.weight(.semibold))
+                    Text("动态 SOCKS5 不经过本地 Relay；应用不会把 SSH 进程字节误报为代理业务流量。")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
+    private var statistics: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 16) {
                 direction(title: "上传", symbol: "arrow.up", rate: value.uploadRate, bytes: value.uploadBytes, color: uploadColor)

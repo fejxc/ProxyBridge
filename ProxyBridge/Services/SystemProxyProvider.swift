@@ -24,6 +24,68 @@ struct SystemProxySnapshot: Equatable, Sendable {
     }
 }
 
+/// Reads proxy variables visible to this app process. Values remain in memory
+/// only; credentials are rejected rather than persisted or placed in logs.
+protocol ProxyEnvironmentProviding: AnyObject, Sendable {
+    func readEnvironment() -> [String: String]
+}
+
+final class ProcessProxyEnvironmentProvider: ProxyEnvironmentProviding {
+    func readEnvironment() -> [String: String] { ProcessInfo.processInfo.environment }
+}
+
+struct ParsedProxyEnvironment: Equatable, Sendable {
+    var endpoints: [LocalProxyEndpoint] = []
+    var limitations: [String] = []
+}
+
+enum ProxyEnvironmentParser {
+    static func parse(_ values: [String: String]) -> ParsedProxyEnvironment {
+        var parsed = ParsedProxyEnvironment()
+        let definitions: [(keys: [String], origin: ProxyEndpointOrigin)] = [
+            (["http_proxy", "HTTP_PROXY"], .environmentHTTP),
+            (["https_proxy", "HTTPS_PROXY"], .environmentHTTPS),
+            (["all_proxy", "ALL_PROXY"], .environmentAll),
+        ]
+        var seenVariables: Set<String> = []
+        for definition in definitions {
+            guard seenVariables.insert(definition.origin.rawValue).inserted else { continue }
+            var selected: (key: String, value: String)?
+            for key in definition.keys {
+                if let value = values[key]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                    selected = (key, value)
+                    break
+                }
+            }
+            guard let selected else { continue }
+            let (key, raw) = selected
+            guard let endpoint = endpoint(raw, origin: definition.origin) else {
+                parsed.limitations.append("\(key) 存在，但格式、认证信息或协议不受支持；请在应用中手动填写不含凭据的本地端点。")
+                continue
+            }
+            parsed.endpoints.append(endpoint)
+        }
+        return parsed
+    }
+
+    private static func endpoint(_ raw: String, origin: ProxyEndpointOrigin) -> LocalProxyEndpoint? {
+        let candidate = raw.contains("://") ? raw : "http://" + raw
+        guard let parts = URLComponents(string: candidate),
+              let host = parts.host, !host.isEmpty,
+              let port = parts.port, (1...65_535).contains(port),
+              parts.user == nil, parts.password == nil,
+              parts.path.isEmpty || parts.path == "/",
+              parts.query == nil, parts.fragment == nil else { return nil }
+        let proxyProtocol: ProxyProtocol
+        switch parts.scheme?.lowercased() {
+        case "http": proxyProtocol = .http
+        case "socks5", "socks5h": proxyProtocol = .socks5
+        default: return nil // HTTPS proxy transport and unknown schemes are not implemented.
+        }
+        return LocalProxyEndpoint(host: host, port: port, protocol: proxyProtocol, origin: origin)
+    }
+}
+
 /// 系统代理读取抽象（测试注入；实现只读，绝不修改系统设置）。
 protocol SystemProxyProviding: AnyObject, Sendable {
     func readProxies() -> SystemProxySnapshot
@@ -96,7 +158,7 @@ enum ProxyCandidateBuilder {
         var limitations: [String]
     }
 
-    static func build(from snapshot: SystemProxySnapshot) -> Built {
+    static func build(from snapshot: SystemProxySnapshot, environment: [String: String] = [:]) -> Built {
         var limitations: [String] = []
 
         // 按来源优先级顺序追加（systemHTTP > systemHTTPS > systemSOCKS），
@@ -111,15 +173,21 @@ enum ProxyCandidateBuilder {
         if let p = snapshot.socks {
             entries.append(LocalProxyEndpoint(host: p.host, port: p.port, protocol: .socks5, origin: .systemSOCKS))
         }
+        let parsedEnvironment = ProxyEnvironmentParser.parse(environment)
+        entries.append(contentsOf: parsedEnvironment.endpoints)
+        limitations.append(contentsOf: parsedEnvironment.limitations)
 
-        var byKey: [String: LocalProxyEndpoint] = [:]
-        for endpoint in entries where byKey[endpoint.id] == nil {
-            byKey[endpoint.id] = endpoint
+        var candidates: [ProxyCandidate] = []
+        var seen: Set<String> = []
+        for endpoint in entries where seen.insert(endpoint.id).inserted {
+            candidates.append(ProxyCandidate(endpoint: endpoint, capability: .untested))
         }
-
-        var candidates = byKey.values
-            .map { ProxyCandidate(endpoint: $0, capability: .untested) }
-            .sorted { $0.id < $1.id }
+        candidates.sort {
+            if $0.endpoint.origin.sourcePriority != $1.endpoint.origin.sourcePriority {
+                return $0.endpoint.origin.sourcePriority < $1.endpoint.origin.sourcePriority
+            }
+            return $0.id < $1.id
+        }
 
         // 非 loopback：显示但 MVP 不探测、不转发
         for index in candidates.indices where !isLoopback(candidates[index].endpoint.host) {
@@ -130,7 +198,7 @@ enum ProxyCandidateBuilder {
             limitations.append("系统启用了 PAC 自动配置脚本（\(snapshot.pacURL ?? "URL 未提供")）：无法从中解析出固定代理端口，App 不会替你套用脚本决策；如脚本固定返回某端口，请手动指定。")
         }
         if candidates.isEmpty && !snapshot.pacEnabled {
-            limitations.append("未从 macOS 系统设置解析到已启用的代理端口。若代理客户端处于 TUN/增强模式（无本地监听端口），本工具无法为其建立转发；请切换回端口模式，或在下方手动指定。")
+            limitations.append("未发现可验证的本地代理端口。若代理客户端使用 TUN/Network Extension 模式，仍可通过 SSH 反向动态 SOCKS5 使用 Mac 当前网络栈。")
         }
         return Built(candidates: candidates, limitations: limitations)
     }

@@ -12,6 +12,9 @@ struct ProxySettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            if model.currentProfile?.connectionMode == .reverseDynamic {
+                InfoBlock(text: "当前使用动态 SOCKS5：不需要 Mac 本地 HTTP/SOCKS 端口。此页的本地代理入口仅在切换到静态或自动模式时使用。")
+            }
             SectionCard(title: "代理来源") {
                 VStack(alignment: .leading, spacing: 14) {
                     Picker("模式", selection: modeBinding) {
@@ -42,7 +45,7 @@ struct ProxySettingsView: View {
                 }
             }
 
-            InfoBlock(text: "检测结果仅来自当前这台 Mac（不会跨机器套用）：读取 macOS 系统代理设置，对每个候选逐协议经 curl 实测（验证目标 https://www.example.com/ ，仅判定代理可用性，不上传任何数据）。PAC、仅 TUN、需要认证的代理会在「限制与说明」中如实标注；检测到系统代理变化时自动防抖重扫。")
+            InfoBlock(text: "读取 macOS 系统代理与当前 App 可见的 HTTP_PROXY / HTTPS_PROXY / ALL_PROXY，对回环候选逐协议经 curl 实测 https://api.openai.com/v1/models。未认证响应 HTTP 401 也表示请求已到达 API。PAC 与凭据型环境变量不会被当作固定入口；动态 SOCKS5 可处理没有本地监听端口的 Network Extension 模式。")
         }
         .onAppear { loadManualFields() }
         .onChange(of: model.currentProfileId) { _, _ in
@@ -117,7 +120,7 @@ struct ProxySettingsView: View {
                 Text("未发现可用的本地代理候选")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("未检测到系统代理端口。可手动指定端口，或检查代理客户端是否运行。")
+                Text("未发现可验证的本地代理端口。可手动指定入口；若代理使用 TUN/Network Extension，也可以使用动态 SOCKS5。")
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -240,11 +243,12 @@ struct ProxySettingsView: View {
                     }
                     FormRow(label: "协议", help: "以连接时的实测验证为准") {
                         Picker("协议", selection: $manualProtocol) {
-                            Text("HTTP").tag(ProxyProtocol.http)
-                            Text("SOCKS5").tag(ProxyProtocol.socks5)
+                        Text("HTTP").tag(ProxyProtocol.http)
+                        Text("SOCKS5").tag(ProxyProtocol.socks5)
+                        Text("Mixed").tag(ProxyProtocol.mixed)
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 180)
+                        .frame(width: 220)
                     }
                 }
             }

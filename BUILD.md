@@ -31,13 +31,13 @@ xcodebuild -project ProxyBridge.xcodeproj -scheme ProxyBridge test
 bash scripts/typecheck.sh    # ① App 模块 -emit-module 编译检查（0 error）
                             # ② 测试代码类型检查（XCTest shim，编译级）
                             # ③ Swift 6 语言模式预检
-bash scripts/smoke_test.sh   # 编译 + 执行 93 项核心逻辑断言（生产源码直连）
+bash scripts/smoke_test.sh   # 编译 + 执行生产源码回归断言（含 v2 动态 SOCKS5 与 B+ 路径）
 bash scripts/build_app.sh    # swiftc 链接 build/ProxyBridge.app（ad-hoc 签名 + 应用图标）
 bash scripts/install_app.sh  # 安装到 /Applications 并启动（日常使用推荐）
 ```
 
 说明：
-- CLT 不含公开 XCTest.framework，`xcodebuild test` 无法执行——因此提供 `tools/smoke` 作为真实执行证据；XCTest 断言的运行需要完整 Xcode。
+- CLT 不含公开 XCTest.framework，`xcodebuild test` 无法执行——因此提供 `tools/smoke` 作为真实执行证据；XCTest 断言已做编译级检查，运行需要完整 Xcode。
 - `build_app.sh [目标三元组]` 可交叉编译（默认 `arm64-apple-macos14.0`；Intel Mac 传 `x86_64-apple-macos14.0`）。
 
 ## 工程要点

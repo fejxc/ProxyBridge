@@ -13,6 +13,19 @@ enum TunnelPhase: String, Codable, Sendable, CaseIterable {
     case disconnecting
 }
 
+enum HTTPAdapterStatus: String, Codable, Sendable, CaseIterable {
+    case notRequested
+    case checking
+    case starting
+    case running
+    case verified
+    case notInstalled
+    case portConflict
+    case unavailable
+    case stopping
+    case stopped
+}
+
 /// 单个 profile 的隧道状态快照。
 ///
 /// 三态语义（重要）：`localProxyVerified` / `remoteProbeVerified` 为 `Bool?`：
@@ -28,6 +41,17 @@ struct TunnelSnapshot: Equatable, Sendable {
     var remoteProbeVerified: Bool?
     var lastRemoteProbeAt: Date?
     var humanReadableDetail: String
+    /// The selected working mode after automatic resolution. A SOCKS port is
+    /// never inferred from or labelled as an HTTP endpoint.
+    var effectiveMode: ConnectionMode? = nil
+    var selectionReason: String? = nil
+    var activeLocalEndpoint: LocalProxyEndpoint? = nil
+    var networkReachability: Bool? = nil
+    /// No automated probe can prove which Clash rule/node handled this traffic.
+    var clashNodeConfirmed: Bool? = nil
+    var httpAdapterVerified: Bool? = nil
+    var httpAdapterStatus: HTTPAdapterStatus = .notRequested
+    var httpAdapterDetail: String? = nil
 
     static func idle(_ profileId: UUID) -> TunnelSnapshot {
         TunnelSnapshot(
@@ -95,23 +119,31 @@ enum TunnelStatusPresentation {
         case .idle:
             return StatusPresentation(title: "未连接", detail: "点击连接以建立转发", tone: .gray)
         case .checking:
-            return StatusPresentation(title: "检查中", detail: "正在验证本地代理…", tone: .blue)
+            let detail = snapshot.effectiveMode == .reverseDynamic
+                ? "动态 SOCKS5 模式不需要本地代理端口"
+                : (snapshot.humanReadableDetail.isEmpty ? "正在检查连接方式…" : snapshot.humanReadableDetail)
+            return StatusPresentation(title: "检查中", detail: detail, tone: .blue)
         case .connecting, .reconnecting:
             let verb = snapshot.phase == .reconnecting ? "正在重连" : "正在建立 SSH 隧道…"
-            return StatusPresentation(title: snapshot.phase == .reconnecting ? "重连中" : "连接中", detail: verb, tone: .blue)
+            let detail = snapshot.humanReadableDetail.isEmpty ? verb : snapshot.humanReadableDetail
+            return StatusPresentation(title: snapshot.phase == .reconnecting ? "重连中" : "连接中", detail: detail, tone: .blue)
         case .connected:
             if snapshot.remoteProbeVerified == true {
-                return StatusPresentation(title: "已连接", detail: "远端代理已验证", tone: .green)
+                let detail = snapshot.humanReadableDetail.isEmpty ? "远端代理已验证" : snapshot.humanReadableDetail
+                return StatusPresentation(title: "已连接", detail: detail, tone: .green)
             }
             // connected 但远端未验证属于不一致状态，按降级呈现，不显示全绿
             return StatusPresentation(title: "部分可用", detail: "隧道已建立，远端代理未验证", tone: .orange)
         case .degraded:
-            if snapshot.localProxyVerified == false {
+            if snapshot.effectiveMode != .reverseDynamic && snapshot.localProxyVerified == false {
                 return StatusPresentation(title: "代理异常", detail: "本地代理未通过验证", tone: .orange)
             }
-            if snapshot.localProxyVerified == nil {
+            if snapshot.effectiveMode != .reverseDynamic && snapshot.localProxyVerified == nil {
                 // 端点从未验证成功且当前不可用：UI-SPEC「没有系统代理候选」→ 未发现代理
-                return StatusPresentation(title: "未发现代理", detail: "确认代理客户端运行中，重新点「连接」或手动指定端口", tone: .orange)
+                let detail = snapshot.humanReadableDetail.isEmpty
+                    ? "确认代理客户端运行中，重新点「连接」或手动指定端口"
+                    : snapshot.humanReadableDetail
+                return StatusPresentation(title: "未发现代理", detail: detail, tone: .orange)
             }
             return StatusPresentation(title: "部分可用", detail: snapshot.humanReadableDetail, tone: .orange)
         case .authRequired:
@@ -130,7 +162,9 @@ enum TunnelStatusPresentation {
 
     /// 三层健康行的展示映射。SSH 层结合进程存活与相共同判断。
     static func healthTriad(for snapshot: TunnelSnapshot) -> (local: HealthCheckDisplay, ssh: HealthCheckDisplay, remote: HealthCheckDisplay) {
-        let local = tri(from: snapshot.localProxyVerified)
+        let local = snapshot.effectiveMode == .reverseDynamic
+            ? tri(from: snapshot.networkReachability)
+            : tri(from: snapshot.localProxyVerified)
 
         let ssh: HealthCheckDisplay
         switch snapshot.phase {

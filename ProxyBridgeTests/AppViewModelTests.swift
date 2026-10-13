@@ -258,4 +258,26 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNotNil(text)
         XCTAssertTrue(text?.contains("尚未验证") ?? false, "未验证时复制命令须带提醒")
     }
+
+    func testDynamicCommandCopyDoesNotLabelSOCKSPortAsHTTP() {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, _, _) = makeModel(directory: temp.url)
+        var profile = validProfile()
+        profile.connectionMode = .reverseDynamic
+        model.saveDraftProfile(profile)
+
+        let socksOnly = model.remoteCommandText()
+        XCTAssertTrue(socksOnly?.contains("--socks5-hostname 127.0.0.1:17890") == true)
+        XCTAssertFalse(socksOnly?.contains("HTTP_PROXY=http://127.0.0.1:17890") == true)
+        XCTAssertNil(model.remoteHTTPCompatibilityText(), "未启用 B+ 时不应提供可误用的 HTTP_PROXY 命令")
+
+        profile.httpAdapterEnabled = true
+        model.upsertProfile(profile)
+        let bPlus = model.remoteCommandText()
+        XCTAssertNotNil(model.remoteHTTPCompatibilityText())
+        XCTAssertTrue(bPlus?.contains("HTTP_PROXY=http://127.0.0.1:7890") == true)
+        XCTAssertTrue(bPlus?.contains("--socks5-hostname 127.0.0.1:17890") == true)
+        XCTAssertFalse(bPlus?.contains("HTTP_PROXY=http://127.0.0.1:17890") == true)
+    }
 }

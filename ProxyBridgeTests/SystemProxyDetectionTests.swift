@@ -45,6 +45,43 @@ final class SystemProxyDetectionTests: XCTestCase {
         XCTAssertEqual(snap.http?.port, 7897)
     }
 
+    func testProxyEnvironmentParserSupportsUppercaseAndSOCKSURI() {
+        let parsed = ProxyEnvironmentParser.parse([
+            "HTTP_PROXY": "http://127.0.0.1:7891",
+            "https_proxy": "127.0.0.1:7892",
+            "ALL_PROXY": "socks5h://127.0.0.1:1080",
+        ])
+        XCTAssertEqual(parsed.endpoints.count, 3)
+        XCTAssertEqual(parsed.endpoints.first?.protocol, .http)
+        XCTAssertEqual(parsed.endpoints.first?.origin, .environmentHTTP)
+        XCTAssertTrue(parsed.endpoints.contains { $0.protocol == .socks5 && $0.port == 1080 })
+    }
+
+    func testProxyEnvironmentRejectsCredentialsWithoutEchoingThem() {
+        let parsed = ProxyEnvironmentParser.parse([
+            "http_proxy": "http://alice:secret@127.0.0.1:7891",
+        ])
+        XCTAssertTrue(parsed.endpoints.isEmpty)
+        XCTAssertTrue(parsed.limitations.joined().contains("http_proxy"))
+        XCTAssertFalse(parsed.limitations.joined().contains("alice"))
+        XCTAssertFalse(parsed.limitations.joined().contains("secret"))
+    }
+
+    func testSystemCandidatesOutrankEnvironmentCandidates() {
+        let built = ProxyCandidateBuilder.build(
+            from: snapshot(http: .init(host: "127.0.0.1", port: 7897)),
+            environment: ["ALL_PROXY": "socks5h://127.0.0.1:1080"]
+        )
+        var state = ProxyDetectionState(candidates: built.candidates)
+        state.candidates = state.candidates.map { candidate in
+            var copy = candidate
+            copy.capability = .verified
+            return copy
+        }
+        XCTAssertEqual(state.bestVerifiedEndpoint(preferred: .socks5)?.origin, .systemHTTP)
+        XCTAssertEqual(state.bestVerifiedEndpoint(preferred: .socks5)?.protocol, .http)
+    }
+
     // MARK: 候选构建（U01–U04）
 
     private func snapshot(
@@ -98,7 +135,7 @@ final class SystemProxyDetectionTests: XCTestCase {
         let built = ProxyCandidateBuilder.build(from: snapshot())
         XCTAssertTrue(built.candidates.isEmpty)
         XCTAssertFalse(built.limitations.isEmpty, "必须有「未发现」说明而非静默")
-        XCTAssertTrue(built.limitations.joined().contains("未从 macOS 系统设置"))
+        XCTAssertTrue(built.limitations.joined().contains("未发现可验证的本地代理端口"))
     }
 
     /// U04：PAC 模式 → 显示限制，不生成固定端口候选。

@@ -33,7 +33,8 @@ struct MenuBarView: View {
                     TrafficStatsView(
                         session: model.trafficStore.session(for: profile.id),
                         connected: model.currentSnapshot.sshProcessRunning &&
-                            [.connected, .degraded].contains(model.currentSnapshot.phase)
+                            [.connected, .degraded].contains(model.currentSnapshot.phase),
+                        supported: !isDynamicMode
                     )
                 }
                 actions
@@ -171,13 +172,19 @@ struct MenuBarView: View {
 
                 Divider()
 
+                Text(model.overallPresentation.detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("本地代理 · Mac")
+                        Text(isDynamicMode ? "Mac 网络出口" : "本地上游 · Mac")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.muted)
                         MonoText(text: localEndpointDisplay)
-                        MiniBadge(text: model.resolvedEndpointDescription, tone: .blue)
+                        MiniBadge(text: "模式 · \(connectionModeLabel)", tone: .blue)
+                        MiniBadge(text: localRouteBadge, tone: isDynamicMode ? .orange : .blue)
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "arrow.right")
@@ -186,11 +193,15 @@ struct MenuBarView: View {
                         .padding(.top, 12)
                     Spacer(minLength: 0)
                     VStack(alignment: .leading, spacing: 5) {
-                        Text("远程监听 · Linux")
+                        Text(isDynamicMode ? "Linux SOCKS5" : "Linux 远端代理")
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.muted)
-                        MonoText(text: model.currentProfile?.remoteListenDisplay ?? "—")
-                        MiniBadge(text: "仅本机回环", tone: .green)
+                        MonoText(text: remoteEndpointDisplay)
+                        MiniBadge(text: "仅 127.0.0.1 · TCP", tone: .green)
+                        if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
+                            MonoText(text: "HTTP \(model.currentProfile?.remoteHTTPListenDisplay ?? "—")", size: 10)
+                            MiniBadge(text: adapterBadgeText, tone: adapterBadgeTone)
+                        }
                     }
                 }
             }
@@ -199,11 +210,57 @@ struct MenuBarView: View {
 
     private var localEndpointDisplay: String {
         guard let profile = model.currentProfile else { return "—" }
+        if isDynamicMode { return "使用 Mac 当前网络栈" }
+        if let endpoint = model.currentSnapshot.activeLocalEndpoint {
+            return "\(endpoint.displayEndpoint) · \(endpoint.protocol.displayName)"
+        }
         switch EndpointResolver.resolve(profile: profile, detection: model.detection) {
-        case .manual(let ep), .auto(let ep):
-            return ep.displayEndpoint
+        case .manual(let endpoint), .auto(let endpoint):
+            return "\(endpoint.displayEndpoint) · \(endpoint.protocol.displayName)"
+        case .none where profile.connectionMode == .automatic:
+            return "未发现入口；自动模式将尝试 SOCKS5"
         case .none:
-            return "未解析"
+            return "需要可验证的本地上游"
+        }
+    }
+
+    private var isDynamicMode: Bool {
+        if model.currentSnapshot.effectiveMode == .reverseDynamic { return true }
+        if model.currentSnapshot.effectiveMode == .staticForward { return false }
+        return model.currentProfile?.connectionMode == .reverseDynamic
+    }
+
+    private var connectionModeLabel: String {
+        if isDynamicMode { return ConnectionMode.reverseDynamic.displayName }
+        if model.currentSnapshot.effectiveMode == .staticForward { return ConnectionMode.staticForward.displayName }
+        return model.currentProfile?.connectionMode.displayName ?? "—"
+    }
+
+    private var localRouteBadge: String {
+        if isDynamicMode { return "不需要本地代理端口" }
+        if model.currentSnapshot.effectiveMode == .staticForward { return "本地入口已通过实测" }
+        return model.resolvedEndpointDescription
+    }
+
+    private var remoteEndpointDisplay: String {
+        guard let profile = model.currentProfile else { return "—" }
+        if isDynamicMode { return profile.remoteSocksListenDisplay }
+        let endpoint = model.currentSnapshot.activeLocalEndpoint
+        return "\(ServerProfile.remoteBindHost):\(profile.remotePort) · \(endpoint?.protocol.displayName ?? profile.preferredProtocol.displayName)"
+    }
+
+    private var adapterBadgeText: String {
+        let snapshot = model.currentSnapshot
+        if snapshot.httpAdapterStatus == .verified { return "HTTP CONNECT 已验证" }
+        if let detail = snapshot.httpAdapterDetail, !detail.isEmpty { return detail }
+        return "HTTP 入口待验证"
+    }
+
+    private var adapterBadgeTone: StatusTone {
+        switch model.currentSnapshot.httpAdapterStatus {
+        case .verified: return .green
+        case .notInstalled, .portConflict, .unavailable: return .orange
+        default: return .gray
         }
     }
 
@@ -212,11 +269,15 @@ struct MenuBarView: View {
     private var checks: some View {
         let triad = model.healthTriad
         return VStack(spacing: 0) {
-            HealthCheckRow(title: "本地代理", display: triad.local, detail: localDetail(for: triad.local))
+            HealthCheckRow(title: isDynamicMode ? "Mac 网络出口" : "本地代理", display: triad.local, detail: localDetail(for: triad.local))
             separator
             HealthCheckRow(title: "SSH 隧道", display: triad.ssh, detail: sshDetail(for: triad.ssh))
             separator
-            HealthCheckRow(title: "远端代理", display: triad.remote, detail: remoteDetail(for: triad.remote))
+            HealthCheckRow(title: isDynamicMode ? "远端 SOCKS5" : "远端代理", display: triad.remote, detail: remoteDetail(for: triad.remote))
+            if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
+                separator
+                HealthCheckRow(title: "HTTP 兼容入口", display: httpAdapterDisplay, detail: httpAdapterDetail)
+            }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -233,6 +294,13 @@ struct MenuBarView: View {
     }
 
     private func localDetail(for display: HealthCheckDisplay) -> String {
+        if isDynamicMode {
+            switch display {
+            case .ok: return "经远端 SOCKS5 请求验证 Mac 当前网络出站；Clash 节点尚未确认"
+            case .unknown: return "尚未通过远端请求验证 Mac 出站"
+            case .failed: return "经 SSH 反向 SOCKS5 的公网请求失败"
+            }
+        }
         switch display {
         case .ok: return "本地代理已通过协议验证"
         case .unknown: return "尚未验证本地代理可用性"
@@ -254,10 +322,23 @@ struct MenuBarView: View {
 
     private func remoteDetail(for display: HealthCheckDisplay) -> String {
         switch display {
-        case .ok: return "远端代理端到端验证通过"
-        case .unknown: return "远端代理未验证（未验证 ≠ 可用）"
+        case .ok: return isDynamicMode ? "Linux SOCKS5 已通过远端 HTTPS 请求验证" : "远端代理端到端验证通过"
+        case .unknown: return isDynamicMode ? "Linux SOCKS5 尚未验证" : "远端代理未验证（未验证 ≠ 可用）"
         case .failed: return "远端验证失败，请查看日志定位原因"
         }
+    }
+
+    private var httpAdapterDisplay: HealthCheckDisplay {
+        if model.currentSnapshot.phase == .idle { return .unknown }
+        switch model.currentSnapshot.httpAdapterStatus {
+        case .verified: return .ok
+        case .notInstalled, .portConflict, .unavailable, .stopped: return .failed
+        case .notRequested, .checking, .starting, .running, .stopping: return .unknown
+        }
+    }
+
+    private var httpAdapterDetail: String {
+        model.currentSnapshot.httpAdapterDetail ?? "等待 SOCKS5 验活后检查 Privoxy 与 HTTP CONNECT"
     }
 
     // MARK: 操作
@@ -312,14 +393,20 @@ struct MenuBarView: View {
 
     private var links: some View {
         HStack {
-            Button {
-                model.copyRemoteCommandToPasteboard()
+            Menu {
+                Button("完整环境变量示例") { model.copyRemoteCommandToPasteboard() }
+                if model.remoteSOCKSProbeText() != nil {
+                    Button("SOCKS5 验收 curl") { model.copyRemoteSOCKSProbeToPasteboard() }
+                }
+                if model.remoteHTTPCompatibilityText() != nil {
+                    Button("HTTP_PROXY + CONNECT 验收") { model.copyRemoteHTTPCompatibilityToPasteboard() }
+                }
             } label: {
-                Label("复制远端代理命令", systemImage: "doc.on.doc")
+                Label("复制 Linux 命令", systemImage: "doc.on.doc")
                     .font(.system(size: 11.5))
             }
-            .buttonStyle(.link)
-            .accessibilityHint("复制 export 环境变量示例，不修改服务器配置")
+            .menuStyle(.borderlessButton)
+            .help("复制 Linux SOCKS5 或 HTTP_PROXY 验收命令；不修改服务器配置")
             Spacer(minLength: 0)
             Button {
                 openSettingsFront(tab: .logs)

@@ -45,6 +45,20 @@ final class ProfileValidationTests: XCTestCase {
         XCTAssertTrue(v.warnings.contains { $0.contains("1024") })
     }
 
+    func testV2PortsAndAdapterMustBeDistinct() {
+        var profile = makeProfile()
+        profile.remoteSocksPort = 0
+        XCTAssertFalse(ServerProfileRule.validate(profile).isValid)
+
+        profile.remoteSocksPort = 17_890
+        profile.remoteHTTPPort = 17_890
+        profile.httpAdapterEnabled = true
+        XCTAssertFalse(ServerProfileRule.validate(profile).isValid)
+
+        profile.remoteHTTPPort = 7_890
+        XCTAssertTrue(ServerProfileRule.validate(profile).isValid)
+    }
+
     // MARK: 主机白名单（U06：shell 控制字符）
 
     func testIllegalHostsAreRejected() {
@@ -131,6 +145,7 @@ final class ProfileValidationTests: XCTestCase {
 
     func testManualModeRequiresValidEndpoint() {
         var p = makeProfile()
+        p.connectionMode = .staticForward
         p.proxySelectionMode = .manual
         p.manualEndpoint = nil
         XCTAssertFalse(ServerProfileRule.validate(p).isValid, "手动模式缺端点必须报错")

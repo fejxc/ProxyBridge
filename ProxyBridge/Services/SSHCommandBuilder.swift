@@ -14,10 +14,40 @@ enum SSHCommandBuilder {
 
     /// 隧道保活用的 ssh 参数数组（不含可执行文件路径）。
     static func arguments(profile: ServerProfile, localEndpoint: LocalProxyEndpoint) -> [String] {
-        precondition((1...65_535).contains(profile.sshPort), "sshPort 必须在 1–65535")
-        precondition((1...65_535).contains(profile.remotePort), "remotePort 必须在 1–65535")
         precondition(LocalProxyEndpointRule.isValid(host: localEndpoint.host, port: localEndpoint.port),
                      "本地端点必须是合法回环端点")
+        precondition((1...65_535).contains(profile.remotePort), "remotePort 必须在 1–65535")
+        return tunnelArguments(
+            profile: profile,
+            forwardSpecification: forwardArgument(profile: profile, localEndpoint: localEndpoint)
+        )
+    }
+
+    /// Build either a legacy static reverse forward or OpenSSH native reverse
+    /// dynamic SOCKS forward. The dynamic form intentionally has no local
+    /// host/port suffix: `-R 127.0.0.1:17890` is the SOCKS listener itself.
+    static func arguments(
+        profile: ServerProfile,
+        mode: ConnectionMode,
+        localEndpoint: LocalProxyEndpoint? = nil
+    ) -> [String] {
+        switch mode {
+        case .staticForward:
+            guard let localEndpoint else { preconditionFailure("静态转发必须提供本地代理端点") }
+            return arguments(profile: profile, localEndpoint: localEndpoint)
+        case .reverseDynamic:
+            precondition((1...65_535).contains(profile.remoteSocksPort), "remoteSocksPort 必须在 1–65535")
+            return tunnelArguments(
+                profile: profile,
+                forwardSpecification: dynamicForwardArgument(profile: profile)
+            )
+        case .automatic:
+            preconditionFailure("automatic 必须先解析为实际连接模式")
+        }
+    }
+
+    private static func tunnelArguments(profile: ServerProfile, forwardSpecification: String) -> [String] {
+        precondition((1...65_535).contains(profile.sshPort), "sshPort 必须在 1–65535")
 
         var args: [String] = [
             "-p", String(profile.sshPort),
@@ -39,9 +69,7 @@ enum SSHCommandBuilder {
         } else {
             args += ["-o", "BatchMode=yes"]           // 非密码模式禁止任何交互提示
         }
-        args += [
-            "-R", forwardArgument(profile: profile, localEndpoint: localEndpoint),
-        ]
+        args += ["-R", forwardSpecification]
         if profile.authMode == .identityFile,
            let path = profile.identityFilePath?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
@@ -54,6 +82,35 @@ enum SSHCommandBuilder {
     /// `-R` 转发参数：远端绑定固定 loopback。
     static func forwardArgument(profile: ServerProfile, localEndpoint: LocalProxyEndpoint) -> String {
         "\(ServerProfile.remoteBindHost):\(profile.remotePort):\(localEndpoint.host):\(localEndpoint.port)"
+    }
+
+    /// OpenSSH dynamic reverse-forward syntax, with no `host:hostport` suffix.
+    static func dynamicForwardArgument(profile: ServerProfile) -> String {
+        "\(ServerProfile.remoteBindHost):\(profile.remoteSocksPort)"
+    }
+
+    /// One-shot remote command arguments. The remote command is one SSH argv
+    /// element; callers must construct it from fixed text and validated values.
+    static func remoteCommandArguments(profile: ServerProfile, command: String) -> [String] {
+        precondition((1...65_535).contains(profile.sshPort), "sshPort 必须在 1–65535")
+        var args = ["-p", String(profile.sshPort), "-T", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=10"]
+        if profile.authMode == .password {
+            args += [
+                "-o", "PubkeyAuthentication=no",
+                "-o", "PreferredAuthentications=keyboard-interactive,password",
+                "-o", "NumberOfPasswordPrompts=1",
+            ]
+        } else {
+            args += ["-o", "BatchMode=yes"]
+        }
+        if profile.authMode == .identityFile,
+           let path = profile.identityFilePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !path.isEmpty {
+            args += ["-i", path]
+        }
+        args.append(destination(profile: profile))
+        args.append(command)
+        return args
     }
 
     /// `user@host` 目的地。host/user 已在模型校验层通过白名单，但仍组装为单个参数。
@@ -112,6 +169,7 @@ enum RemoteProbeCommand {
         switch `protocol` {
         case .http: proxyArg = "--proxy http://127.0.0.1:\(remotePort)"
         case .socks5: proxyArg = "--socks5-hostname 127.0.0.1:\(remotePort)" // DNS 经代理解析
+        case .mixed: proxyArg = "--proxy http://127.0.0.1:\(remotePort)" // HTTP CONNECT 验证 Mixed 的 HTTP 能力
         }
         return "if ! command -v curl >/dev/null 2>&1; then echo \(noCurlMarker); exit 0; fi; "
             + "exec curl --noproxy \"\" \(proxyArg) "

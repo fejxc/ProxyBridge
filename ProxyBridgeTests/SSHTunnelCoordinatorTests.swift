@@ -159,8 +159,23 @@ final class GatedLocalProber: ProxyProbeExecuting, @unchecked Sendable {
 /// 本地探测替身（可编程结论）。
 final class StubLocalProber: ProxyProbeExecuting, @unchecked Sendable {
     var outcome: ProbeOutcome
+    private let lock = NSLock()
+    private var calls = 0
     init(outcome: ProbeOutcome) { self.outcome = outcome }
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome { outcome }
+    var callCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return calls
+    }
+    private func recordCall() {
+        lock.lock()
+        calls += 1
+        lock.unlock()
+    }
+    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+        recordCall()
+        return outcome
+    }
 }
 
 /// 远端探测替身。
@@ -168,6 +183,9 @@ final class StubRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     var outcome: RemoteProbeOutcome
     private let lock = NSLock()
     private var calls = 0
+    private var remotePort: Int?
+    private var proxyProtocol: ProxyProtocol?
+    private var history: [(Int, ProxyProtocol)] = []
     private(set) var lastPassword: String?
     init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
     var callCount: Int {
@@ -175,12 +193,53 @@ final class StubRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
         defer { lock.unlock() }
         return calls
     }
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome {
+    var lastRemotePort: Int? {
+        lock.lock()
+        defer { lock.unlock() }
+        return remotePort
+    }
+    var lastProtocol: ProxyProtocol? {
+        lock.lock()
+        defer { lock.unlock() }
+        return proxyProtocol
+    }
+    var probeHistory: [(Int, ProxyProtocol)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return history
+    }
+    private func record(port: Int, protocol: ProxyProtocol, password: String?) {
         lock.lock()
         calls += 1
+        remotePort = port
+        proxyProtocol = `protocol`
+        history.append((port, `protocol`))
         lastPassword = password
         lock.unlock()
+    }
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome {
+        record(port: remotePort, protocol: `protocol`, password: password)
         return outcome
+    }
+}
+
+final class StubRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging, @unchecked Sendable {
+    var startResult: RemoteHTTPAdapterStartResult
+    private(set) var startCalls = 0
+    private(set) var cleanupCalls = 0
+    private(set) var lastHTTPPort: Int?
+    private(set) var lastSOCKSPort: Int?
+
+    init(startResult: RemoteHTTPAdapterStartResult) { self.startResult = startResult }
+    func start(profile: ServerProfile, httpPort: Int, socksPort: Int, password: String?) async -> RemoteHTTPAdapterStartResult {
+        startCalls += 1
+        lastHTTPPort = httpPort
+        lastSOCKSPort = socksPort
+        return startResult
+    }
+    func cleanup(profile: ServerProfile, session: RemoteHTTPAdapterSession, password: String?) async -> RemoteHTTPAdapterCleanupResult {
+        cleanupCalls += 1
+        return .stopped
     }
 }
 
@@ -201,7 +260,8 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
     private func makeCoordinator(
         local: ProbeOutcome = .verified(statusCode: 200),
         remote: RemoteProbeOutcome = .verified(statusCode: 200),
-        grace: Double = 0.2
+        grace: Double = 0.2,
+        adapterManager: (any RemoteHTTPAdapterManaging)? = nil
     ) {
         factory = FakeSSHFactory()
         localProber = StubLocalProber(outcome: local)
@@ -211,7 +271,8 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
             processFactory: factory,
             localProber: localProber,
             remoteProber: remoteProber,
-            secrets: secretStore
+            secrets: secretStore,
+            httpAdapterManager: adapterManager
         )
         coordinator.graceSeconds = grace
         recorder = Recorder<TunnelSnapshot>()
@@ -291,6 +352,83 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertEqual(last?.sshProcessRunning, true)
         XCTAssertEqual(last?.phase, .connected)
         XCTAssertEqual(last?.isEndToEndVerified, true)
+    }
+
+    func testReverseDynamicSkipsLocalProxyAndValidatesRemoteSocks() async {
+        makeCoordinator()
+        var profile = configuration(endpoint: nil).profile
+        profile.connectionMode = .reverseDynamic
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected, "动态 SOCKS5 不得因本地代理端口缺失而阻断")
+        guard let forwardIndex = factory.lastArguments.firstIndex(of: "-R"),
+              factory.lastArguments.indices.contains(forwardIndex + 1) else {
+            return XCTFail("SSH command must contain the dynamic reverse-forward argument")
+        }
+        XCTAssertEqual(factory.lastArguments[forwardIndex + 1], "127.0.0.1:17890")
+        XCTAssertEqual(localProber.callCount, 0, "动态模式不应调用本地 HTTP/SOCKS 探测")
+        XCTAssertEqual(remoteProber.lastRemotePort, 17_890)
+        XCTAssertEqual(remoteProber.lastProtocol, .socks5)
+        XCTAssertNil(recorder.snapshot.last?.localProxyVerified)
+        XCTAssertEqual(recorder.snapshot.last?.effectiveMode, .reverseDynamic)
+        XCTAssertEqual(recorder.snapshot.last?.networkReachability, true)
+    }
+
+    func testMixedStaticEndpointVerifiesHTTPAndSOCKSSeparately() async {
+        makeCoordinator()
+        let mixed = LocalProxyEndpoint(host: "127.0.0.1", port: 8890, protocol: .mixed, origin: .manual)
+        var profile = configuration(endpoint: mixed).profile
+        profile.connectionMode = .staticForward
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: mixed))
+
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected)
+        XCTAssertEqual(localProber.callCount, 2, "Mixed 需验证 HTTP CONNECT 与 SOCKS5 两种入口")
+        XCTAssertEqual(remoteProber.lastRemotePort, profile.remotePort)
+        XCTAssertEqual(remoteProber.lastProtocol, .mixed)
+    }
+
+    func testHTTPAdapterStartsOnlyAfterSOCKSProbeAndRequiresHTTPConnect() async {
+        let adapterHandle = FakeSSHHandle()
+        let manager = StubRemoteHTTPAdapterManager(
+            startResult: .started(RemoteHTTPAdapterSession(token: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", handle: adapterHandle))
+        )
+        makeCoordinator(adapterManager: manager)
+        var profile = configuration(endpoint: nil).profile
+        profile.connectionMode = .reverseDynamic
+        profile.httpAdapterEnabled = true
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected)
+        XCTAssertEqual(manager.startCalls, 1)
+        XCTAssertEqual(manager.lastHTTPPort, 7_890)
+        XCTAssertEqual(manager.lastSOCKSPort, 17_890)
+        XCTAssertEqual(remoteProber.probeHistory.map { $0.1 }, [.socks5, .http], "先验 SOCKS5，再实测 HTTP CONNECT")
+        XCTAssertEqual(recorder.snapshot.last?.httpAdapterStatus, .verified)
+        XCTAssertEqual(recorder.snapshot.last?.httpAdapterVerified, true)
+
+        coordinator.disconnect(profileID: profile.id)
+        let cleaned = await waitUntilMain { manager.cleanupCalls == 1 }
+        XCTAssertTrue(cleaned, "断开时应清理本 App 管理的 Privoxy")
+    }
+
+    func testHTTPAdapterUnavailableKeepsVerifiedSOCKSAndReportsDegraded() async {
+        let manager = StubRemoteHTTPAdapterManager(startResult: .notInstalled)
+        makeCoordinator(adapterManager: manager)
+        var profile = configuration(endpoint: nil).profile
+        profile.connectionMode = .reverseDynamic
+        profile.httpAdapterEnabled = true
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+
+        let degraded = await waitLastPhase(.degraded)
+        XCTAssertTrue(degraded)
+        XCTAssertEqual(remoteProber.callCount, 1, "HTTP 探测不能在 Privoxy 不存在时伪装执行")
+        XCTAssertEqual(recorder.snapshot.last?.remoteProbeVerified, true, "SOCKS5 仍保留已验证结论")
+        XCTAssertEqual(recorder.snapshot.last?.effectiveMode, .reverseDynamic)
+        XCTAssertEqual(recorder.snapshot.last?.httpAdapterStatus, .notInstalled)
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("SOCKS5 端到端请求已验证") == true)
     }
 
     // MARK: I01：进程 0.5s 后异常退出 → 分类进入终态
@@ -391,13 +529,44 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
 
     func testMissingEndpointDegradesWithNilSemantics() async {
         makeCoordinator()
-        coordinator.connect(configuration: configuration(endpoint: nil))
+        var profile = configuration(endpoint: nil).profile
+        profile.connectionMode = .staticForward
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
         let ok = await waitLastPhase(.degraded)
         XCTAssertTrue(ok)
         let last = recorder.snapshot.last
         XCTAssertNil(last?.localProxyVerified, "未发现端点 = nil（≠ false）")
         XCTAssertNil(last?.remoteProbeVerified)
         XCTAssertFalse(factory.madeHandles.contains { $0.startWasCalled }, "无端点不得启动 SSH")
+    }
+
+    func testAutomaticWithoutLocalEndpointFallsBackToDynamicSocks() async {
+        makeCoordinator()
+        let config = configuration(endpoint: nil)
+        coordinator.connect(configuration: config)
+
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected, "自动模式无本地端点时应尝试动态 SOCKS5")
+        XCTAssertEqual(localProber.callCount, 0)
+        XCTAssertEqual(remoteProber.lastRemotePort, 17_890)
+        XCTAssertEqual(remoteProber.lastProtocol, .socks5)
+        XCTAssertEqual(recorder.snapshot.last?.effectiveMode, .reverseDynamic)
+        XCTAssertTrue(recorder.snapshot.last?.selectionReason?.contains("未发现") == true)
+    }
+
+    func testAutomaticFallsBackWhenLocalProxyProbeFails() async {
+        makeCoordinator(local: .connectionRefused)
+        let config = configuration(endpoint: endpoint)
+        coordinator.connect(configuration: config)
+
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected, "自动模式应从失效的本地入口回退")
+        XCTAssertEqual(localProber.callCount, 1)
+        XCTAssertEqual(remoteProber.lastRemotePort, 17_890)
+        XCTAssertEqual(remoteProber.lastProtocol, .socks5)
+        XCTAssertEqual(recorder.snapshot.last?.effectiveMode, .reverseDynamic)
+        XCTAssertNil(recorder.snapshot.last?.localProxyVerified, "回退后本地端口不再是运行依赖")
+        XCTAssertTrue(recorder.snapshot.last?.selectionReason?.contains("验证失败") == true)
     }
 
     /// U11 语义：远端缺 curl → degraded + remoteProbe=unknown，绝不 connected。

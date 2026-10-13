@@ -608,7 +608,7 @@ struct SmokeMain {
             let real = await probe.probe(host: systemProxy.host, port: systemProxy.port, protocol: .http)
             switch real {
             case .verified(let code):
-                print("   实测  = 经系统代理 \(systemProxy.host):\(systemProxy.port) 访问 www.example.com 成功（HTTP \(code)）")
+                print("   实测  = 经系统代理 \(systemProxy.host):\(systemProxy.port) 访问 api.openai.com/v1/models 成功（HTTP \(code)）")
                 check("S30", "端到端实测：本机系统代理真实可用", true)
             default:
                 // 代理未运行/无外网时不虚增通过数：如实打印，不计 PASS

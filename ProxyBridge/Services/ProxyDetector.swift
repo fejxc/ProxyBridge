@@ -32,14 +32,16 @@ struct ProxyDetectionState: Equatable, Sendable {
     var systemProxyActiveButUnresolved: Bool = false
     var lastScanAt: Date?
 
-    /// 最佳已验证端点：preferred 协议优先，其次任一已验证。
+    /// 最佳已验证端点：系统来源优先于环境变量，同一来源再按 preferred 协议选择。
     func bestVerifiedEndpoint(preferred: ProxyProtocol? = nil) -> LocalProxyEndpoint? {
         let verified = candidates.filter { $0.capability == .verified }
+        guard let highestPriority = verified.map({ $0.endpoint.origin.sourcePriority }).min() else { return nil }
+        let preferredSource = verified.filter { $0.endpoint.origin.sourcePriority == highestPriority }
         if let p = preferred,
-           let match = verified.first(where: { $0.endpoint.protocol == p })?.endpoint {
+           let match = preferredSource.first(where: { $0.endpoint.protocol == p })?.endpoint {
             return match
         }
-        return verified.first?.endpoint
+        return preferredSource.first?.endpoint
     }
 
     /// 最佳回环候选（不限验证状态）：preferred 协议优先，其次未测试 > 可达 > 失败。
@@ -47,11 +49,13 @@ struct ProxyDetectionState: Equatable, Sendable {
     func bestLoopbackCandidate(preferred: ProxyProtocol? = nil) -> LocalProxyEndpoint? {
         let loopback = candidates.filter { ProxyCandidateBuilder.isLoopback($0.endpoint.host) }
         guard !loopback.isEmpty else { return nil }
+        guard let highestPriority = loopback.map({ $0.endpoint.origin.sourcePriority }).min() else { return nil }
+        let preferredSource = loopback.filter { $0.endpoint.origin.sourcePriority == highestPriority }
         if let p = preferred,
-           let match = loopback.first(where: { $0.endpoint.protocol == p })?.endpoint {
+           let match = preferredSource.first(where: { $0.endpoint.protocol == p })?.endpoint {
             return match
         }
-        return loopback.first?.endpoint
+        return preferredSource.first?.endpoint
     }
 
     var verifiedCandidates: [ProxyCandidate] {

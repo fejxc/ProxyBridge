@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased · ProxyBridge v2
+
+- 新增自动、传统静态和 OpenSSH 反向动态 SOCKS5 三种连接模式；自动模式会真实探测本地 upstream，失效或缺失时回退动态 SOCKS5。
+- 自动检测增加 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY 来源，支持 HTTP、SOCKS5 与手动 Mixed 双协议探测；旧 profile 自动解码 v2 默认值。
+- 增加可选 Linux 用户级 Privoxy HTTP 兼容入口，端口检查、管理进程、HTTP CONNECT 验证和失败回退均不使用系统安装或 sshd 修改。
+- 更新菜单栏、服务器配置、命令复制、错误状态和 Network Extension/TUN 帮助；动态 SOCKS5 不再依赖 Mac 本地代理端口。
+- 增加模式选择、自动回退、远端 SOCKS/HTTP 状态与适配器清理断言；本机 CLI typecheck 与 159 项 smoke 通过。Linux/Clash 真实端到端待验收。
+
 ## 1.2.0 — 2026-10-12（已发布）
 
 - 新增 Network.framework 本地 TCP Relay，透明转发与统计并发连接的实际业务字节。

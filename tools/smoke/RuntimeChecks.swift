@@ -6,6 +6,38 @@ extension SmokeMain {
         let profile = ServerProfile(name: "runtime", host: "test.invalid", sshPort: 22, username: "test", remotePort: 7890)
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpoint)
+        let adapterToken = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        let adapterPrepare = RemoteHTTPAdapterCommands.prepare(httpPort: 7890, socksPort: 17_890, token: adapterToken)
+        let adapterCleanup = RemoteHTTPAdapterCommands.cleanup(token: adapterToken)
+        check("P01", "Privoxy 仅写用户会话配置并绑定 HTTP 与 SOCKS 回环端口",
+              adapterPrepare.contains("listen-address 127.0.0.1:7890")
+              && adapterPrepare.contains("forward-socks5 / 127.0.0.1:17890 .")
+              && adapterPrepare.contains("root=\"$HOME/.cache/proxybridge\"")
+              && adapterPrepare.contains("privoxy-\(adapterToken)")
+              && adapterPrepare.contains("ss -ltn") && adapterPrepare.contains("netstat -lnt")
+              && !adapterPrepare.contains("sudo") && !adapterPrepare.contains("apt install"))
+        check("P02", "Privoxy 清理只匹配会话 PID 与配置路径，不使用 pkill 或 SIGKILL",
+              adapterCleanup.contains("process_id=\"$1\"") && adapterCleanup.contains("ps -ww -p")
+              && adapterCleanup.contains("kill \"$pid\"")
+              && adapterCleanup.contains("$dir/config")
+              && !adapterCleanup.contains("pkill") && !adapterCleanup.contains("kill -9"))
+        func shellParses(_ script: String) -> Bool {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("ProxyBridge-(UUID()).sh")
+            defer { try? FileManager.default.removeItem(at: url) }
+            do { try Data(script.utf8).write(to: url) } catch { return false }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-n", url.path]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            do { try process.run() } catch { return false }
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
+        check("P03", "Privoxy 准备、启动和清理远端脚本通过本机 POSIX shell 语法检查",
+              shellParses(adapterPrepare)
+              && shellParses(RemoteHTTPAdapterCommands.launch(token: adapterToken))
+              && shellParses(adapterCleanup))
         func snapshot(_ phase: TunnelPhase, detail: String = "") -> TunnelSnapshot {
             var value = TunnelSnapshot.idle(profile.id)
             value.phase = phase; value.humanReadableDetail = detail
@@ -121,6 +153,170 @@ extension SmokeMain {
         _ = await waitSmokeUntil { baseLatest?.phase == .authRequired }
         check("D28", "周期认证失败终止隧道并停止继续探测", baseLatest?.phase == .authRequired && baseLatest?.sshProcessRunning == false && !base.isActive(profileID: profile.id))
         base.terminateAllSessions()
+
+        var dynamicProfile = profile
+        dynamicProfile.connectionMode = .reverseDynamic
+        let dynamicFactory = SmokeSSHFactory()
+        let dynamicLocal = SmokeLocalProber(outcome: .connectionRefused)
+        let dynamicRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
+        let dynamic = SSHTunnelCoordinator(
+            processFactory: dynamicFactory,
+            localProber: dynamicLocal,
+            remoteProber: dynamicRemote,
+            secrets: InMemoryPasswordStore()
+        )
+        dynamic.graceSeconds = 0.01
+        dynamic.remoteProbeCooldown = 0
+        var dynamicLatest: TunnelSnapshot?
+        dynamic.onEvent = { if case .snapshot(let value) = $0 { dynamicLatest = value } }
+        dynamic.connect(configuration: TunnelConfiguration(profile: dynamicProfile, localEndpoint: nil))
+        let dynamicConnected = await waitSmokeUntil { dynamicLatest?.phase == .connected }
+        let dynamicForward = dynamicFactory.lastArguments.firstIndex(of: "-R")
+        check("N01", "動態 SOCKS5 在無本地端點時跳過本地探測並驗證 SOCKS 远端请求",
+              dynamicConnected && dynamicLocal.callCount == 0
+              && dynamicRemote.lastRemotePort == 17_890 && dynamicRemote.lastProtocol == .socks5
+              && dynamicLatest?.effectiveMode == .reverseDynamic
+              && dynamicLatest?.networkReachability == true
+              && dynamicForward.map { dynamicFactory.lastArguments[$0 + 1] == "127.0.0.1:17890" } == true)
+        dynamic.disconnect(profileID: dynamicProfile.id)
+        dynamic.terminateAllSessions()
+
+        var automaticProfile = profile
+        automaticProfile.connectionMode = .automatic
+        let automaticFactory = SmokeSSHFactory()
+        let automaticLocal = SmokeLocalProber(outcome: .connectionRefused)
+        let automaticRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
+        let automatic = SSHTunnelCoordinator(
+            processFactory: automaticFactory,
+            localProber: automaticLocal,
+            remoteProber: automaticRemote,
+            secrets: InMemoryPasswordStore()
+        )
+        automatic.graceSeconds = 0.01
+        automatic.remoteProbeCooldown = 0
+        var automaticLatest: TunnelSnapshot?
+        automatic.onEvent = { if case .snapshot(let value) = $0 { automaticLatest = value } }
+        automatic.connect(configuration: TunnelConfiguration(profile: automaticProfile, localEndpoint: nil))
+        let automaticConnected = await waitSmokeUntil { automaticLatest?.phase == .connected }
+        check("N02", "自动模式未发现本地端点后回退到动态 SOCKS5",
+              automaticConnected && automaticLocal.callCount == 0
+              && automaticLatest?.effectiveMode == .reverseDynamic
+              && automaticLatest?.selectionReason?.contains("未发现") == true
+              && automaticRemote.lastProtocol == .socks5)
+        automatic.disconnect(profileID: automaticProfile.id)
+        automatic.terminateAllSessions()
+
+        let failedCandidateFactory = SmokeSSHFactory()
+        let failedCandidateLocal = SmokeLocalProber(outcome: .connectionRefused)
+        let failedCandidateRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
+        let failedCandidate = SSHTunnelCoordinator(
+            processFactory: failedCandidateFactory,
+            localProber: failedCandidateLocal,
+            remoteProber: failedCandidateRemote,
+            secrets: InMemoryPasswordStore()
+        )
+        failedCandidate.graceSeconds = 0.01
+        failedCandidate.remoteProbeCooldown = 0
+        var failedCandidateLatest: TunnelSnapshot?
+        failedCandidate.onEvent = { if case .snapshot(let value) = $0 { failedCandidateLatest = value } }
+        failedCandidate.connect(configuration: TunnelConfiguration(profile: automaticProfile, localEndpoint: endpoint))
+        let autoFallback = await waitSmokeUntil { failedCandidateLatest?.phase == .connected }
+        check("N03a", "自动模式本地协议实测失败后切换动态 SOCKS5",
+              autoFallback && failedCandidateLocal.callCount == 1
+              && failedCandidateRemote.lastProtocol == .socks5
+              && failedCandidateLatest?.effectiveMode == .reverseDynamic
+              && failedCandidateLatest?.selectionReason?.contains("未通过实测") == true)
+        failedCandidate.disconnect(profileID: automaticProfile.id)
+        failedCandidate.terminateAllSessions()
+
+        var staticProfile = profile
+        staticProfile.connectionMode = .staticForward
+        let staticLocal = SmokeLocalProber(outcome: .verified(statusCode: 200))
+        let staticFactory = SmokeSSHFactory()
+        var staticLatest: TunnelSnapshot?
+        let staticCoordinator = SSHTunnelCoordinator(
+            processFactory: staticFactory,
+            localProber: staticLocal,
+            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 200)),
+            secrets: InMemoryPasswordStore()
+        )
+        staticCoordinator.graceSeconds = 0.01
+        staticCoordinator.onEvent = { if case .snapshot(let value) = $0 { staticLatest = value } }
+        staticCoordinator.connect(configuration: TunnelConfiguration(profile: staticProfile, localEndpoint: nil))
+        let staticRejected = await waitSmokeUntil { staticLatest?.phase == .degraded }
+        check("N03", "显式静态模式缺少本地端点时不切换动态模式",
+              staticRejected && staticFactory.handles.isEmpty && staticLocal.callCount == 0)
+        staticCoordinator.terminateAllSessions()
+
+        var bPlusProfile = profile
+        bPlusProfile.connectionMode = .reverseDynamic
+        bPlusProfile.httpAdapterEnabled = true
+        let bPlusRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
+        let bPlusManager = SmokeHTTPAdapterManager(result: .started(RemoteHTTPAdapterSession(
+            token: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", handle: SmokeSSHHandle()
+        )))
+        let bPlus = SSHTunnelCoordinator(
+            processFactory: SmokeSSHFactory(),
+            localProber: SmokeLocalProber(outcome: .connectionRefused),
+            remoteProber: bPlusRemote,
+            secrets: InMemoryPasswordStore(),
+            httpAdapterManager: bPlusManager
+        )
+        bPlus.graceSeconds = 0.01
+        bPlus.remoteProbeCooldown = 0
+        var bPlusLatest: TunnelSnapshot?
+        bPlus.onEvent = { if case .snapshot(let value) = $0 { bPlusLatest = value } }
+        bPlus.connect(configuration: TunnelConfiguration(profile: bPlusProfile, localEndpoint: nil))
+        let bPlusConnected = await waitSmokeUntil { bPlusLatest?.phase == .connected }
+        check("N04", "B+ 在 SOCKS5 验活后启动，并单独验证 HTTP CONNECT",
+              bPlusConnected && bPlusRemote.history.map { $0.1 } == [.socks5, .http]
+              && bPlusManager.starts == 1 && bPlusLatest?.httpAdapterStatus == .verified
+              && bPlusLatest?.remoteProbeVerified == true)
+        bPlus.disconnect(profileID: bPlusProfile.id)
+        _ = await waitSmokeUntil { bPlusManager.cleanups == 1 }
+        bPlus.terminateAllSessions()
+
+        let noPrivoxyManager = SmokeHTTPAdapterManager(result: .notInstalled)
+        let noPrivoxyRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
+        let noPrivoxy = SSHTunnelCoordinator(
+            processFactory: SmokeSSHFactory(),
+            localProber: SmokeLocalProber(outcome: .connectionRefused),
+            remoteProber: noPrivoxyRemote,
+            secrets: InMemoryPasswordStore(),
+            httpAdapterManager: noPrivoxyManager
+        )
+        noPrivoxy.graceSeconds = 0.01
+        noPrivoxy.remoteProbeCooldown = 0
+        var noPrivoxyLatest: TunnelSnapshot?
+        noPrivoxy.onEvent = { if case .snapshot(let value) = $0 { noPrivoxyLatest = value } }
+        noPrivoxy.connect(configuration: TunnelConfiguration(profile: bPlusProfile, localEndpoint: nil))
+        let socksFallback = await waitSmokeUntil { noPrivoxyLatest?.phase == .degraded }
+        check("N05", "Privoxy 不存在时保留已验证 SOCKS5 并报告 HTTP 不可用",
+              socksFallback && noPrivoxyLatest?.remoteProbeVerified == true
+              && noPrivoxyLatest?.httpAdapterStatus == .notInstalled
+              && noPrivoxyRemote.callCount == 1)
+        noPrivoxy.disconnect(profileID: bPlusProfile.id)
+        noPrivoxy.terminateAllSessions()
+
+        var mixedProfile = profile
+        mixedProfile.connectionMode = .staticForward
+        let mixedEndpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 8890, protocol: .mixed, origin: .manual)
+        let mixedLocal = SmokeLocalProber(outcome: .verified(statusCode: 200))
+        let mixedRemote = SmokeRemoteProber(outcome: .verified(statusCode: 200))
+        let mixedCoordinator = SSHTunnelCoordinator(
+            processFactory: SmokeSSHFactory(), localProber: mixedLocal, remoteProber: mixedRemote,
+            secrets: InMemoryPasswordStore()
+        )
+        mixedCoordinator.graceSeconds = 0.01
+        mixedCoordinator.remoteProbeCooldown = 0
+        var mixedLatest: TunnelSnapshot?
+        mixedCoordinator.onEvent = { if case .snapshot(let value) = $0 { mixedLatest = value } }
+        mixedCoordinator.connect(configuration: TunnelConfiguration(profile: mixedProfile, localEndpoint: mixedEndpoint))
+        let mixedConnected = await waitSmokeUntil { mixedLatest?.phase == .connected }
+        check("N06", "静态 Mixed 上游分别完成 HTTP 与 SOCKS5 探测",
+              mixedConnected && mixedLocal.callCount == 2 && mixedRemote.lastProtocol == .mixed)
+        mixedCoordinator.disconnect(profileID: mixedProfile.id)
+        mixedCoordinator.terminateAllSessions()
 
         var policy = ConnectionNotificationPolicy()
         let now = Date()

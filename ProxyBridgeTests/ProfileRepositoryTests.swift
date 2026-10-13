@@ -127,6 +127,10 @@ final class ProfileRepositoryTests: XCTestCase {
         let doc = try makeRepo().load()
         XCTAssertEqual(doc.profiles.count, 1, "重复 id 去重后只保留首个")
         XCTAssertEqual(doc.profiles.first?.name, "A")
+        XCTAssertEqual(doc.profiles.first?.connectionMode, .automatic, "旧配置应自动迁移到自动选择")
+        XCTAssertEqual(doc.profiles.first?.remoteSocksPort, 17_890)
+        XCTAssertEqual(doc.profiles.first?.remoteHTTPPort, 7_890)
+        XCTAssertFalse(doc.profiles.first?.httpAdapterEnabled ?? true)
         XCTAssertEqual(doc.currentProfileId?.uuidString, id)
     }
 

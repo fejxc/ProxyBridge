@@ -34,8 +34,13 @@ protocol ProxyProbeExecuting: AnyObject, Sendable {
 final class CurlProxyProbe: ProxyProbeExecuting {
     static let executableURL = URL(fileURLWithPath: "/usr/bin/curl")
     /// 固定验证目标（PRD F01：检验目标由 App 明确说明）。仅用于判定代理可用性。
-    static let verificationURL = "https://www.example.com/"
-    static let urlWhitelist: Set<String> = ["https://www.example.com/"]
+    /// The unauthenticated models endpoint normally returns HTTP 401. That
+    /// response proves the HTTPS request reached the service through the proxy.
+    static let verificationURL = "https://api.openai.com/v1/models"
+    static let urlWhitelist: Set<String> = [
+        "https://api.openai.com/v1/models",
+        "https://www.example.com/", // retained for isolated command-template tests
+    ]
 
     let connectTimeoutSeconds: Int
     let maxTimeSeconds: Int
@@ -82,6 +87,7 @@ final class CurlProxyProbe: ProxyProbeExecuting {
         switch `protocol` {
         case .http: proxyValue = "http://\(hostPart):\(port)"
         case .socks5: proxyValue = "\(hostPart):\(port)" // --socks5-hostname 直接 host:port，DNS 经代理解析
+        case .mixed: proxyValue = "http://\(hostPart):\(port)" // Mixed 的 HTTP CONNECT 能力
         }
         return [
             // -q 必须是第一个参数：跳过 ~/.curlrc 等配置文件。
@@ -161,7 +167,7 @@ final class CurlProxyProbe: ProxyProbeExecuting {
         switch exitCode {
         case 0:
             guard let code else { return .failed(reason: "curl 成功退出但无有效 HTTP 状态码") }
-            if (200...399).contains(code) { return .verified(statusCode: code) }
+            if (200...399).contains(code) || code == 401 { return .verified(statusCode: code) }
             if code == 407 { return .authRequired }
             return .reachableNotProxy(statusCode: code)
         case 5:

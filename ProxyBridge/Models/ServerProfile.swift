@@ -17,7 +17,8 @@ enum AuthenticationMode: String, Codable, Sendable, CaseIterable {
     }
 }
 
-/// 本地代理选择模式：自动检测失败时应显式手动，不允许默默猜测。
+/// Upstream source selection for static forwarding. This is separate from
+/// `ConnectionMode.automatic`, which may fall back to native reverse SOCKS5.
 enum ProxySelectionMode: String, Codable, Sendable, CaseIterable {
     case automatic
     case manual
@@ -26,6 +27,23 @@ enum ProxySelectionMode: String, Codable, Sendable, CaseIterable {
         switch self {
         case .automatic: return "自动检测"
         case .manual: return "手动指定"
+        }
+    }
+}
+
+/// How the remote loopback proxy is created.
+/// `automatic` prefers a verified local proxy and falls back to OpenSSH's
+/// reverse dynamic SOCKS forwarding when no local HTTP/SOCKS listener works.
+enum ConnectionMode: String, Codable, Sendable, CaseIterable {
+    case automatic
+    case staticForward
+    case reverseDynamic
+
+    var displayName: String {
+        switch self {
+        case .automatic: return "自动（推荐）"
+        case .staticForward: return "传统端口转发"
+        case .reverseDynamic: return "动态 SOCKS5"
         }
     }
 }
@@ -44,6 +62,14 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     var authMode: AuthenticationMode
     var identityFilePath: String?
     var remotePort: Int
+    /// OpenSSH reverse dynamic SOCKS5 listener. Kept separate from the legacy
+    /// static-forward port so a SOCKS endpoint is never presented as HTTP.
+    var remoteSocksPort: Int
+    /// Optional Linux-side HTTP adapter listener (Privoxy, if available).
+    var remoteHTTPPort: Int
+    var connectionMode: ConnectionMode
+    /// Opt-in: manage a per-profile, user-owned Privoxy instance on Linux.
+    var httpAdapterEnabled: Bool
     /// nil selects an available loopback port.
     var relayPort: Int?
     var proxySelectionMode: ProxySelectionMode
@@ -72,7 +98,11 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         reconnectEnabled: Bool = true,
         connectAtLaunch: Bool = false,
         rememberPassword: Bool = false,
-        relayPort: Int? = nil
+        relayPort: Int? = nil,
+        connectionMode: ConnectionMode = .automatic,
+        remoteSocksPort: Int = 17_890,
+        remoteHTTPPort: Int = 7_890,
+        httpAdapterEnabled: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -82,6 +112,10 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.authMode = authMode
         self.identityFilePath = identityFilePath
         self.remotePort = remotePort
+        self.remoteSocksPort = remoteSocksPort
+        self.remoteHTTPPort = remoteHTTPPort
+        self.connectionMode = connectionMode
+        self.httpAdapterEnabled = httpAdapterEnabled
         self.relayPort = relayPort
         self.proxySelectionMode = proxySelectionMode
         self.manualEndpoint = manualEndpoint
@@ -93,10 +127,13 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
 
     var displayTarget: String { "\(username)@\(host):\(sshPort)" }
     var remoteListenDisplay: String { "\(Self.remoteBindHost):\(remotePort)" }
+    var remoteSocksListenDisplay: String { "\(Self.remoteBindHost):\(remoteSocksPort)" }
+    var remoteHTTPListenDisplay: String { "\(Self.remoteBindHost):\(remoteHTTPPort)" }
 
     enum CodingKeys: String, CodingKey {
         case id, name, host, sshPort, username, authMode, identityFilePath
-        case relayPort, remotePort, proxySelectionMode, manualEndpoint, preferredProtocol
+        case relayPort, remotePort, remoteSocksPort, remoteHTTPPort, connectionMode, httpAdapterEnabled
+        case proxySelectionMode, manualEndpoint, preferredProtocol
         case reconnectEnabled, connectAtLaunch, rememberPassword
     }
 
@@ -111,6 +148,12 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         authMode = try c.decode(AuthenticationMode.self, forKey: .authMode)
         identityFilePath = try c.decodeIfPresent(String.self, forKey: .identityFilePath)
         remotePort = try c.decode(Int.self, forKey: .remotePort)
+        // Older v1 profiles decode with the v2 defaults and keep their existing
+        // static `remotePort` and local proxy selection fields intact.
+        remoteSocksPort = try c.decodeIfPresent(Int.self, forKey: .remoteSocksPort) ?? 17_890
+        remoteHTTPPort = try c.decodeIfPresent(Int.self, forKey: .remoteHTTPPort) ?? 7_890
+        connectionMode = try c.decodeIfPresent(ConnectionMode.self, forKey: .connectionMode) ?? .automatic
+        httpAdapterEnabled = try c.decodeIfPresent(Bool.self, forKey: .httpAdapterEnabled) ?? false
         relayPort = try c.decodeIfPresent(Int.self, forKey: .relayPort)
         proxySelectionMode = try c.decode(ProxySelectionMode.self, forKey: .proxySelectionMode)
         manualEndpoint = try c.decodeIfPresent(LocalProxyEndpoint.self, forKey: .manualEndpoint)
@@ -218,12 +261,22 @@ enum ServerProfileRule {
                 result.warnings.append("密钥文件当前不存在（可稍后创建，连接前必须就位）")
             }
         }
+        for (label, port) in [("远端 SOCKS5", profile.remoteSocksPort), ("远端 HTTP", profile.remoteHTTPPort)] {
+            if !(1...65_535).contains(port) {
+                result.errors.append("\(label)端口必须在 1–65535 之间")
+            } else if port < 1024 {
+                result.warnings.append("\(label)端口 < 1024 通常需要远端 root 权限；应用不会使用 sudo，建议选择 1024 以上端口")
+            }
+        }
+        if profile.httpAdapterEnabled && profile.remoteHTTPPort == profile.remoteSocksPort {
+            result.errors.append("HTTP 兼容入口端口不能与 SOCKS5 端口相同")
+        }
         if profile.proxySelectionMode == .manual {
             if let ep = profile.manualEndpoint {
                 if !LocalProxyEndpointRule.isValid(host: ep.host, port: ep.port) {
                     result.errors.append("手动代理端点必须是本机回环地址且端口 1–65535")
                 }
-            } else {
+            } else if profile.connectionMode == .staticForward {
                 result.errors.append("手动代理模式必须填写本地代理端点")
             }
         }

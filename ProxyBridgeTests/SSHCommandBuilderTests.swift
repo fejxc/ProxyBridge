@@ -88,6 +88,53 @@ final class SSHCommandBuilderTests: XCTestCase {
         XCTAssertEqual(args[index + 1], "127.0.0.1:7890:localhost:1080")
     }
 
+    func testReverseDynamicUsesNativeRemoteSocksSyntaxWithoutLocalEndpoint() {
+        let args = SSHCommandBuilder.arguments(profile: profile(), mode: .reverseDynamic)
+        guard let index = args.firstIndex(of: "-R"), args.indices.contains(index + 1) else {
+            return XCTFail("必须包含远端动态 SOCKS 转发参数")
+        }
+        XCTAssertEqual(args[index + 1], "127.0.0.1:17890")
+        XCTAssertTrue(args.contains("ExitOnForwardFailure=yes"))
+        XCTAssertTrue(args.contains("StrictHostKeyChecking=yes"))
+        XCTAssertFalse(args[index + 1].contains("127.0.0.1:7897"))
+    }
+
+    func testMixedProtocolUsesHTTPConnectForVerification() {
+        let args = CurlProxyProbe.arguments(
+            host: "127.0.0.1", port: 8890, protocol: .mixed,
+            urlString: CurlProxyProbe.verificationURL, connectTimeout: 2, maxTime: 8
+        )
+        XCTAssertTrue(args.contains("--proxy"))
+        XCTAssertTrue(args.contains("http://127.0.0.1:8890"))
+    }
+
+    func testRemoteManagementCommandsKeepHostKeyVerificationAndCommandAsOneArgument() {
+        let args = SSHCommandBuilder.remoteCommandArguments(profile: profile(), command: "printf safe")
+        XCTAssertTrue(args.contains("StrictHostKeyChecking=yes"))
+        XCTAssertTrue(args.contains("BatchMode=yes"))
+        XCTAssertEqual(args.last, "printf safe")
+        XCTAssertEqual(args[args.count - 2], "sunyun@10.11.154.192")
+    }
+
+    func testPrivoxyAdapterCommandsAreUserScopedLoopbackOnlyAndTargeted() {
+        let token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        let prepare = RemoteHTTPAdapterCommands.prepare(httpPort: 7890, socksPort: 17890, token: token)
+        XCTAssertTrue(prepare.contains("listen-address 127.0.0.1:7890"))
+        XCTAssertTrue(prepare.contains("forward-socks5 / 127.0.0.1:17890 ."))
+        XCTAssertTrue(prepare.contains("ss -ltn") && prepare.contains("netstat -lnt"))
+        XCTAssertTrue(prepare.contains("$HOME/.cache/proxybridge/privoxy-\(token)"))
+        XCTAssertFalse(prepare.contains("sudo"))
+        XCTAssertFalse(prepare.contains("apt install"))
+        XCTAssertFalse(prepare.contains("sshd_config"))
+
+        let cleanup = RemoteHTTPAdapterCommands.cleanup(token: token)
+        XCTAssertTrue(cleanup.contains("process_id=\"$1\"") && cleanup.contains("ps -ww -p"))
+        XCTAssertTrue(cleanup.contains("kill \"$pid\""))
+        XCTAssertFalse(cleanup.contains("pkill"))
+        XCTAssertFalse(cleanup.contains("kill -9"))
+        XCTAssertTrue(RemoteHTTPAdapterCommands.launch(token: token).contains("privoxy --no-daemon"))
+    }
+
     func testPortsAreNumericOnlyInPosition() {
         let args = SSHCommandBuilder.arguments(profile: profile(port: 22), localEndpoint: endpoint)
         // -p 的值参数必须是纯数字

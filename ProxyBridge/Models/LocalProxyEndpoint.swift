@@ -4,11 +4,13 @@ import Foundation
 enum ProxyProtocol: String, Codable, Sendable, CaseIterable {
     case http
     case socks5
+    case mixed
 
     var displayName: String {
         switch self {
         case .http: return "HTTP"
         case .socks5: return "SOCKS5"
+        case .mixed: return "Mixed"
         }
     }
 
@@ -17,6 +19,7 @@ enum ProxyProtocol: String, Codable, Sendable, CaseIterable {
         switch self {
         case .http: return "--proxy"
         case .socks5: return "--socks5-hostname"
+        case .mixed: return "--proxy"
         }
     }
 }
@@ -26,6 +29,9 @@ enum ProxyEndpointOrigin: String, Codable, Sendable {
     case systemHTTP
     case systemHTTPS
     case systemSOCKS
+    case environmentHTTP
+    case environmentHTTPS
+    case environmentAll
     case manual
 
     var isManual: Bool { self == .manual }
@@ -35,7 +41,18 @@ enum ProxyEndpointOrigin: String, Codable, Sendable {
         case .systemHTTP: return "系统 HTTP 设置"
         case .systemHTTPS: return "系统 HTTPS 设置"
         case .systemSOCKS: return "系统 SOCKS 设置"
+        case .environmentHTTP: return "HTTP_PROXY 环境变量"
+        case .environmentHTTPS: return "HTTPS_PROXY 环境变量"
+        case .environmentAll: return "ALL_PROXY 环境变量"
         case .manual: return "手动指定"
+        }
+    }
+
+    var sourcePriority: Int {
+        switch self {
+        case .manual: return 0
+        case .systemHTTP, .systemHTTPS, .systemSOCKS: return 1
+        case .environmentHTTP, .environmentHTTPS, .environmentAll: return 2
         }
     }
 }

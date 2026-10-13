@@ -212,12 +212,36 @@ struct ServerEditorForm: View {
 
             SectionCard(title: "反向代理配置") {
                 VStack(spacing: 14) {
-                    FormRow(label: "远程监听端口", help: "远程绑定固定为 127.0.0.1，仅服务器本机可访问；< 1024 通常需要远端 root 权限") {
-                        HStack(spacing: 8) {
-                            MonoText(text: "127.0.0.1 :", size: 12)
-                                .foregroundStyle(Palette.muted)
-                            PortField(value: $profile.remotePort, prompt: "远程端口")
-                            MiniBadge(text: "仅服务器本机可访问", tone: .green)
+                    FormRow(label: "连接模式", help: "自动模式优先使用真实验证通过的本地代理，否则切换到 OpenSSH 动态 SOCKS5。") {
+                        Picker("连接模式", selection: $profile.connectionMode) {
+                            ForEach(ConnectionMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 190, alignment: .leading)
+                    }
+                    if profile.connectionMode != .reverseDynamic {
+                        FormRow(label: "静态转发端口", help: "Linux 127.0.0.1:<端口> 会转发到 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 入口。") {
+                            loopbackPortField($profile.remotePort, prompt: "HTTP/SOCKS 端口")
+                        }
+                    }
+                    if profile.connectionMode != .staticForward {
+                        FormRow(label: "动态 SOCKS5 端口", help: "OpenSSH 原生反向动态转发；不需要 Mac 本地代理端口，只支持 TCP。") {
+                            loopbackPortField($profile.remoteSocksPort, prompt: "SOCKS5 端口")
+                        }
+                        FormRow(label: "HTTP 兼容入口", help: "可选管理当前 SSH 用户自己的 Privoxy 配置和进程。不会安装软件或修改系统配置。") {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Toggle("同时提供 HTTP 入口（用于 Codex）", isOn: $profile.httpAdapterEnabled)
+                                    .controlSize(.small)
+                                if profile.httpAdapterEnabled {
+                                    loopbackPortField($profile.remoteHTTPPort, prompt: "HTTP 端口")
+                                    Text("仅在 SOCKS5 已通过真实请求后启动；若 Privoxy 不可用，SOCKS5 仍保留。")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(Palette.muted)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
                         }
                     }
                     FormRow(label: "本地代理") {
@@ -226,12 +250,14 @@ struct ServerEditorForm: View {
                             .foregroundStyle(Palette.ink)
                             .textSelection(.enabled)
                     }
-                    FormRow(label: "流量统计 Relay", help: "仅监听 127.0.0.1；默认由系统选择空闲端口，固定端口被占用时连接失败。") {
+                    if profile.connectionMode != .reverseDynamic {
+                        FormRow(label: "流量统计 Relay", help: "仅用于静态转发；动态 SOCKS5 的 SSH 业务流量不通过此 Relay 统计。") {
                         VStack(alignment: .leading, spacing: 6) {
                             Toggle("固定本地 Relay 端口", isOn: Binding(get: { profile.relayPort != nil }, set: { profile.relayPort = $0 ? 17997 : nil }))
                             if profile.relayPort != nil {
                                 PortField(value: Binding(get: { profile.relayPort ?? 17997 }, set: { profile.relayPort = $0 }), prompt: "Relay 端口")
                             }
+                        }
                         }
                     }
                     FormRow(label: "首选协议", help: "自动检测模式下优先采用该协议的实测结果；手动模式以手动端点为准。") {
@@ -312,14 +338,28 @@ struct ServerEditorForm: View {
     }
 
     private var proxySummary: String {
-        switch profile.proxySelectionMode {
+        switch profile.connectionMode {
         case .automatic:
-            return "自动检测（在「本地代理」页查看/验证检测结果）"
-        case .manual:
-            if let ep = profile.manualEndpoint {
-                return "手动指定 · \(ep.displayEndpoint) · \(ep.protocol.displayName)"
+            if profile.proxySelectionMode == .manual, let ep = profile.manualEndpoint {
+                return "自动：先验证手动入口 \(ep.displayEndpoint) · \(ep.protocol.displayName)，失败后使用动态 SOCKS5"
             }
-            return "手动指定（尚未填写，请在「本地代理」页配置）"
+            return "自动：优先实测本地入口；无可用入口时切换动态 SOCKS5"
+        case .staticForward:
+            if profile.proxySelectionMode == .manual, let ep = profile.manualEndpoint {
+                return "静态转发 · \(ep.displayEndpoint) · \(ep.protocol.displayName)"
+            }
+            return "静态转发 · 连接前验证系统/环境代理入口"
+        case .reverseDynamic:
+            return "动态 SOCKS5 · 使用 Mac 网络栈 · 不需要本地代理端口"
+        }
+    }
+
+    private func loopbackPortField(_ value: Binding<Int>, prompt: String) -> some View {
+        HStack(spacing: 8) {
+            MonoText(text: "127.0.0.1 :", size: 12)
+                .foregroundStyle(Palette.muted)
+            PortField(value: value, prompt: prompt)
+            MiniBadge(text: "仅本机回环", tone: .green)
         }
     }
 

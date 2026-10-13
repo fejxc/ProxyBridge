@@ -80,6 +80,7 @@ final class LocalProxyDetector: ProxyDetectorService {
     var onStateChange: (@MainActor (ProxyDetectionState) -> Void)?
 
     private let provider: any SystemProxyProviding
+    private let environmentProvider: any ProxyEnvironmentProviding
     private let prober: any ProxyProbeExecuting
     private let monitor: any SystemProxyChangeMonitoring
 
@@ -97,9 +98,11 @@ final class LocalProxyDetector: ProxyDetectorService {
     init(
         provider: any SystemProxyProviding,
         prober: any ProxyProbeExecuting,
-        monitor: any SystemProxyChangeMonitoring
+        monitor: any SystemProxyChangeMonitoring,
+        environmentProvider: any ProxyEnvironmentProviding = ProcessProxyEnvironmentProvider()
     ) {
         self.provider = provider
+        self.environmentProvider = environmentProvider
         self.prober = prober
         self.monitor = monitor
         self.state.isLive = true
@@ -142,10 +145,13 @@ final class LocalProxyDetector: ProxyDetectorService {
         state.isScanning = true
         emit()
 
-        scanTask = Task { @MainActor [weak self, provider, prober] in
+        scanTask = Task { @MainActor [weak self, provider, environmentProvider, prober] in
             guard let self else { return }
             let snapshot = provider.readProxies()
-            let built = ProxyCandidateBuilder.build(from: snapshot)
+            let built = ProxyCandidateBuilder.build(
+                from: snapshot,
+                environment: environmentProvider.readEnvironment()
+            )
             var candidates = built.candidates
 
             // 仅对回环候选逐协议实测；非 loopback 候选保持 untested + 提示

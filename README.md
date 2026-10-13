@@ -4,7 +4,7 @@
   <img src="ProxyBridge/Resources/AppIcon.png" alt="ProxyBridge 应用图标" width="112">
 </p>
 
-**macOS 14+ 菜单栏 SSH 反向代理工具。**将 Mac 上的 HTTP 或 SOCKS5 本地代理，通过 SSH 安全转发到 Linux 服务器的回环地址。
+**macOS 14+ 菜单栏 SSH 反向代理工具。**支持把 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 代理静态转发到 Linux，也支持 OpenSSH 原生反向动态 SOCKS5，兼容 Clash Network Extension/TUN 没有本地代理端口的场景。
 
 [下载 1.2.0 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.2.0/ProxyBridge-1.2.0-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 
@@ -19,8 +19,11 @@
 ## 功能
 
 - 通过系统 `/usr/bin/ssh` 建立真实的 `ssh -R` 隧道；远端监听只绑定 `127.0.0.1`。
-- 支持 HTTP 和 SOCKS5 代理、密码、ssh-agent 和指定私钥。密码只经 PTY 应答；勾选「记住」时使用 macOS 钥匙串。
-- 分别验证本地代理、SSH 隧道和远端代理。远端通过 curl 验证成功后才显示「已连接」。
+- 支持自动选择、传统静态转发、OpenSSH 原生反向动态 SOCKS5；自动模式先实测本地入口，无可用入口时回退动态 SOCKS5。
+- 动态模式使用 `ssh -R 127.0.0.1:<port>`，Mac 不需要本地 HTTP/SOCKS 监听；远端 SOCKS5 只支持 TCP。
+- 可选在 Linux 用户目录中管理 Privoxy，提供 HTTP `127.0.0.1:<port>` 兼容入口。只在用户启用后检查并启动；不自动安装软件、使用 sudo、修改系统配置或 sshd。
+- 支持 HTTP、SOCKS5、Mixed 上游，密码、ssh-agent 和指定私钥。密码只经 PTY 应答；勾选「记住」时使用 macOS 钥匙串。
+- 分别显示实际连接模式、SSH、Mac 出站、Linux SOCKS5、可选 HTTP CONNECT 验证和错误原因。只有远端真实请求通过后才报告代理可用；Clash 出站节点单独标记为未确认。
 - 按网络故障退避重连；认证失败和主机指纹错误会停止重试。用户手动断开是终态。
 - 支持本地与远端周期检查、睡眠和唤醒恢复、系统登录项、启动时连接选定服务器及连接异常通知。
 - 日志会脱敏，不记录密码、密钥内容或完整认证信息。
@@ -33,9 +36,52 @@ Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器�
 
 1.2.0 已发布，可在[版本页面](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)下载。实现和验收见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
+## v2 连接模式与 Linux 验收
+
+| 模式 | 数据路径 | Linux 代理地址 |
+|---|---|---|
+| 自动（推荐） | 优先使用真实验证成功的本地 upstream；否则尝试 OpenSSH 反向动态 SOCKS5 | 静态入口协议与已选端口，或 SOCKS5 `127.0.0.1:17890` |
+| 传统端口转发 | Linux 回环 → SSH `-R remote:local` → Mac 的 HTTP/SOCKS/Mixed 上游 | 按上游协议使用 `remotePort` |
+| 动态 SOCKS5 | Linux SOCKS5 → SSH `-R 127.0.0.1:port` → Mac 网络栈 | SOCKS5 `127.0.0.1:17890` |
+
+动态 SOCKS5 的手工验收（先在 Mac 上启动隧道；替换 SSH 信息和端口）：
+
+```bash
+ssh -N -T -o BatchMode=yes -o StrictHostKeyChecking=yes \
+  -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:17890 <user>@<host>
+```
+
+然后在 Linux 服务器执行真实 SOCKS5 HTTPS 请求：
+
+```bash
+curl --socks5-hostname 127.0.0.1:17890 -I \
+  --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models
+```
+
+未认证 API 通常返回 HTTP 401；这表示请求到达 API，不代表账号已认证。若启用 HTTP 兼容入口，ProxyBridge 还会单独验证 HTTP CONNECT。通过后 Linux Codex 可使用：
+
+```bash
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+export HTTP_PROXY=http://127.0.0.1:7890
+export HTTPS_PROXY=http://127.0.0.1:7890
+export NO_PROXY=localhost,127.0.0.1,::1
+curl -I --proxy http://127.0.0.1:7890 \
+  --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models
+```
+
+HTTP 入口需要 Linux 已安装 `privoxy`。如果没有，ProxyBridge 会提示但不会安装；请按 Linux 发行版政策由用户或管理员手动安装。应用只创建当前 SSH 用户的 `~/.cache/proxybridge/` 会话配置，Privoxy 与远端 SSH 转发都只绑定 `127.0.0.1`。端口冲突时请在服务器配置页改端口，应用不会终止未知进程。
+
+Debian/Ubuntu 示例（需由有权限的用户自行执行；ProxyBridge 不会代为运行）：
+
+```bash
+sudo apt install privoxy
+```
+
 ## 首次使用
 
-1. 在这台 Mac 上启动本地代理客户端，确认 HTTP 或 SOCKS5 回环代理正常运行。
+1. 如果使用传统静态转发，在 Mac 上启动代理客户端并确认 HTTP、SOCKS5 或 Mixed 回环入口正常。Clash 使用 Network Extension/TUN 时，可直接选「动态 SOCKS5」。
 2. 首次连接前，在终端 SSH 登录服务器并核对主机指纹，写入本机 `known_hosts`。例如：
 
    ```bash
@@ -43,7 +89,7 @@ Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器�
    ```
 
 3. 启动 ProxyBridge，添加服务器并选择认证方式。密码会在面板中输入；勾选「记住密码」后才保存到本机钥匙串。
-4. 点击「连接」。三层验证通过后状态会显示「已连接」；随后可以在服务器本机通过远端端口使用代理。
+4. 点击「连接」。应用会显示最终实际模式，并从 Linux 服务器发起真实请求验证代理入口。动态 SOCKS5 会验证 Linux SOCKS 到 Mac 出站；这不能单独确认 Clash 具体命中的规则或节点，请在 Clash「活动」中核对。
 
 「启动后连接」和登录启动是两个独立选项：前者选择哪些服务器在 App 启动后连接，后者控制 App 是否随 macOS 登录启动。登录项和通知均需按系统提示授权。
 
@@ -60,7 +106,7 @@ bash scripts/xcode_test.sh
 
 ```bash
 bash scripts/typecheck.sh       # App 与测试代码类型检查
-bash scripts/smoke_test.sh      # 当前源码 150 项可执行回归检查
+bash scripts/smoke_test.sh      # 当前源码可执行回归检查
 bash scripts/relay_test.sh      # 真实本地 TCP 转发、精度与清理验证
 bash scripts/install_app.sh     # 构建并安装到 /Applications
 bash scripts/build_dmg.sh 1.2.0 # 构建通用 DMG 和 SHA-256 文件
@@ -72,7 +118,7 @@ bash scripts/build_dmg.sh 1.2.0 # 构建通用 DMG 和 SHA-256 文件
 
 SSH 强制 `StrictHostKeyChecking=yes`，远端只监听服务器本机回环地址。认证密码不会进入 SSH 参数、环境变量或应用日志。请勿通过更改 SSH 主机密钥检查或开放公网监听来排障。
 
-应用支持 macOS 14 及以上版本。已知限制、系统授权要求及未验证项目见[已知限制](KNOWN_LIMITATIONS.md)和[阶段 D 验收报告](docs/PHASE_D_REPORT.md)。
+应用支持 macOS 14 及以上版本。动态 SOCKS5 通过 SSH 客户端的 Mac 网络栈发起 TCP 出站，不承诺 UDP、透明系统代理或 Clash 节点路由。现有 `StrictHostKeyChecking=yes` 保留；远端代理不对 LAN 或公网开放。v2 的真实 Linux/Clash 端到端项目与本机测试结果见[升级验收报告](docs/PROXYBRIDGE_V2_ACCEPTANCE.md)、[已知限制](KNOWN_LIMITATIONS.md)和[阶段 D 报告](docs/PHASE_D_REPORT.md)。
 
 ## 许可证
 

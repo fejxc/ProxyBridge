@@ -58,7 +58,7 @@ final class TunnelStatusTests: XCTestCase {
         let green = TunnelStatusPresentation.overall(for: snap(phase: .connected, local: true, sshRunning: true, remote: true))
         XCTAssertEqual(green.title, "已连接")
         XCTAssertEqual(green.tone, .green)
-        XCTAssertEqual(green.detail, "远端代理已验证")
+        XCTAssertEqual(green.detail, "测试", "状态卡保留协调器给出的实际模式与验活细节")
 
         // SSH 存活但远端未验证 → 橙（部分可用），绝不显示全绿
         let orange = TunnelStatusPresentation.overall(for: snap(phase: .connected, local: true, sshRunning: true, remote: nil))

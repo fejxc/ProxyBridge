@@ -64,6 +64,7 @@ final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [SmokeSSHHandle] = []
     private(set) var handles: [SmokeSSHHandle] = []
+    private(set) var lastArguments: [String] = []
 
     func enqueue(_ h: SmokeSSHHandle) {
         lock.lock(); pending.append(h); lock.unlock()
@@ -71,6 +72,7 @@ final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
 
     func make(arguments: [String], environment: [String: String]) -> SSHProcessHandle {
         lock.lock()
+        lastArguments = arguments
         let h = pending.isEmpty ? SmokeSSHHandle() : pending.removeFirst()
         handles.append(h)
         lock.unlock()
@@ -88,7 +90,30 @@ final class SmokeLocalProber: ProxyProbeExecuting, @unchecked Sendable {
 final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     var outcome: RemoteProbeOutcome
     private(set) var lastProtocol: ProxyProtocol?
+    private(set) var lastRemotePort: Int?
     private(set) var callCount = 0
+    private(set) var history: [(Int, ProxyProtocol)] = []
     init(outcome: RemoteProbeOutcome) { self.outcome = outcome }
-    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome { callCount += 1; lastProtocol = `protocol`; return outcome }
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome {
+        callCount += 1
+        lastProtocol = `protocol`
+        lastRemotePort = remotePort
+        history.append((remotePort, `protocol`))
+        return outcome
+    }
+}
+
+final class SmokeHTTPAdapterManager: RemoteHTTPAdapterManaging, @unchecked Sendable {
+    var result: RemoteHTTPAdapterStartResult
+    private(set) var starts = 0
+    private(set) var cleanups = 0
+    init(result: RemoteHTTPAdapterStartResult) { self.result = result }
+    func start(profile: ServerProfile, httpPort: Int, socksPort: Int, password: String?) async -> RemoteHTTPAdapterStartResult {
+        starts += 1
+        return result
+    }
+    func cleanup(profile: ServerProfile, session: RemoteHTTPAdapterSession, password: String?) async -> RemoteHTTPAdapterCleanupResult {
+        cleanups += 1
+        return .stopped
+    }
 }

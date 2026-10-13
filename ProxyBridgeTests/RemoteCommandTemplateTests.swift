@@ -8,7 +8,7 @@ final class RemoteCommandTemplateTests: XCTestCase {
         let text = RemoteCommandTemplate.exportCommands(remotePort: 7890, protocol: .http)
         XCTAssertTrue(text?.contains("export http_proxy=http://127.0.0.1:7890") == true)
         XCTAssertTrue(text?.contains("export https_proxy=http://127.0.0.1:7890") == true)
-        XCTAssertTrue(text?.contains("curl -I https://www.example.com") == true)
+        XCTAssertTrue(text?.contains("https://api.openai.com/v1/models") == true)
         XCTAssertFalse(text?.contains("socks") == true, "HTTP 模板不得包含 socks 指令")
     }
 
@@ -16,6 +16,26 @@ final class RemoteCommandTemplateTests: XCTestCase {
         let text = RemoteCommandTemplate.exportCommands(remotePort: 7891, protocol: .socks5)
         XCTAssertTrue(text?.contains("export ALL_PROXY=socks5h://127.0.0.1:7891") == true, "DNS 必须经代理解析（socks5h）")
         XCTAssertFalse(text?.contains("http_proxy") == true, "SOCKS 模板不得宣称 HTTP 可用")
+    }
+
+    func testReverseDynamicCommandsSeparateSOCKSFromHTTPCompatibility() {
+        let socksOnly = RemoteCommandTemplate.dynamicClipboardText(
+            socksPort: 17_890, httpPort: 7_890, includeHTTPAdapter: false,
+            socksVerified: true, httpVerified: nil
+        )
+        XCTAssertTrue(socksOnly?.contains("--socks5-hostname 127.0.0.1:17890") == true)
+        XCTAssertFalse(socksOnly?.contains("HTTP_PROXY") == true)
+        XCTAssertFalse(socksOnly?.contains("http://127.0.0.1:17890") == true)
+
+        let bPlus = RemoteCommandTemplate.dynamicClipboardText(
+            socksPort: 17_890, httpPort: 7_890, includeHTTPAdapter: true,
+            socksVerified: true, httpVerified: false
+        )
+        XCTAssertTrue(bPlus?.contains("export HTTP_PROXY=http://127.0.0.1:7890") == true)
+        XCTAssertTrue(bPlus?.contains("export HTTPS_PROXY=http://127.0.0.1:7890") == true)
+        XCTAssertTrue(bPlus?.contains("--proxy http://127.0.0.1:7890") == true)
+        XCTAssertTrue(bPlus?.contains("--socks5-hostname 127.0.0.1:17890") == true)
+        XCTAssertTrue(bPlus?.contains("HTTP 入口当前尚未通过 HTTP CONNECT 验证") == true)
     }
 
     func testClipboardAddsNoticeWhenUnverified() {

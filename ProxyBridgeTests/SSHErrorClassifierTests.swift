@@ -92,6 +92,11 @@ final class SSHErrorClassifierTests: XCTestCase {
             SSHRemoteProbe.parse(exitCode: 0, stdout: "204\n", stderr: ""),
             .verified(statusCode: 204)
         )
+        XCTAssertEqual(
+            SSHRemoteProbe.parse(exitCode: 0, stdout: "401", stderr: ""),
+            .verified(statusCode: 401),
+            "未认证的 API models 请求返回 401 仍证明 HTTPS 代理路径可达"
+        )
     }
 
     /// U11 语义：远端 curl 未安装 → unknown（不得显示「全部正常」）。

@@ -60,10 +60,9 @@ enum TunnelEvent: Sendable {
 
 // MARK: - 端点解析（纯函数）
 
-/// 解析「当前应使用的本地代理端点」。优先级（PRD F01）：
-/// 用户手动指定 > 已验证的自动候选 > 未验证的回环候选（交由连接时实时探测定生死）> 未发现。
-/// 注意：`.auto` 返回的端点不保证可用——协调器在连接序列里会用 curl 实测，
-/// 失败照样 degraded。这样避免「启动时探测失败 → 缓存导致永远连不上」的假阴性。
+/// 解析「当前应尝试的本地代理端点」。优先级：
+/// 用户手动指定 > 已验证候选 > 其他可信配置的回环候选。未验证候选在连接时会再次实测；
+/// 静态模式失败时保持失败，自动连接模式由协调器回退到反向动态 SOCKS5。
 enum EndpointResolver {
     enum Resolved: Equatable, Sendable {
         case manual(LocalProxyEndpoint)

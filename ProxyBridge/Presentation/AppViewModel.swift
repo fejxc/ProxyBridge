@@ -81,15 +81,17 @@ final class AppViewModel {
     /// 生产装配：本地代理检测与 SSH 隧道均为真实实现
     /// （SCDynamicStore + curl 实测；/usr/bin/ssh 参数数组直启）。
     static func live() -> AppViewModel {
-        AppViewModel(
+        let sshFactory = FoundationSSHProcessFactory()
+        return AppViewModel(
             profileStore: ProfileRepository(),
             settingsStore: AppSettingsStore(),
             tunnel: ManagedTunnelService(underlying: SSHTunnelCoordinator(
-                processFactory: FoundationSSHProcessFactory(),
+                processFactory: sshFactory,
                 localProber: CurlProxyProbe(),
-                remoteProber: SSHRemoteProbe(factory: FoundationSSHProcessFactory()),
+                remoteProber: SSHRemoteProbe(factory: sshFactory),
                 secrets: KeychainPasswordStore(),
-                relayFactory: TCPRelayFactory()
+                relayFactory: TCPRelayFactory(),
+                httpAdapterManager: SSHRemoteHTTPAdapterManager(factory: sshFactory)
             )),
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
@@ -238,6 +240,9 @@ final class AppViewModel {
     /// 当前应使用的本地代理端点描述（面板「本地代理」行）。
     var resolvedEndpointDescription: String {
         guard let profile = currentProfile else { return "—" }
+        if profile.connectionMode == .reverseDynamic {
+            return "动态 SOCKS5 · 不需要本地代理端口"
+        }
         return EndpointResolver.describe(
             EndpointResolver.resolve(profile: profile, detection: detection),
             preferred: profile.preferredProtocol
@@ -326,11 +331,28 @@ final class AppViewModel {
 
     /// F02「端口冲突提示」：同主机同远程监听端口会互相顶掉远端监听。
     func remotePortConflictDescription(for profile: ServerProfile) -> String? {
+        func ports(_ profile: ServerProfile) -> Set<Int> {
+            switch profile.connectionMode {
+            case .automatic:
+                var result: Set<Int> = [profile.remotePort, profile.remoteSocksPort]
+                if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
+                return result
+            case .staticForward:
+                return [profile.remotePort]
+            case .reverseDynamic:
+                var result: Set<Int> = [profile.remoteSocksPort]
+                if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
+                return result
+            }
+        }
+        let requestedPorts = ports(profile)
         let conflicts = profiles.filter {
-            $0.id != profile.id && $0.host == profile.host && $0.remotePort == profile.remotePort
+            $0.id != profile.id && $0.host == profile.host && !ports($0).isDisjoint(with: requestedPorts)
         }
         guard !conflicts.isEmpty else { return nil }
-        return "「\(profile.name)」与 \(conflicts.map(\.name).joined(separator: "、")) 使用同一 SSH 主机的远程端口 \(profile.remotePort)，同时连接会互相失败"
+        let overlappingPorts = Set(conflicts.flatMap { ports($0).intersection(requestedPorts) })
+        let portsText = overlappingPorts.sorted().map(String.init).joined(separator: "、")
+        return "「\(profile.name)」与 \(conflicts.map(\.name).joined(separator: "、")) 在同一 SSH 主机上占用重叠的远程端口（\(portsText)），同时连接会互相失败"
     }
 
     /// 放弃草稿。
@@ -349,6 +371,10 @@ final class AppViewModel {
                 || old.authMode != profile.authMode
                 || old.identityFilePath != profile.identityFilePath
                 || old.remotePort != profile.remotePort
+                || old.remoteSocksPort != profile.remoteSocksPort
+                || old.remoteHTTPPort != profile.remoteHTTPPort
+                || old.connectionMode != profile.connectionMode
+                || old.httpAdapterEnabled != profile.httpAdapterEnabled
                 || old.relayPort != profile.relayPort
             if connectionRelevantChange,
                let snap = snapshots[profile.id], snap.phase == .connected || snap.phase == .degraded {
@@ -407,9 +433,18 @@ final class AppViewModel {
             snapshots[profile.id] = snap
             return
         }
-        let resolved = EndpointResolver.resolve(profile: profile, detection: detection)
+        let resolved: EndpointResolver.Resolved
+        if profile.connectionMode == .reverseDynamic {
+            resolved = .none(reason: "动态 SOCKS5 使用 Mac 网络栈，不需要本地代理端口")
+        } else {
+            resolved = EndpointResolver.resolve(profile: profile, detection: detection)
+        }
         if case .none(let reason) = resolved {
-            logStore.append(raw: "未解析到可用本地代理：\(reason)。可在设置中手动指定。", level: .warning, profileId: profile.id)
+            let level: LogLevel = profile.connectionMode == .automatic ? .info : .warning
+            let message = profile.connectionMode == .automatic
+                ? "自动模式：\(reason)，将尝试反向动态 SOCKS5。"
+                : reason
+            logStore.append(raw: message, level: level, profileId: profile.id)
         }
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpointValue(of: resolved))
         connectionEndpoints[profile.id] = config.localEndpoint
@@ -493,7 +528,7 @@ final class AppViewModel {
     // MARK: - 代理检测
 
     func redetectProxy() {
-        logStore.append(raw: "开始重新检测本地代理（读取系统设置 + curl 实测，验证目标 www.example.com）", level: .info)
+        logStore.append(raw: "开始检测本地代理（系统设置 + HTTP_PROXY/HTTPS_PROXY/ALL_PROXY + curl 实测 api.openai.com/v1/models）", level: .info)
         proxyDetector.detect()
     }
 
@@ -536,6 +571,13 @@ final class AppViewModel {
         logStore.append(raw: "本地代理模式切换为「\(mode.displayName)」", level: .info, profileId: profile.id)
     }
 
+    func setConnectionMode(_ mode: ConnectionMode) {
+        guard var profile = currentProfile, profile.connectionMode != mode else { return }
+        profile.connectionMode = mode
+        upsertProfile(profile)
+        logStore.append(raw: "连接模式切换为「\(mode.displayName)」", level: .info, profileId: profile.id)
+    }
+
     /// 设置当前 profile 的首选协议（http/socks5，仍受实测能力约束）。
     func setPreferredProtocol(_ proto: ProxyProtocol) {
         guard var profile = currentProfile else { return }
@@ -569,26 +611,71 @@ final class AppViewModel {
     /// 远端使用命令（按当前实测/选定协议）。无 profile 或端口非法时返回 nil（防御持久化脏数据触发崩溃）。
     func remoteCommandText() -> String? {
         guard let profile = currentProfile else { return nil }
+        let snapshot = snapshots[profile.id]
+        if resolvedConnectionMode(profile: profile, snapshot: snapshot) == .reverseDynamic {
+            return RemoteCommandTemplate.dynamicClipboardText(
+                socksPort: profile.remoteSocksPort,
+                httpPort: profile.remoteHTTPPort,
+                includeHTTPAdapter: profile.httpAdapterEnabled,
+                socksVerified: snapshot?.remoteProbeVerified,
+                httpVerified: snapshot?.httpAdapterVerified
+            )
+        }
         guard (1...65_535).contains(profile.remotePort) else {
             logStore.append(raw: "服务器「\(profile.name)」的远程端口 \(profile.remotePort) 非法，已拒绝生成命令；请修正配置", level: .error, profileId: profile.id)
             return nil
         }
-        let activeEndpoint = snapshots[profile.id]?.sshProcessRunning == true
+        let activeEndpoint = snapshot?.sshProcessRunning == true
             ? connectionEndpoints[profile.id] : nil
         let endpoint = activeEndpoint ?? endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection))
         let proto = endpoint?.protocol ?? profile.preferredProtocol
         return RemoteCommandTemplate.clipboardText(
             remotePort: profile.remotePort,
             protocol: proto,
-            remoteVerified: snapshots[profile.id]?.remoteProbeVerified
+            remoteVerified: snapshot?.remoteProbeVerified
         )
+    }
+
+    func remoteSOCKSProbeText() -> String? {
+        guard let profile = currentProfile,
+              resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .reverseDynamic else { return nil }
+        var command = RemoteCommandTemplate.socksProbeCommand(remotePort: profile.remoteSocksPort)
+        if snapshots[profile.id]?.remoteProbeVerified != true {
+            command = command.map { "# SOCKS5 尚未通过真实远端请求验证\n\($0)" }
+        }
+        return command
+    }
+
+    func remoteHTTPCompatibilityText() -> String? {
+        guard let profile = currentProfile,
+              profile.httpAdapterEnabled,
+              resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .reverseDynamic else { return nil }
+        var commands = RemoteCommandTemplate.httpCompatibilityCommands(remotePort: profile.remoteHTTPPort)
+        if snapshots[profile.id]?.httpAdapterVerified != true {
+            commands = commands.map { "# HTTP 入口尚未通过 HTTP CONNECT 验证\n\($0)" }
+        }
+        return commands
     }
 
     func copyRemoteCommandToPasteboard() {
         guard let text = remoteCommandText() else { return }
+        copyToPasteboard(text, logMessage: "已复制远端代理使用命令到剪贴板")
+    }
+
+    func copyRemoteSOCKSProbeToPasteboard() {
+        guard let text = remoteSOCKSProbeText() else { return }
+        copyToPasteboard(text, logMessage: "已复制 SOCKS5 验收命令")
+    }
+
+    func copyRemoteHTTPCompatibilityToPasteboard() {
+        guard let text = remoteHTTPCompatibilityText() else { return }
+        copyToPasteboard(text, logMessage: "已复制 HTTP_PROXY 与 CONNECT 验收命令")
+    }
+
+    private func copyToPasteboard(_ text: String, logMessage: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        logStore.append(raw: "已复制远端代理使用命令到剪贴板", level: .info, profileId: currentProfileId)
+        logStore.append(raw: logMessage, level: .info, profileId: currentProfileId)
     }
 
     func copyLogsToPasteboard() {
@@ -611,6 +698,17 @@ final class AppViewModel {
         case .manual(let ep), .auto(let ep): return ep
         case .none: return nil
         }
+    }
+
+    private func resolvedConnectionMode(profile: ServerProfile, snapshot: TunnelSnapshot?) -> ConnectionMode {
+        if let active = snapshot?.effectiveMode, active == .staticForward || active == .reverseDynamic {
+            return active
+        }
+        if profile.connectionMode != .automatic { return profile.connectionMode }
+        if case .none = EndpointResolver.resolve(profile: profile, detection: detection) {
+            return .reverseDynamic
+        }
+        return .staticForward
     }
 
     private func applySnapshot(_ snap: TunnelSnapshot) {
