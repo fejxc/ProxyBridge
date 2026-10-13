@@ -8,6 +8,8 @@
 
 [下载 1.2.0 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.2.0/ProxyBridge-1.2.0-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 
+当前公开稳定版为 v1.2.0；v1.3.0 候选包含下方 v2 连接模式，待 CI 验证和发布后再提供 DMG。
+
 ## 安装
 
 1. 下载 `ProxyBridge-1.2.0-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
@@ -21,9 +23,9 @@
 - 通过系统 `/usr/bin/ssh` 建立真实的 `ssh -R` 隧道；远端监听只绑定 `127.0.0.1`。
 - 支持自动选择、传统静态转发、OpenSSH 原生反向动态 SOCKS5；自动模式先实测本地入口，无可用入口时回退动态 SOCKS5。
 - 动态模式使用 `ssh -R 127.0.0.1:<port>`，Mac 不需要本地 HTTP/SOCKS 监听；远端 SOCKS5 只支持 TCP。
-- 可选在 Linux 用户目录中管理 Privoxy，提供 HTTP `127.0.0.1:<port>` 兼容入口。只在用户启用后检查并启动；不自动安装软件、使用 sudo、修改系统配置或 sshd。
+- 默认在 Linux `127.0.0.1:7890` 提供 Codex HTTP 兼容入口，底层 SOCKS5 使用独立端口；需要已安装的 Privoxy。App 不自动安装软件、不使用 sudo、不修改系统配置或 sshd，用户可关闭该入口。
 - 支持 HTTP、SOCKS5、Mixed 上游，密码、ssh-agent 和指定私钥。密码只经 PTY 应答；勾选「记住」时使用 macOS 钥匙串。
-- 分别显示实际连接模式、SSH、Mac 出站、Linux SOCKS5、可选 HTTP CONNECT 验证和错误原因。只有远端真实请求通过后才报告代理可用；Clash 出站节点单独标记为未确认。
+- 分别显示实际连接模式、SSH、Mac 出站、Linux SOCKS5、HTTP CONNECT 验证和错误原因。只有远端真实请求通过后才报告代理可用；Clash 出站节点单独标记为未确认。
 - 按网络故障退避重连；认证失败和主机指纹错误会停止重试。用户手动断开是终态。
 - 支持本地与远端周期检查、睡眠和唤醒恢复、系统登录项、启动时连接选定服务器及连接异常通知。
 - 日志会脱敏，不记录密码、密钥内容或完整认证信息。

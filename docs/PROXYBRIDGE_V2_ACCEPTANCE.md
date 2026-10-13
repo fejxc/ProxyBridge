@@ -25,7 +25,7 @@
 | App 与测试源码 | `bash scripts/typecheck.sh` | App、测试代码无编译错误，Swift 6 预检通过 | 通过：0 errors；Swift 6 语言模式通过；保留既有并发/XCTest warning |
 | 生产代码回归 | `bash scripts/smoke_test.sh` | 旧回归及 v2 动态、自动、Mixed、B+ 断言通过 | 通过：160 项，失败 0 项；包含 Codex HTTP 默认端口与 SOCKS5 独立端口断言 |
 | App 二进制链接 | `swiftc -o build/ProxyBridge-v2-linkcheck ...` | 完整 App 源码可链接 | 通过：生成 arm64 Mach-O。保留原有被忽略的 `build/ProxyBridge.app`，未覆盖它 |
-| 本机安装 | `bash scripts/install_app.sh` | 签名、安装到 `/Applications` 并启动 | 通过：1.2.0/build 4；安装二进制与构建产物一致，签名校验通过，进程启动 |
+| 本机安装与候选 DMG | `bash scripts/install_app.sh`; `bash scripts/build_dmg.sh 1.3.0` | 签名、安装启动、universal DMG 架构与挂载内容校验 | 通过：1.3.0/build 5 已安装运行；本机生成的 universal DMG、签名、挂载 App 版本和 SHA-256 均通过 |
 | Xcode/XCTest | `xcodebuild -version` | 可运行 Xcode build/test | 当前仅选择 `/Library/Developer/CommandLineTools`；xcodebuild 报需要完整 Xcode，故 XCTest 未运行 |
 | Mac 当前代理源 | `scutil --proxy` 与代理环境变量名检查 | 确认系统代理/环境代理状态 | HTTP、HTTPS、SOCKS、PAC 均未配置；HTTP_PROXY/HTTPS_PROXY/ALL_PROXY 未设置 |
 | Mac 直接出站 | `/usr/bin/curl -q --noproxy '*' --connect-timeout 8 --max-time 20 --silent --show-error --output /dev/null --write-out '%{http_code}\n' https://api.openai.com/v1/models` | 验证当前网络可到达 API | HTTP 401。证明本次直接 HTTPS 请求到达 API；不能证明请求命中了 Clash 节点 |

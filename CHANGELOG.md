@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased · ProxyBridge v2
+## 1.3.0 候选 · ProxyBridge v2（待发布）
 
 - 新增自动、传统静态和 OpenSSH 反向动态 SOCKS5 三种连接模式；自动模式会真实探测本地 upstream，失效或缺失时回退动态 SOCKS5。
 - 自动检测增加 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY 来源，支持 HTTP、SOCKS5 与手动 Mixed 双协议探测；旧 profile 自动解码 v2 默认值。

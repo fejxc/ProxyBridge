@@ -6,29 +6,30 @@
 
 - [v1.0.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.0.0)：初始版本。
 - [v1.1.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.1.0)：加入阶段 D 功能，提供 universal DMG 和 SHA-256 校验文件。
+- [v1.2.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)：加入本地 TCP Relay 实时流量统计。
 
 后续每个 Release 都从不可变的版本标签构建。
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-普通用户只需下载一个 `ProxyBridge-1.1.0-universal.dmg`，拖入 Applications，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置此 Mac 的本地代理，并在终端 SSH 登录服务器、核对主机指纹。
+当前稳定版为 `ProxyBridge-1.2.0-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器，并在终端 SSH 登录、核对主机指纹。
 
 ## 后续版本
 
-1. 更新 Xcode 工程中一致的 MARKETING_VERSION/CFBundleShortVersionString、通用设置中的版本文案、README 和 CHANGELOG。
-2. 提交并推送 master。
-3. 创建对应版本标签，例如 `git tag -a v1.2.0 -m 'ProxyBridge 1.2.0'`，然后 `git push origin v1.2.0`。
-4. 标签推送自动触发工作流。版本不一致、任一架构测试失败、DMG 验证失败时不会发布新的下载文件。
+1. 更新 Xcode 工程中的 MARKETING_VERSION、CFBundleShortVersionString 和构建号，并更新 README 与 CHANGELOG。
+2. 推送 master，确认 CI 和两架构检查通过。
+3. 获准发布后创建对应版本标签，例如 `git tag -a v1.3.0 -m 'ProxyBridge 1.3.0'`，然后 `git push origin v1.3.0`。
+4. 标签推送自动触发工作流。版本不一致、任一架构测试失败、DMG 验证失败时不会公开新的下载文件。
 
 工作流仅发布 `vX.Y.Z` 格式的现有标签。也可以手动重新运行同一版本；重新生成的附件会覆盖该 Release 中的同名附件。
 
 ## 本地打包
 
 ```bash
-bash scripts/build_dmg.sh 1.1.0
+bash scripts/build_dmg.sh 1.3.0
 ```
 
-产物：`build/dist/ProxyBridge-1.1.0-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
+候选产物：`build/dist/ProxyBridge-1.3.0-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
 
 ## 签名与权限
 
