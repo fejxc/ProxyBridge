@@ -256,7 +256,7 @@ final class AppViewModelTests: XCTestCase {
         model.saveDraftProfile(validProfile())
         let text = model.remoteCommandText()
         XCTAssertNotNil(text)
-        XCTAssertTrue(text?.contains("尚未验证") ?? false, "未验证时复制命令须带提醒")
+        XCTAssertTrue(text?.contains("尚未通过") ?? false, "未验证时复制命令须带提醒")
     }
 
     func testDynamicCommandCopyDoesNotLabelSOCKSPortAsHTTP() {

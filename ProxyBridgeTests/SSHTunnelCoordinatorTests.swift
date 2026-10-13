@@ -466,7 +466,9 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
 
     func testI02LocalProxyFailureDegradesNotConnected() async {
         makeCoordinator(local: .connectionRefused)
-        coordinator.connect(configuration: configuration(endpoint: endpoint))
+        var config = configuration(endpoint: endpoint)
+        config.profile.connectionMode = .staticForward
+        coordinator.connect(configuration: config)
         let ok = await waitLastPhase(.degraded)
         XCTAssertTrue(ok, "本地代理失败必须 degraded；序列：\(recorder.snapshot.map(\.phase))")
         XCTAssertEqual(recorder.snapshot.last?.localProxyVerified, false)
@@ -567,7 +569,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertEqual(remoteProber.lastProtocol, .socks5)
         XCTAssertEqual(recorder.snapshot.last?.effectiveMode, .reverseDynamic)
         XCTAssertNil(recorder.snapshot.last?.localProxyVerified, "回退后本地端口不再是运行依赖")
-        XCTAssertTrue(recorder.snapshot.last?.selectionReason?.contains("验证失败") == true)
+        XCTAssertTrue(recorder.snapshot.last?.selectionReason?.contains("未通过实测") == true)
     }
 
     /// U11 语义：远端缺 curl → degraded + remoteProbe=unknown，绝不 connected。
