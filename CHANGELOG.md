@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.2 — 2026-10-19（已发布）
+
+- 远端转发端口冲突（如 17890 被上次连接的 sshd 占用）自动重试：开启自动重连的会话在 3 分钟窗口内按退避重试，等旧 sshd 释放端口（通常 1–3 分钟自愈）；窗口过后仍冲突才转为终态指引，错误文案说明常见原因与 sshd 排查项（ClientAliveInterval/AllowTcpForwarding/PermitListen）。
+- 本机 CLI typecheck 与 183 项 smoke 通过；GitHub CI 全绿（含 Xcode/XCTest 全量）。
+
 ## 1.4.1 — 2026-10-19（已发布）
 
 - 修复活跃连接时退出按钮无响应：MenuBarExtra 面板中系统确认框经常无法呈现，改为面板内联两步确认条（8 秒自动复位）。
