@@ -29,6 +29,8 @@ final class AppViewModel {
     private let updateChecker: (any UpdateChecking)?
     /// 防「空闲休眠」电源断言：nil = 功能不可用。
     private let powerAssertion: (any PowerAssertionControlling)?
+    /// 远端端口残留诊断清理：nil = 功能不可用。
+    private let remoteJanitor: (any RemoteJanitorProviding)?
 
     // MARK: - 状态
 
@@ -82,6 +84,18 @@ final class AppViewModel {
     private(set) var connectedSince: [UUID: Date] = [:]
     private var keepAwakeFailureLogged = false
 
+    // MARK: - 远端残留诊断清理（端口冲突自愈闭环）
+    /// 端口冲突卡状态（nil = 无卡）。
+    enum PortConflictUIState: Equatable {
+        case inspecting
+        case unavailable(String)
+        case report([RemotePortHolding])
+        case cleaning
+    }
+    private(set) var portConflict: (profileID: UUID, state: PortConflictUIState)?
+    private var portConflictInspectedAt: [UUID: Date] = [:]
+    private static let portConflictInspectCooldown: TimeInterval = 60
+
     private var document: ProfilesDocument = .empty()
     private let systemServices: (any AppSystemIntegrating)?
     private(set) var loginLaunchEnabled = false
@@ -117,7 +131,8 @@ final class AppViewModel {
         systemServices: (any AppSystemIntegrating)? = nil,
         hostKeyTrust: (any HostKeyTrustProviding)? = nil,
         updateChecker: (any UpdateChecking)? = nil,
-        powerAssertion: (any PowerAssertionControlling)? = nil
+        powerAssertion: (any PowerAssertionControlling)? = nil,
+        remoteJanitor: (any RemoteJanitorProviding)? = nil
     ) {
         self.profileStore = profileStore
         self.settingsStore = settingsStore
@@ -129,6 +144,7 @@ final class AppViewModel {
         self.hostKeyTrust = hostKeyTrust
         self.updateChecker = updateChecker
         self.powerAssertion = powerAssertion
+        self.remoteJanitor = remoteJanitor
 
         bootstrap()
     }
@@ -158,7 +174,8 @@ final class AppViewModel {
             systemServices: AppSystemServices(),
             hostKeyTrust: HostKeyTrustService(),
             updateChecker: GitHubReleaseUpdateChecker(),
-            powerAssertion: PowerAssertionService()
+            powerAssertion: PowerAssertionService(),
+            remoteJanitor: SSHRemoteJanitor(factory: sshFactory)
         )
     }
 
@@ -717,6 +734,7 @@ final class AppViewModel {
         notificationPolicy.reset(profileID: id)
         finishPasswordPrompt(profileID: id)
         clearHostKeyPrompt(profileID: id)
+        if portConflict?.profileID == id { portConflict = nil }
         if currentProfileId == id {
             currentProfileId = profiles.first?.id
         }
@@ -915,6 +933,93 @@ final class AppViewModel {
         }
     }
 
+    // MARK: - 远端残留诊断清理（端口冲突自愈闭环）
+
+    var portConflictProfileName: String? {
+        portConflict.flatMap { conflict in profiles.first { $0.id == conflict.profileID }?.name }
+    }
+
+    /// 冲突出现时自动只读诊断（带冷却）：识别占用者，可清对象（同用户僵尸 sshd、
+    /// 自家孤儿 Privoxy）呈现给用户确认。别人的进程只展示，不提供清理。
+    private func scheduleRemoteResidueInspection(profileID: UUID) {
+        guard remoteJanitor != nil,
+              let profile = profiles.first(where: { $0.id == profileID }) else { return }
+        guard portConflict == nil else { return } // 已有卡片在展示，不重复诊断
+        let now = Date()
+        if let last = portConflictInspectedAt[profileID],
+           now.timeIntervalSince(last) < Self.portConflictInspectCooldown { return }
+        portConflictInspectedAt[profileID] = now
+        portConflict = (profileID, .inspecting)
+        logStore.append(raw: "检测到远端端口冲突：正在经 SSH 诊断「\(profile.name)」的端口占用", level: .info, profileId: profileID)
+        runRemoteInspection(profile: profile, profileID: profileID)
+    }
+
+    /// 用户在卡片上点「重新诊断」。
+    func reinspectRemoteResidue() {
+        guard let id = portConflict?.profileID,
+              let profile = profiles.first(where: { $0.id == id }) else { return }
+        portConflict = (id, .inspecting)
+        runRemoteInspection(profile: profile, profileID: id)
+    }
+
+    private func runRemoteInspection(profile: ServerProfile, profileID: UUID) {
+        guard let janitor = remoteJanitor else { return }
+        var ports = [profile.remotePort, profile.remoteSocksPort]
+        if profile.httpAdapterEnabled { ports.append(profile.remoteHTTPPort) }
+        let password = profile.rememberPassword ? secrets.load(for: profileID) : nil
+        Task { @MainActor [weak self] in
+            let holdings = await janitor.inspect(profile: profile, ports: ports, password: password)
+            guard let self, self.portConflict?.profileID == profileID else { return }
+            guard let holdings else {
+                let hint = profile.authMode == .password && password == nil
+                    ? "（密码模式且未记住密码，无法自动登录诊断）" : "（SSH 不可达或超时）"
+                self.portConflict = (profileID, .unavailable("无法自动诊断\(hint)"))
+                return
+            }
+            if holdings.isEmpty {
+                // 冲突已自愈（旧 sshd 已释放）：撤卡，常规重试会自行接上
+                self.portConflict = nil
+                self.logStore.append(raw: "远端端口诊断：占用已消失（自愈），继续常规重试", level: .info, profileId: profileID)
+            } else {
+                self.portConflict = (profileID, .report(holdings))
+            }
+        }
+    }
+
+    /// 用户确认后：仅清理 kind.isCleanable 的对象（僵尸 sshd / 自家孤儿 Privoxy），
+    /// 释放成功即自动重连。
+    func cleanRemoteResidueAndReconnect() {
+        guard let (profileID, state) = portConflict, case .report(let holdings) = state,
+              let profile = profiles.first(where: { $0.id == profileID }),
+              let janitor = remoteJanitor else { return }
+        let targets = holdings.filter { $0.kind.isCleanable }
+        guard !targets.isEmpty else { return }
+        portConflict = (profileID, .cleaning)
+        let summary = targets.map { "\($0.port)→PID \($0.pid)（\($0.comm)）" }.joined(separator: "、")
+        logStore.append(raw: "用户确认清理远端残留：\(summary)", level: .warning, profileId: profileID)
+        let password = profile.rememberPassword ? secrets.load(for: profileID) : nil
+        Task { @MainActor [weak self] in
+            let outcome = await janitor.clean(profile: profile, targets: targets, password: password)
+            guard let self else { return }
+            self.portConflict = nil
+            guard let outcome else {
+                self.logStore.append(raw: "远端清理执行失败（SSH 不可达）", level: .error, profileId: profileID)
+                return
+            }
+            if outcome.allFreed {
+                self.logStore.append(raw: "远端残留已清理（释放端口 \(outcome.freedPorts.map(String.init).joined(separator: "、"))），自动重连", level: .success, profileId: profileID)
+                self.connect(profile: profile)
+            } else {
+                self.logStore.append(raw: "远端清理完成但端口 \(outcome.stillHeldPorts.map(String.init).joined(separator: "、")) 仍被占用：可能是他人进程或需要更强信号，请更换端口或联系管理员", level: .warning, profileId: profileID)
+            }
+        }
+    }
+
+    /// 用户忽略本次诊断结果。
+    func dismissPortConflictCard() {
+        portConflict = nil
+    }
+
     // MARK: - ~/.ssh/config 导入（P2）
 
     /// 可导入的 ssh config 条目；文件不存在返回 nil。
@@ -1093,6 +1198,16 @@ final class AppViewModel {
         if snap.phase == .degraded, snap.localProxyVerified == false, snap.sshProcessRunning {
             scheduleProxyRescanAfterLocalFailure()
         }
+        // 端口绑定冲突 / Privoxy 端口被占 → 自动发起只读诊断（用户确认后才清理）
+        if snap.phase == .error, ManagedTunnelService.isRemoteBindConflict(snap.humanReadableDetail)
+            || snap.httpAdapterStatus == .portConflict {
+            scheduleRemoteResidueInspection(profileID: snap.profileId)
+        }
+        // 冲突后恢复连接成功 → 诊断卡撤下（清理中的除外，清理流程自己收尾）
+        if snap.phase == .connected, portConflict?.profileID == snap.profileId,
+           portConflict?.state != .cleaning {
+            portConflict = nil
+        }
         // 主机指纹引导：置位时登记待确认；离开该 profile 的会话即清除
         if snap.hostKeyNeedsTrust {
             if pendingHostKeyProfileId == nil {
@@ -1206,6 +1321,7 @@ final class AppViewModel {
         passwordPromptQueue.removeAll()
         clearHostKeyPrompt(profileID: pendingHostKeyProfileId ?? UUID())
         connectedSince.removeAll()
+        portConflict = nil
         powerAssertion?.release()
         systemServices?.stopObserving()
         tunnel.terminateAllSessions()

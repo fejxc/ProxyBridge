@@ -140,6 +140,90 @@ extension SmokeMain {
 
         // F10/F11 远端端口冲突：窗口内自动重试，窗口后停止
         await bindConflictChecks()
+
+        // F12–F14 远端残留诊断清理
+        await janitorChecks()
+    }
+
+    @MainActor
+    private static func janitorChecks() async {
+        // F12 解析与分类（活连接优先，绝不误杀）
+        let sample = """
+        PBJANITOR|17890|2206590|sshd|0|sshd: root@notty
+        PBJANITOR|7890|2206110|privoxy|0|/usr/sbin/privoxy /root/.cache/proxybridge/privoxy-tok/config
+        PBJANITOR|17890|3000|sshd|1|sshd: root@notty
+        PBJANITOR|9999|4000|nginx|0|nginx: master
+        """
+        let holdings = RemoteJanitorScript.parseInspect(sample)
+        check("F12", "诊断解析与分类：僵尸 sshd/自家 Privoxy 可清，活连接与他人进程不动",
+              holdings.count == 4
+                && holdings[0].kind == .staleSSHD && holdings[0].kind.isCleanable
+                && holdings[1].kind == .ownedPrivoxy && holdings[1].kind.isCleanable
+                && holdings[2].kind == .busy && !holdings[2].kind.isCleanable
+                && holdings[3].kind == .thirdParty && !holdings[3].kind.isCleanable)
+
+        // F13 脚本通过本机 POSIX shell 语法检查（生产将在 Linux 执行，语法同源）
+        func shellParses(_ script: String) -> Bool {
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("ProxyBridge-janitor-\(UUID()).sh")
+            defer { try? FileManager.default.removeItem(at: url) }
+            do { try Data(script.utf8).write(to: url) } catch { return false }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-n", url.path]
+            process.standardOutput = Pipe()
+            process.standardError = Pipe()
+            do { try process.run() } catch { return false }
+            process.waitUntilExit()
+            return process.terminationStatus == 0
+        }
+        check("F13", "远端诊断/清理脚本通过 POSIX shell 语法检查",
+              shellParses(RemoteJanitorScript.inspectScript(ports: [17890, 7890]))
+                && shellParses(RemoteJanitorScript.cleanScript(pids: [111, 222], ports: [17890])))
+        check("F13b", "清理结果解析", RemoteJanitorScript.parseClean("PBJANITOR|FREED|17890\nPBJANITOR|STILL|7890")
+                == RemoteCleanOutcome(freedPorts: [17890], stillHeldPorts: [7890]))
+
+        // F14 集成：冲突快照自动诊断 → 确认清理 → 自动重连（替身注入）
+        final class SmokeJanitor: RemoteJanitorProviding {
+            var holdings: [RemotePortHolding]? = [
+                RemotePortHolding(port: 17890, pid: 2206590, comm: "sshd", established: false, cmdline: "sshd: root@notty"),
+                RemotePortHolding(port: 7890, pid: 2206110, comm: "privoxy", established: false,
+                                  cmdline: "/usr/sbin/privoxy /root/.cache/proxybridge/privoxy-tok/config"),
+            ]
+            var outcome: RemoteCleanOutcome? = RemoteCleanOutcome(freedPorts: [17890, 7890], stillHeldPorts: [])
+            func inspect(profile: ServerProfile, ports: [Int], password: String?) async -> [RemotePortHolding]? { holdings }
+            func clean(profile: ServerProfile, targets: [RemotePortHolding], password: String?) async -> RemoteCleanOutcome? { outcome }
+        }
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProxyBridgeSmokeJan-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let janitor = SmokeJanitor()
+        let spy = FeatureTunnelSpy()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: dir),
+            settingsStore: AppSettingsStore(directoryURL: dir),
+            tunnel: spy, proxyDetector: MockProxyDetector(),
+            logStore: LogStore(), secrets: InMemoryPasswordStore(),
+            remoteJanitor: janitor
+        )
+        var profile = ServerProfile(name: "192", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        profile.connectionMode = .reverseDynamic
+        model.saveDraftProfile(profile)
+        profile = model.profiles[0]
+        var snap = TunnelSnapshot.idle(profile.id)
+        snap.phase = .error
+        snap.sshProcessRunning = false
+        snap.humanReadableDetail = "远端 127.0.0.1:17890 监听失败：端口可能被占用或服务器禁止转发。"
+        spy.onEvent?(.snapshot(snap))
+        let reported = await waitSmokeUntil {
+            if case .report(let list)? = model.portConflict?.state { return list.count == 2 }
+            return false
+        }
+        check("F14a", "端口冲突自动触发 SSH 诊断并报告占用者", reported)
+        let before = spy.connects.count
+        model.cleanRemoteResidueAndReconnect()
+        let reconnected = await waitSmokeUntil { spy.connects.count == before + 1 }
+        check("F14b", "确认清理后自动重连且撤卡", reconnected && model.portConflict == nil)
     }
 
     @MainActor

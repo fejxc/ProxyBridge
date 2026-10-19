@@ -191,6 +191,20 @@ enum L10n {
         "确认退出": "Confirm quit",
         "SSH 进程会被终止，不会遗留。": "SSH processes will be terminated; nothing is left behind.",
 
+        // MARK: 远端端口冲突诊断卡
+        "」远端端口被占用": "” remote ports are occupied",
+        "正在经 SSH 诊断端口占用…": "Diagnosing port holders over SSH…",
+        "正在清理远端残留…": "Cleaning remote leftovers…",
+        "重试诊断": "Retry diagnosis",
+        "重新诊断": "Re-diagnose",
+        "忽略": "Ignore",
+        "清理残留并重连": "Clean leftovers and reconnect",
+        "仅清理同用户的僵尸 sshd 与本 App 的孤儿 Privoxy；其他进程不会被触碰。": "Only same-user stale sshd sessions and this app's orphaned Privoxy are cleaned; other processes are never touched.",
+        "僵尸 sshd · 可清理": "stale sshd · cleanable",
+        "孤儿 Privoxy · 可清理": "orphan Privoxy · cleanable",
+        "有活连接 · 不清理": "live connection · keep",
+        "其他进程 · 不清理": "other process · keep",
+
         // MARK: 服务器编辑器
         "10.x.x.x 或 example.com": "10.x.x.x or example.com",
         "SSH 用户名": "SSH username",

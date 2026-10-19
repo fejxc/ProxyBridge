@@ -64,6 +64,9 @@ struct MenuBarView: View {
                 if model.pendingHostKeyProfileId != nil {
                     HostKeyTrustCard()
                 }
+                if model.portConflict != nil {
+                    RemotePortConflictCard()
+                }
                 checks
                 if let tool = model.remoteToolHint {
                     RemoteToolHintCard(tool: tool) {
