@@ -68,7 +68,7 @@ final class LogStoreTests: XCTestCase {
         let content = try String(contentsOf: file, encoding: .utf8)
         XCTAssertTrue(content.contains("10.11.154.192"), "IP 保留供排障")
         XCTAssertFalse(content.contains("abcdef1234567890"), "凭据必须脱敏")
-        XCTAssertTrue(content.split(separator: "\n").count >= 3, "启动行 + 写入行")
+        XCTAssertTrue(content.contains("ProxyBridge 启动"), "启动分隔行应落盘")
 
         store.fileSizeLimit = 64 // 极小阈值触发轮转
         store.append(raw: "再写一条触发轮转", level: .info)
