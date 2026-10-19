@@ -2,11 +2,12 @@
 
 ## 1.3.0 候选 · ProxyBridge v2（待发布）
 
+- 本地代理端点变化（端口漂移/代理客户端重启）动态感知：检测完成比对活跃隧道端点，实测新端点后无缝切换 Relay 目标，SSH 进程不中断，并按新协议重验远端；本地验证失败主动触发重扫（带冷却），构成自愈闭环。
 - 新增自动、传统静态和 OpenSSH 反向动态 SOCKS5 三种连接模式；自动模式会真实探测本地 upstream，失效或缺失时回退动态 SOCKS5。
 - 自动检测增加 HTTP_PROXY、HTTPS_PROXY、ALL_PROXY 来源，支持 HTTP、SOCKS5 与手动 Mixed 双协议探测；旧 profile 自动解码 v2 默认值。
 - 增加 Linux 用户级 Privoxy HTTP 兼容入口，默认绑定 `127.0.0.1:7890` 并启用，旧配置升级后保留现有 Codex `HTTP_PROXY`/`HTTPS_PROXY` 地址；底层 SOCKS5 独立使用 `17890`，入口可在设置中关闭。
 - 更新菜单栏、服务器配置、命令复制、错误状态和 Network Extension/TUN 帮助；动态 SOCKS5 不再依赖 Mac 本地代理端口。
-- 增加模式选择、自动回退、远端 SOCKS/HTTP 状态与适配器清理断言；本机 CLI typecheck 与 160 项 smoke 通过。Linux/Clash 真实端到端待验收。
+- 增加模式选择、自动回退、远端 SOCKS/HTTP 状态与适配器清理断言；本机 CLI typecheck 与 167 项 smoke 通过（含真实 socket 级 Relay 动态切换）。Linux/Clash 真实端到端待验收。
 
 ## 1.2.0 — 2026-10-12（已发布）
 

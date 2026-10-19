@@ -243,6 +243,60 @@ final class StubRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging, @unchecked 
     }
 }
 
+/// Relay 替身：记录 start/retarget 的目标序列与停止（不监听真实端口）。
+final class FakeRelay: TCPRelaying, @unchecked Sendable {
+    let sessionID = UUID()
+    var onStatistics: (@Sendable (TrafficSnapshot) -> Void)?
+    var onFailure: (@Sendable (String) -> Void)?
+    private let lock = NSLock()
+    private var targetHistory: [LocalProxyEndpoint] = []
+    private var stopped = false
+
+    private func record(_ target: LocalProxyEndpoint) {
+        lock.lock()
+        targetHistory.append(target)
+        lock.unlock()
+    }
+
+    func start(port: UInt16, target: LocalProxyEndpoint) async throws -> UInt16 {
+        record(target)
+        return 41_000
+    }
+
+    func retarget(to target: LocalProxyEndpoint) {
+        record(target)
+    }
+
+    func stop() {
+        lock.lock()
+        stopped = true
+        lock.unlock()
+    }
+
+    var targets: [LocalProxyEndpoint] {
+        lock.lock(); defer { lock.unlock() }
+        return targetHistory
+    }
+    var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
+    }
+}
+
+final class FakeRelayFactory: TCPRelayMaking, @unchecked Sendable {
+    private let lock = NSLock()
+    private var made: [FakeRelay] = []
+    func make(profileID: UUID) -> any TCPRelaying {
+        let relay = FakeRelay()
+        lock.lock(); made.append(relay); lock.unlock()
+        return relay
+    }
+    var relays: [FakeRelay] {
+        lock.lock(); defer { lock.unlock() }
+        return made
+    }
+}
+
 // MARK: - 协调器行为
 
 @MainActor
@@ -251,6 +305,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
     private var factory = FakeSSHFactory()
     private var localProber = StubLocalProber(outcome: .verified(statusCode: 200))
     private var remoteProber = StubRemoteProber(outcome: .verified(statusCode: 200))
+    private var relayFactory = FakeRelayFactory()
     private var coordinator: SSHTunnelCoordinator!
     private var recorder = Recorder<TunnelSnapshot>()
     private var passwordPrompts = Recorder<UUID>()
@@ -261,17 +316,22 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         local: ProbeOutcome = .verified(statusCode: 200),
         remote: RemoteProbeOutcome = .verified(statusCode: 200),
         grace: Double = 0.2,
-        adapterManager: (any RemoteHTTPAdapterManaging)? = nil
+        adapterManager: (any RemoteHTTPAdapterManaging)? = nil,
+        relayFactory: FakeRelayFactory? = nil
     ) {
         factory = FakeSSHFactory()
         localProber = StubLocalProber(outcome: local)
         remoteProber = StubRemoteProber(outcome: remote)
         secretStore = InMemoryPasswordStore()
+        if let relayFactory {
+            self.relayFactory = relayFactory
+        }
         coordinator = SSHTunnelCoordinator(
             processFactory: factory,
             localProber: localProber,
             remoteProber: remoteProber,
             secrets: secretStore,
+            relayFactory: self.relayFactory,
             httpAdapterManager: adapterManager
         )
         coordinator.graceSeconds = grace
@@ -388,6 +448,77 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertEqual(localProber.callCount, 2, "Mixed 需验证 HTTP CONNECT 与 SOCKS5 两种入口")
         XCTAssertEqual(remoteProber.lastRemotePort, profile.remotePort)
         XCTAssertEqual(remoteProber.lastProtocol, .mixed)
+    }
+
+    // MARK: 本地端点动态跟随（U15：代理变化无缝切换，SSH 不重启）
+
+    func testLocalEndpointRetargetSwitchesRelayWithoutRestartingSSH() async {
+        makeCoordinator(relayFactory: FakeRelayFactory())
+        var cfg = configuration(endpoint: endpoint)
+        cfg.profile.connectionMode = .staticForward
+        coordinator.connect(configuration: cfg)
+        let ok = await waitLastPhase(.connected)
+        XCTAssertTrue(ok, "序列：\(recorder.snapshot.map(\.phase))")
+        let handlesBefore = factory.madeHandles.count
+        guard let ssh = factory.madeHandles.last else { return XCTFail("应已启动 SSH 进程") }
+
+        let newEndpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 8891, protocol: .socks5, origin: .systemSOCKS)
+        coordinator.retargetLocalEndpoint(profileID: cfg.profile.id, endpoint: newEndpoint)
+        let switched = await waitUntilMain {
+            self.relayFactory.relays.first?.targets.map(\.id) == [self.endpoint.id, newEndpoint.id]
+        }
+        XCTAssertTrue(switched, "Relay 目标序列应为 [初始端点, 新端点]，实际：\(relayFactory.relays.first?.targets.map(\.displayEndpoint) ?? [])")
+
+        let last = recorder.snapshot.last
+        XCTAssertEqual(last?.phase, .connected)
+        XCTAssertEqual(last?.activeLocalEndpoint?.id, newEndpoint.id, "会话端点应更新为新端点")
+        XCTAssertEqual(last?.remoteProbeVerified, true, "切换后须重验远端")
+        XCTAssertEqual(remoteProber.lastProtocol, .socks5, "远端重验须使用新端点协议")
+        XCTAssertTrue(last?.humanReadableDetail.contains("无缝切换") == true, "须向用户说明发生了切换：\(last?.humanReadableDetail ?? "")")
+        XCTAssertTrue(ssh.isRunning, "SSH 进程不得被重启")
+        XCTAssertEqual(factory.madeHandles.count, handlesBefore, "切换不得产生新的 SSH 进程")
+    }
+
+    func testLocalEndpointRetargetKeepsEndpointWhenNewFailsVerification() async {
+        makeCoordinator(relayFactory: FakeRelayFactory())
+        var cfg = configuration(endpoint: endpoint)
+        cfg.profile.connectionMode = .staticForward
+        coordinator.connect(configuration: cfg)
+        _ = await waitLastPhase(.connected)
+        localProber.outcome = .connectionRefused // 新端点实测失败（旧端点结论不重探）
+
+        let newEndpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 8892, protocol: .http, origin: .systemHTTP)
+        coordinator.retargetLocalEndpoint(profileID: cfg.profile.id, endpoint: newEndpoint)
+        let settled = await waitUntilMain {
+            self.recorder.snapshot.last?.humanReadableDetail.contains("保持原端点") == true
+        }
+        XCTAssertTrue(settled, "实测失败须如实说明并保持原端点：\(recorder.snapshot.last?.humanReadableDetail ?? "")")
+        XCTAssertEqual(relayFactory.relays.first?.targets.count, 1, "不得切换目标")
+        XCTAssertEqual(recorder.snapshot.last?.activeLocalEndpoint?.id, endpoint.id)
+        XCTAssertEqual(recorder.snapshot.last?.phase, .connected, "旧端点仍有效时不得翻转状态")
+    }
+
+    func testLocalEndpointRetargetIgnoredForIneligibleSessions() async {
+        // 动态 SOCKS5 会话不依赖本地端点：不切换
+        makeCoordinator()
+        var dynamic = configuration(endpoint: nil).profile
+        dynamic.connectionMode = .reverseDynamic
+        dynamic.httpAdapterEnabled = false
+        coordinator.connect(configuration: TunnelConfiguration(profile: dynamic, localEndpoint: nil))
+        _ = await waitLastPhase(.connected)
+        let probesBefore = localProber.callCount
+        let countAtStart = recorder.count
+        coordinator.retargetLocalEndpoint(profileID: dynamic.id, endpoint: endpoint)
+        let quietDynamic = await awaitQuiet(countAtStart: countAtStart, stableMilliseconds: 200)
+        XCTAssertTrue(quietDynamic, "动态模式不得触发切换流程")
+        XCTAssertEqual(localProber.callCount, probesBefore)
+
+        // 从未连接的 profile：无会话可切换
+        let stranger = configuration(endpoint: endpoint)
+        let countBefore = recorder.count
+        coordinator.retargetLocalEndpoint(profileID: stranger.profile.id, endpoint: endpoint)
+        let quietIdle = await awaitQuiet(countAtStart: countBefore, stableMilliseconds: 200)
+        XCTAssertTrue(quietIdle, "无活跃会话时不得有任何事件")
     }
 
     func testHTTPAdapterStartsOnlyAfterSOCKSProbeAndRequiresHTTPConnect() async {

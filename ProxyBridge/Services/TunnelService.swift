@@ -16,6 +16,10 @@ protocol TunnelService: AnyObject {
     /// 手动「检查连接」：只做验证，不改配置。
     func runHealthCheck(profileID: UUID)
 
+    /// 本地代理端点变化后，把活跃静态转发的 Relay 无缝切到新端点
+    /// （实测新端点 → 切换目标 → 重验远端；SSH 进程不重启）。
+    func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint)
+
     func runLocalHealthCheck(profileID: UUID)
     func updateRuntimeSettings(_ settings: AppSettings)
     func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool)
@@ -37,6 +41,7 @@ protocol TunnelService: AnyObject {
 
 extension TunnelService {
     func runLocalHealthCheck(profileID: UUID) { runHealthCheck(profileID: profileID) }
+    func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint) {}
     func updateRuntimeSettings(_ settings: AppSettings) {}
     func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool) {}
     func prepareForSleep() {}

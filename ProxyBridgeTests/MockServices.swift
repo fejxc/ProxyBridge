@@ -172,6 +172,8 @@ final class MockProxyDetector: ProxyDetectorService {
 
     /// 模拟耗时（秒）。
     var simulatedLatency: TimeInterval = 0.8
+    /// detect() 调用计数（本地失败触发主动重扫等断言用）。
+    private(set) var detectCalls = 0
 
     func startObservingSystemChanges() -> Bool {
         // 测试模式不订阅系统变化，返回 true 保持调用方语义
@@ -179,6 +181,7 @@ final class MockProxyDetector: ProxyDetectorService {
     }
 
     func detect() {
+        detectCalls += 1
         task?.cancel()
         state.isScanning = true
         state.lastScanAt = Date()

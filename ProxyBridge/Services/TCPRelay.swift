@@ -6,6 +6,9 @@ protocol TCPRelaying: AnyObject, Sendable {
     var onStatistics: (@Sendable (TrafficSnapshot) -> Void)? { get set }
     var onFailure: (@Sendable (String) -> Void)? { get set }
     func start(port: UInt16, target: LocalProxyEndpoint) async throws -> UInt16
+    /// 本地代理端点变化时切换转发目标：只影响之后接受的连接；
+    /// 已建立的连接不受影响（旧端点死亡时对端会自然断开）。
+    func retarget(to target: LocalProxyEndpoint)
     func stop()
 }
 protocol TCPRelayMaking: Sendable { func make(profileID: UUID) -> any TCPRelaying }
@@ -71,6 +74,17 @@ final class TCPRelay: TCPRelaying, @unchecked Sendable {
     }
 
     func stop() { queue.async { [self] in stopOnQueue() } }
+
+    /// 切换上游目标（本地代理端口漂移/重启场景）。监听端口与 SSH 转发保持不变，
+    /// 未建立完成的连接立即关闭（旧目标大概率已死，等 10 秒握手超时只会拖慢恢复）。
+    func retarget(to target: LocalProxyEndpoint) {
+        queue.async { [self] in
+            guard !stopped, started,
+                  LocalProxyEndpointRule.isValid(host: target.host, port: target.port) else { return }
+            self.target = target
+            for pair in pairs.values where !pair.isEstablished { pair.close() }
+        }
+    }
 
     private func listenerState(_ state: NWListener.State) {
         guard !stopped else { return }
@@ -163,6 +177,8 @@ final class TCPRelay: TCPRelaying, @unchecked Sendable {
         init(incoming: NWConnection, outgoing: NWConnection, queue: DispatchQueue) {
             self.incoming = incoming; self.outgoing = outgoing; self.queue = queue
         }
+        /// 双向均已就绪、开始泵数据（供 Relay 切换目标时区分在途新旧连接）。
+        var isEstablished: Bool { began }
         func start() {
             for (connection, upload) in [(incoming, true), (outgoing, false)] {
                 connection.stateUpdateHandler = { [weak self] state in

@@ -23,6 +23,7 @@ struct SmokeMain {
         resolverChecks()
         await mockTunnelChecks()
         await viewModelChecks()
+        await retargetWiringChecks()
         logStoreChecks()
         await liveProxyChecks()
         sshChecks()
@@ -30,6 +31,7 @@ struct SmokeMain {
         await probeRegressionChecks()
         await runtimeChecks()
         await relayLifecycleChecks()
+        await relayRetargetChecks()
         await tunnelCoordinatorChecks()
         loopbackGuardChecks()
 
@@ -414,6 +416,90 @@ struct SmokeMain {
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
         return condition()
+    }
+
+    // MARK: S37 代理变化动态感知接线（ViewModel 层：端点变化 → 无缝切换；本地失败 → 主动重扫）
+
+    @MainActor
+    static func retargetWiringChecks() async {
+        final class RetargetSpyTunnel: TunnelService {
+            var onEvent: (@MainActor (TunnelEvent) -> Void)?
+            private let lock = NSLock()
+            private var calls: [(UUID, LocalProxyEndpoint)] = []
+            var activeID: UUID?
+            func connect(configuration: TunnelConfiguration) {}
+            func disconnect(profileID: UUID) {}
+            func runHealthCheck(profileID: UUID) {}
+            func isActive(profileID: UUID) -> Bool { profileID == activeID }
+            func terminateAllSessions() {}
+            func submitPassword(profileID: UUID, password: String, remember: Bool) {}
+            func cancelPasswordPrompt(profileID: UUID) {}
+            func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint) {
+                lock.lock()
+                calls.append((profileID, endpoint))
+                lock.unlock()
+            }
+            var retargets: [(UUID, LocalProxyEndpoint)] {
+                lock.lock(); defer { lock.unlock() }
+                return calls
+            }
+        }
+
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProxyBridgeSmokeRT-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let spy = RetargetSpyTunnel()
+        let detector = MockProxyDetector()
+        detector.simulatedLatency = 0.02
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: dir),
+            settingsStore: AppSettingsStore(directoryURL: dir),
+            tunnel: spy,
+            proxyDetector: detector,
+            logStore: LogStore(),
+            secrets: InMemoryPasswordStore()
+        )
+        model.saveDraftProfile(ServerProfile(name: "动态跟随", host: "10.11.154.192", sshPort: 22, username: "sunyun", remotePort: 7890))
+        let profile = model.profiles[0]
+        spy.activeID = profile.id
+
+        // 活跃静态会话：当前使用 7897 端点
+        var snap = TunnelSnapshot.idle(profile.id)
+        snap.phase = .connected
+        snap.sshProcessRunning = true
+        snap.localProxyVerified = true
+        snap.remoteProbeVerified = true
+        snap.effectiveMode = .staticForward
+        snap.activeLocalEndpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+        spy.onEvent?(.snapshot(snap))
+
+        func push(port: Int) {
+            var state = ProxyDetectionState()
+            state.candidates = [ProxyCandidate(
+                endpoint: LocalProxyEndpoint(host: "127.0.0.1", port: port, protocol: .http, origin: .systemHTTP, verifiedAt: Date()),
+                capability: .verified
+            )]
+            detector.onStateChange?(state)
+        }
+        push(port: 7898)
+        let wired = await waitSmokeUntil { spy.retargets.count == 1 }
+        check("S37a", "端点变化 → 活跃静态隧道下发无缝切换", wired && spy.retargets.first?.1.port == 7898)
+
+        push(port: 7898) // 重复扫描（verifiedAt 变化，端点 id 不变）
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        check("S37b", "端点未变的重复扫描不重复切换", spy.retargets.count == 1)
+
+        // 本地验证失败（degraded + localProxyVerified=false + SSH 存活）→ 主动重扫，冷却窗口内不重复
+        let detectCallsBefore = detector.detectCalls
+        var failed = snap
+        failed.phase = .degraded
+        failed.localProxyVerified = false
+        failed.humanReadableDetail = "本地健康检查完成：代理未通过验证"
+        spy.onEvent?(.snapshot(failed))
+        spy.onEvent?(.snapshot(failed))
+        check("S37c", "本地验证失败触发主动重扫（冷却窗口内仅一次）", detector.detectCalls == detectCallsBefore + 1)
     }
 
     // MARK: S26 ViewModel（持久化联动 / 校验拦截 / 需重连降级）

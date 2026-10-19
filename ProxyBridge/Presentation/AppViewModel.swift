@@ -53,6 +53,12 @@ final class AppViewModel {
     private var notificationTasks: [UUID: Task<Void, Never>] = [:]
     private var notificationPolicy = ConnectionNotificationPolicy()
     private var connectionEndpoints: [UUID: LocalProxyEndpoint] = [:]
+    /// 端点切换尝试的冷却记录（profile → 端点 id + 时间），避免重复扫描反复触发。
+    private var retargetAttempts: [UUID: (endpointID: String, at: Date)] = [:]
+    /// 上次因本地验证失败触发主动重扫的时间（代理波动场景闭环）。
+    private var lastFailureRescanAt: Date?
+    private static let retargetRetryCooldown: TimeInterval = 20
+    private static let failureRescanCooldown: TimeInterval = 30
     /// App 退出清理观察者（PRD F05：退出时清理自身 SSH 子进程）。
     private var terminateObserver: (any NSObjectProtocol)?
 
@@ -206,8 +212,43 @@ final class AppViewModel {
                 let ids = self.pendingStartupProfiles
                 self.pendingStartupProfiles.removeAll()
                 for profile in self.profiles where ids.contains(profile.id) { self.connect(profile: profile) }
+                self.retargetActiveTunnelsIfEndpointChanged()
             }
         }
+    }
+
+    /// U15 动态感知：本地代理端点变化时，活跃静态转发隧道无缝切换到新端点。
+    /// 只对「使用中的端点 ≠ 最新解析端点」的 profile 下发；相同端点的重复扫描不触发，
+    /// 冷却窗口内的重复尝试被忽略（实测失败的场景由下次检测重试）。
+    private func retargetActiveTunnelsIfEndpointChanged() {
+        for profile in profiles {
+            guard tunnel.isActive(profileID: profile.id),
+                  resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .staticForward else { continue }
+            guard let endpoint = endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection)),
+                  endpoint.id != connectionEndpoints[profile.id]?.id else { continue }
+            let now = Date()
+            if let last = retargetAttempts[profile.id], last.endpointID == endpoint.id,
+               now.timeIntervalSince(last.at) < Self.retargetRetryCooldown { continue }
+            retargetAttempts[profile.id] = (endpoint.id, now)
+            let oldDescription = connectionEndpoints[profile.id]
+                .map { "\($0.displayEndpoint)（\($0.protocol.displayName)）" } ?? "未知"
+            logStore.append(
+                raw: "本地代理端点变化：\(oldDescription) → \(endpoint.displayEndpoint)（\(endpoint.protocol.displayName)）；正在无缝切换活跃隧道",
+                level: .info, profileId: profile.id
+            )
+            tunnel.retargetLocalEndpoint(profileID: profile.id, endpoint: endpoint)
+        }
+    }
+
+    /// 本地代理验证失败（端口漂移/重启，系统配置通知不一定触发）→ 主动重扫发现新端点，
+    /// 与 onStateChange → retargetActiveTunnelsIfEndpointChanged 构成自愈闭环。带冷却防风暴。
+    private func scheduleProxyRescanAfterLocalFailure() {
+        guard !detection.isScanning else { return }
+        let now = Date()
+        if let last = lastFailureRescanAt, now.timeIntervalSince(last) < Self.failureRescanCooldown { return }
+        lastFailureRescanAt = now
+        logStore.append(raw: "本地代理未通过验证：主动重新检测，以发现端口变化", level: .info)
+        proxyDetector.detect()
     }
 
     // MARK: - 派生状态
@@ -720,6 +761,13 @@ final class AppViewModel {
         }
         if !snap.sshProcessRunning && [.idle, .error, .authRequired].contains(snap.phase) {
             connectionEndpoints[snap.profileId] = nil
+        }
+        // 活跃会话上报的端点是权威值（含无缝切换后的新端点）：复制命令等展示跟随
+        if snap.sshProcessRunning, let active = snap.activeLocalEndpoint {
+            connectionEndpoints[snap.profileId] = active
+        }
+        if snap.phase == .degraded, snap.localProxyVerified == false, snap.sshProcessRunning {
+            scheduleProxyRescanAfterLocalFailure()
         }
         guard previous?.phase != snap.phase || previous?.humanReadableDetail != snap.humanReadableDetail else { return }
         let name = profiles.first { $0.id == snap.profileId }?.name ?? "?"

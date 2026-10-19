@@ -122,6 +122,14 @@ final class ManagedTunnelService: TunnelService {
         underlying.runLocalHealthCheck(profileID: profileID)
     }
 
+    /// 本地代理端点变化：同步期望配置（后续自动重连沿用新端点）并转发给协调器。
+    func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint) {
+        guard desired[profileID] != nil else { return }
+        desired[profileID]?.localEndpoint = endpoint
+        guard !sleeping else { return }
+        underlying.retargetLocalEndpoint(profileID: profileID, endpoint: endpoint)
+    }
+
     func isActive(profileID: UUID) -> Bool {
         retries[profileID] != nil || resumeIDs.contains(profileID) || underlying.isActive(profileID: profileID)
     }

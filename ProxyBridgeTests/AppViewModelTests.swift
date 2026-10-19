@@ -8,6 +8,7 @@ final class TunnelSpy: TunnelService {
     private(set) var connectCalls: [TunnelConfiguration] = []
     private(set) var disconnectCalls: [UUID] = []
     private(set) var healthCheckCalls: [UUID] = []
+    private(set) var retargetCalls: [(profileID: UUID, endpoint: LocalProxyEndpoint)] = []
     var activeIDs: Set<UUID> = []
 
     func connect(configuration: TunnelConfiguration) {
@@ -20,6 +21,10 @@ final class TunnelSpy: TunnelService {
 
     func runHealthCheck(profileID: UUID) {
         healthCheckCalls.append(profileID)
+    }
+
+    func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint) {
+        retargetCalls.append((profileID, endpoint))
     }
 
     func isActive(profileID: UUID) -> Bool {
@@ -280,5 +285,137 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertNil(model.remoteHTTPCompatibilityText(), "明确关闭适配器时不应生成 HTTP_PROXY 命令")
         XCTAssertTrue(socksOnly?.contains("--socks5-hostname 127.0.0.1:17890") == true)
         XCTAssertFalse(socksOnly?.contains("HTTP_PROXY=http://127.0.0.1:17890") == true)
+    }
+
+    // MARK: 本地代理动态感知（U15：端点变化 → 无缝切换 / 本地失败 → 主动重扫）
+
+    /// 可脚本化检测器：测试直接推送检测状态（模拟 SCDynamicStore 变化后的重扫完成）。
+    @MainActor
+    final class ScriptedDetector: ProxyDetectorService {
+        var onStateChange: (@MainActor (ProxyDetectionState) -> Void)?
+        private(set) var detectCalls = 0
+        func startObservingSystemChanges() -> Bool { true }
+        func detect() { detectCalls += 1 }
+        func push(_ state: ProxyDetectionState) { onStateChange?(state) }
+    }
+
+    private func verifiedState(port: Int, protocol proto: ProxyProtocol = .http) -> ProxyDetectionState {
+        var state = ProxyDetectionState()
+        state.candidates = [
+            ProxyCandidate(
+                endpoint: LocalProxyEndpoint(host: "127.0.0.1", port: port, protocol: `proto`, origin: .systemHTTP, verifiedAt: Date()),
+                capability: .verified,
+                note: "测试注入"
+            )
+        ]
+        return state
+    }
+
+    /// 活跃静态转发的快照（effectiveMode = staticForward + 活跃端点）。
+    private func activeStaticSnapshot(profile: ServerProfile, endpoint: LocalProxyEndpoint?) -> TunnelSnapshot {
+        var snap = TunnelSnapshot.idle(profile.id)
+        snap.phase = .connected
+        snap.localProxyVerified = true
+        snap.sshProcessRunning = true
+        snap.remoteProbeVerified = true
+        snap.effectiveMode = .staticForward
+        snap.activeLocalEndpoint = endpoint
+        snap.humanReadableDetail = "远端代理已验证（HTTP 200）"
+        return snap
+    }
+
+    @discardableResult
+    private func makeModelWithScriptedDetector(directory: URL) -> (model: AppViewModel, tunnel: TunnelSpy, detector: ScriptedDetector) {
+        let spy = TunnelSpy()
+        let detector = ScriptedDetector()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: directory),
+            settingsStore: AppSettingsStore(directoryURL: directory),
+            tunnel: spy,
+            proxyDetector: detector,
+            logStore: LogStore(),
+            secrets: InMemoryPasswordStore()
+        )
+        return (model, spy, detector)
+    }
+
+    func testProxyEndpointChangeRetargetsActiveStaticTunnel() async {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, detector) = makeModelWithScriptedDetector(directory: temp.url)
+        var profile = validProfile(name: "动态跟随")
+        profile.connectionMode = .staticForward
+        model.saveDraftProfile(profile)
+        profile = model.profiles[0]
+
+        // 建立活跃静态隧道：使用 7897 端点
+        let old = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+        spy.activeIDs.insert(profile.id)
+        spy.emit(activeStaticSnapshot(profile: profile, endpoint: old))
+
+        // 系统代理变化 → 重扫完成，新端点 7898（协议也变化）
+        detector.push(verifiedState(port: 7898, protocol: .socks5))
+        let called = await waitUntilMain { spy.retargetCalls.count == 1 }
+        XCTAssertTrue(called, "端点变化应触发无缝切换")
+        XCTAssertEqual(spy.retargetCalls.first?.endpoint.port, 7898)
+        XCTAssertEqual(spy.retargetCalls.first?.endpoint.protocol, .socks5)
+        XCTAssertEqual(spy.retargetCalls.first?.profileID, profile.id)
+
+        // 相同端点的重复扫描（verifiedAt 变化但 id 不变）不得再次触发
+        detector.push(verifiedState(port: 7898, protocol: .socks5))
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(spy.retargetCalls.count, 1, "端点未变化时不得重复下发切换")
+    }
+
+    func testProxyEndpointChangeSkipsDynamicAndInactiveTunnels() async {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, detector) = makeModelWithScriptedDetector(directory: temp.url)
+
+        // 动态 SOCKS5 会话：不需要本地端点，不切换
+        var dynamic = validProfile(name: "动态机")
+        dynamic.connectionMode = .reverseDynamic
+        model.saveDraftProfile(dynamic)
+        dynamic = model.profiles[0]
+        var dynSnap = TunnelSnapshot.idle(dynamic.id)
+        dynSnap.phase = .connected
+        dynSnap.sshProcessRunning = true
+        dynSnap.remoteProbeVerified = true
+        dynSnap.effectiveMode = .reverseDynamic
+        spy.activeIDs.insert(dynamic.id)
+        spy.emit(dynSnap)
+
+        // 未连接的静态 profile：不切换
+        let idle = validProfile(name: "闲置机")
+        model.saveDraftProfile(idle)
+
+        detector.push(verifiedState(port: 7898))
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(spy.retargetCalls.isEmpty, "动态模式与未连接会话都不应触发切换")
+    }
+
+    func testLocalFailureTriggersDetectorRescan() async {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, detector) = makeModelWithScriptedDetector(directory: temp.url)
+        let profile = validProfile(name: "自愈机")
+        model.saveDraftProfile(profile)
+        let current = model.profiles[0]
+        spy.activeIDs.insert(current.id)
+        spy.emit(activeStaticSnapshot(profile: current, endpoint: nil))
+
+        // 本地验证失败（degraded + localProxyVerified=false + SSH 存活）→ 主动重扫
+        // （bootstrap 已调用过一次 detect，此处以差值断言）
+        let detectCallsBefore = detector.detectCalls
+        var failed = activeStaticSnapshot(profile: current, endpoint: nil)
+        failed.phase = .degraded
+        failed.localProxyVerified = false
+        failed.humanReadableDetail = "本地健康检查完成：代理未通过验证"
+        spy.emit(failed)
+        XCTAssertEqual(detector.detectCalls, detectCallsBefore + 1, "本地失败应触发一次主动重扫")
+
+        // 冷却窗口内的重复失败快照不重复触发
+        spy.emit(failed)
+        XCTAssertEqual(detector.detectCalls, detectCallsBefore + 1, "冷却窗口内不得重复重扫")
     }
 }

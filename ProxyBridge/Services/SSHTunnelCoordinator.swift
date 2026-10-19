@@ -596,6 +596,82 @@ final class SSHTunnelCoordinator: TunnelService {
         onEvent?(.snapshot(snap))
     }
 
+    // MARK: - 本地端点动态跟随（U15：代理变化无缝切换）
+
+    /// 本地代理端点变化后的无缝切换：实测新端点 → 切 Relay 目标 → 按新协议重验远端。
+    /// SSH 进程与 Relay 监听端口保持不变——这正是引入 Relay 间接层的意义。
+    /// 端点相同（host/port/协议一致）时不动作，避免重复扫描触发无谓重验。
+    func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint) {
+        guard let session = sessions[profileID], session.task == nil, !session.userStopped,
+              session.phase == .connected || session.phase == .degraded,
+              session.effectiveMode == .staticForward,
+              session.relay != nil,
+              session.localEndpoint?.id != endpoint.id else { return }
+        session.task = Task { @MainActor [weak self] in
+            await self?.runLocalRetarget(session: session, profileID: profileID, endpoint: endpoint)
+        }
+    }
+
+    private func runLocalRetarget(session: Session, profileID: UUID, endpoint: LocalProxyEndpoint) async {
+        defer { session.task = nil }
+        guard let profile = session.profile,
+              let handle = session.handle, handle.isRunning,
+              session.phase == .connected || session.phase == .degraded else { return }
+        let old = session.localEndpoint
+
+        var probing = baseSnapshot(profileID: profileID, phase: session.phase)
+        probing.humanReadableDetail = "检测到本地代理端点变化（\(old?.displayEndpoint ?? "?") → \(endpoint.displayEndpoint)），正在实测新端点…"
+        onEvent?(.snapshot(probing))
+
+        // 新端点必须实测通过才切换（与连接时同一验证标准，不凭扫描结论）
+        let outcome = await probeLocalEndpoint(endpoint)
+        guard !session.userStopped, !Task.isCancelled,
+              session.handle?.isRunning == true,
+              session.phase == .connected || session.phase == .degraded else { return }
+
+        guard outcome.isVerified else {
+            var kept = baseSnapshot(profileID: profileID, phase: session.phase)
+            kept.humanReadableDetail = "本地代理端点变化（\(old?.displayEndpoint ?? "?") → \(endpoint.displayEndpoint)）实测未通过（\(Self.describe(outcome: outcome))）：保持原端点，下次检测自动重试"
+            onEvent?(.snapshot(kept))
+            return
+        }
+
+        session.relay?.retarget(to: endpoint)
+        session.localEndpoint = endpoint
+        session.localVerified = true
+        // 端点协议可能变化（HTTP ↔ SOCKS5）：远端既有验证结论对新协议不再成立，立即重验
+        session.remoteVerified = nil
+        let remoteOutcome = await remoteVerify(session: session, profile: profile)
+        guard !session.userStopped, !Task.isCancelled,
+              session.handle?.isRunning == true,
+              session.phase == .connected || session.phase == .degraded else { return }
+        session.lastRemoteProbeAt = Date()
+
+        var snap = baseSnapshot(profileID: profileID, phase: session.phase)
+        snap.localProxyVerified = true
+        switch remoteOutcome {
+        case .verified(let code):
+            session.remoteVerified = true
+            session.networkReachability = true
+            session.phase = .connected
+            snap.phase = .connected
+            snap.humanReadableDetail = "本地代理端点变化，已无缝切换 \(old?.displayEndpoint ?? "?") → \(endpoint.displayEndpoint)（\(endpoint.protocol.displayName)）并重验远端（HTTP \(code)）；SSH 隧道未中断"
+        case .remoteCurlMissing:
+            session.networkReachability = nil
+            session.phase = .degraded
+            snap.phase = .degraded
+            snap.humanReadableDetail = "本地代理已切换到 \(endpoint.displayEndpoint)；远端缺少 curl，无法重验（未验证 ≠ 可用）"
+        default:
+            session.remoteVerified = false
+            session.networkReachability = false
+            session.phase = .degraded
+            snap.phase = .degraded
+            snap.humanReadableDetail = "本地代理已切换到 \(endpoint.displayEndpoint)，但远端重验未通过（\(Self.describe(remote: remoteOutcome))）"
+        }
+        snap.remoteProbeVerified = session.remoteVerified
+        onEvent?(.snapshot(snap))
+    }
+
     // MARK: - 事件与辅助
 
     private func handleProcessExit(profileID: UUID, exitCode: Int32) {
