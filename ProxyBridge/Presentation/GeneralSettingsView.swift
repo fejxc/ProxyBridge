@@ -7,13 +7,13 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionCard(title: "应用行为") {
+            SectionCard(title: L10n.t("应用行为")) {
                 VStack(spacing: 0) {
                     settingRow(
                         title: "登录时启动 ProxyBridge",
                         subtitle: model.loginStatusDescription
                     ) {
-                        Toggle("登录时启动", isOn: launchBinding)
+                        Toggle(L10n.t("登录时启动"), isOn: launchBinding)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
@@ -24,7 +24,7 @@ struct GeneralSettingsView: View {
                         title: "显示连接异常通知",
                         subtitle: model.notificationStatusDescription
                     ) {
-                        Toggle("通知", isOn: notificationBinding)
+                        Toggle(L10n.t("通知"), isOn: notificationBinding)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
@@ -34,9 +34,9 @@ struct GeneralSettingsView: View {
                         title: "远端健康检查间隔",
                         subtitle: "定期在服务器上通过 curl 验证代理，每次只运行一个探测。"
                     ) {
-                        Picker("间隔", selection: remoteIntervalBinding) {
+                        Picker(L10n.t("间隔"), selection: remoteIntervalBinding) {
                             ForEach(AppSettings.allowedRemoteIntervals, id: \.self) { seconds in
-                                Text("\(seconds) 秒").tag(seconds)
+                                Text("\(seconds) " + L10n.t("秒")).tag(seconds)
                             }
                         }
                         .frame(width: 110)
@@ -46,9 +46,9 @@ struct GeneralSettingsView: View {
                         title: "本地轻量检查间隔",
                         subtitle: "定期验证当前隧道使用的本地代理，不登录远端。"
                     ) {
-                        Picker("间隔", selection: localIntervalBinding) {
+                        Picker(L10n.t("间隔"), selection: localIntervalBinding) {
                             ForEach(AppSettings.allowedLocalIntervals, id: \.self) { seconds in
-                                Text("\(seconds) 秒").tag(seconds)
+                                Text("\(seconds) " + L10n.t("秒")).tag(seconds)
                             }
                         }
                         .frame(width: 110)
@@ -58,32 +58,78 @@ struct GeneralSettingsView: View {
                         title: "复制日志时脱敏",
                         subtitle: "遮挡内网 IP、用户@主机、密钥路径与凭据。"
                     ) {
-                        Toggle("脱敏", isOn: redactBinding)
+                        Toggle(L10n.t("脱敏"), isOn: redactBinding)
                             .toggleStyle(.switch)
                             .controlSize(.small)
                             .labelsHidden()
+                    }
+                    divider
+                    settingRow(
+                        title: "启动时检查更新",
+                        subtitle: "只读 GitHub 公开接口比对版本号，不上传任何数据；发现新版本时在菜单栏提示。"
+                    ) {
+                        Toggle(L10n.t("检查更新"), isOn: updateCheckBinding)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                    }
+                    divider
+                    settingRow(
+                        title: "连接期间防止空闲休眠",
+                        subtitle: "有活跃隧道时阻止系统空闲休眠（合盖睡眠不受影响）。断开或退出后立即恢复系统默认。"
+                    ) {
+                        Toggle(L10n.t("防止休眠"), isOn: keepAwakeBinding)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .labelsHidden()
+                    }
+                    divider
+                    settingRow(
+                        title: "界面语言",
+                        subtitle: "切换后立即生效；事件详情与日志文案保持中文。"
+                    ) {
+                        Picker(L10n.t("界面语言"), selection: languageBinding) {
+                            ForEach(AppLanguage.allCases, id: \.self) { lang in
+                                Text(lang.displayName).tag(lang)
+                            }
+                        }
+                        .frame(width: 140)
                     }
                 }
             }
 
             HStack {
-                Button("授权通知") { model.requestNotificationPermission() }
-                Button("刷新系统授权状态") { model.refreshSystemStatus() }
+                Button(L10n.t("授权通知")) { model.requestNotificationPermission() }
+                Button(L10n.t("刷新系统授权状态")) { model.refreshSystemStatus() }
             }
-            InfoBlock(text: "自动重连由各服务器配置控制。网络故障按 1、2、4 秒逐步退避，最多等待 60 秒；认证或指纹错误不会自动重试。手动断开会停止恢复，睡眠后仅恢复此前允许自动重连的连接。")
+            InfoBlock(text: "自动重连由各服务器配置控制。网络故障按 1、2、4 秒逐步退避，最多等待 60 秒；网络路径恢复（Wi-Fi 重连等）会立即重建允许自动重连的连接，不再等 SSH 存活超时。认证或指纹错误不会自动重试。手动断开会停止恢复，睡眠后仅恢复此前允许自动重连的连接。")
 
-            SectionCard(title: "关于") {
+            SectionCard(title: L10n.t("关于")) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("ProxyBridge · SSH 反向代理管理工具")
+                    Text(L10n.t("ProxyBridge · SSH 反向代理管理工具"))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
-                    Text("版本：" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发构建"))
+                    Text("版本：" + AppViewModel.currentVersion)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
-                    Text("通过 SSH 将 Mac 本地代理转发至服务器的回环端口。")
+                    if let update = model.updateInfo {
+                        Text(L10n.t("有新版本 ") + "v\(update.latestVersion)" + L10n.t(" 可用"))
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Palette.blue)
+                    }
+                    Text(L10n.t("通过 SSH 将 Mac 本地代理转发至服务器的回环端口。"))
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button(L10n.t("检查更新")) {
+                            Task { await model.checkForUpdates(manual: true) }
+                        }
+                        if model.updateInfo != nil {
+                            Button(L10n.t("打开发布页")) { model.openReleasePage() }
+                        }
+                    }
+                    .padding(.top, 4)
                 }
             }
         }
@@ -153,6 +199,27 @@ struct GeneralSettingsView: View {
         Binding(
             get: { model.settings.redactLogsOnCopy },
             set: { on in model.updateSettings { $0.redactLogsOnCopy = on } }
+        )
+    }
+
+    private var updateCheckBinding: Binding<Bool> {
+        Binding(
+            get: { model.settings.checkForUpdates },
+            set: { on in model.updateSettings { $0.checkForUpdates = on } }
+        )
+    }
+
+    private var keepAwakeBinding: Binding<Bool> {
+        Binding(
+            get: { model.settings.keepAwakeWhileConnected },
+            set: { on in model.updateSettings { $0.keepAwakeWhileConnected = on } }
+        )
+    }
+
+    private var languageBinding: Binding<AppLanguage> {
+        Binding(
+            get: { model.settings.language },
+            set: { lang in model.updateSettings { $0.language = lang } }
         )
     }
 }

@@ -28,13 +28,24 @@ struct MenuBarView: View {
                 if model.pendingPasswordProfileId != nil {
                     PasswordPromptCard()
                 }
+                if model.pendingHostKeyProfileId != nil {
+                    HostKeyTrustCard()
+                }
                 checks
+                if let tool = model.remoteToolHint {
+                    RemoteToolHintCard(tool: tool) {
+                        model.runHealthCheck()
+                    } onCopy: {
+                        model.copyRemoteToolInstallHint()
+                    }
+                }
                 if let profile = model.currentProfile {
                     TrafficStatsView(
                         session: model.trafficStore.session(for: profile.id),
                         connected: model.currentSnapshot.sshProcessRunning &&
                             [.connected, .degraded].contains(model.currentSnapshot.phase),
-                        supported: !isDynamicMode
+                        supported: !isDynamicMode,
+                        connectedSince: model.connectedSince[profile.id]
                     )
                 }
                 actions
@@ -50,12 +61,12 @@ struct MenuBarView: View {
             isPresented: $confirmQuit,
             titleVisibility: .visible
         ) {
-            Button("退出并断开所有隧道", role: .destructive) {
+            Button(L10n.t("退出并断开所有隧道"), role: .destructive) {
                 NSApplication.shared.terminate(nil)
             }
-            Button("取消", role: .cancel) {}
+            Button(L10n.t("取消"), role: .cancel) {}
         } message: {
-            Text("当前有活跃的 SSH 连接，退出会断开这些隧道（不会遗留 ssh 进程）。")
+            Text(L10n.t("当前有活跃的 SSH 连接，退出会断开这些隧道（不会遗留 ssh 进程）。"))
         }
     }
 
@@ -75,7 +86,7 @@ struct MenuBarView: View {
                 Text("ProxyBridge")
                     .font(.system(size: 16, weight: .bold))
                     .foregroundStyle(Palette.ink)
-                Text("SSH 反向代理管理")
+                Text(L10n.t("SSH 反向代理管理"))
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
             }
@@ -92,8 +103,8 @@ struct MenuBarView: View {
                     .foregroundStyle(Palette.muted)
             }
             .buttonStyle(.plain)
-            .help("退出 ProxyBridge")
-            .accessibilityLabel("退出 ProxyBridge")
+            .help(L10n.t("退出 ProxyBridge"))
+            .accessibilityLabel(L10n.t("退出 ProxyBridge"))
             Button {
                 openSettingsFront(tab: .servers)
             } label: {
@@ -102,8 +113,8 @@ struct MenuBarView: View {
                     .foregroundStyle(Palette.muted)
             }
             .buttonStyle(.plain)
-            .help("打开设置")
-            .accessibilityLabel("打开设置")
+            .help(L10n.t("打开设置"))
+            .accessibilityLabel(L10n.t("打开设置"))
         }
     }
 
@@ -112,17 +123,17 @@ struct MenuBarView: View {
     private var emptyState: some View {
         SectionCard {
             VStack(alignment: .leading, spacing: 10) {
-                Text("尚未配置服务器")
+                Text(L10n.t("尚未配置服务器"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("第一步：在设置中确认本地代理；第二步：添加服务器并填写 SSH 信息。")
+                Text(L10n.t("第一步：在设置中确认本地代理；第二步：添加服务器并填写 SSH 信息。"))
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
                     openSettingsFront(tab: .servers)
                 } label: {
-                    Label("打开设置，添加服务器", systemImage: "plus")
+                    Label(L10n.t("打开设置，添加服务器"), systemImage: "plus")
                         .frame(maxWidth: .infinity)
                 }
                 .controlSize(.large)
@@ -158,7 +169,7 @@ struct MenuBarView: View {
                     StatusTag(text: model.overallPresentation.title, tone: model.overallPresentation.tone)
                 }
 
-                Picker("选择服务器", selection: Binding(
+                Picker(L10n.t("选择服务器"), selection: Binding(
                     get: { model.currentProfileId ?? UUID() },
                     set: { model.selectProfile($0) }
                 )) {
@@ -168,7 +179,7 @@ struct MenuBarView: View {
                 }
                 .pickerStyle(.menu)
                 .controlSize(.large)
-                .accessibilityLabel("选择当前服务器")
+                .accessibilityLabel(L10n.t("选择当前服务器"))
 
                 Divider()
 
@@ -179,11 +190,11 @@ struct MenuBarView: View {
 
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 5) {
-                        Text(isDynamicMode ? "Mac 网络出口" : "本地上游 · Mac")
+                        Text(isDynamicMode ? L10n.t("Mac 网络出口") : L10n.t("本地上游 · Mac"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.muted)
                         MonoText(text: localEndpointDisplay)
-                        MiniBadge(text: "模式 · \(connectionModeLabel)", tone: .blue)
+                        MiniBadge(text: L10n.t("模式 · ") + connectionModeLabel, tone: .blue)
                         MiniBadge(text: localRouteBadge, tone: isDynamicMode ? .orange : .blue)
                     }
                     Spacer(minLength: 0)
@@ -195,11 +206,11 @@ struct MenuBarView: View {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(isDynamicMode
                              ? (model.currentProfile?.httpAdapterEnabled == true ? "Linux Codex HTTP" : "Linux SOCKS5")
-                             : "Linux 远端代理")
+                             : L10n.t("Linux 远端代理"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.muted)
                         MonoText(text: remoteEndpointDisplay)
-                        MiniBadge(text: "仅 127.0.0.1 · TCP", tone: .green)
+                        MiniBadge(text: L10n.t("仅 127.0.0.1 · TCP"), tone: .green)
                         if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
                             MonoText(text: "SOCKS5 \(model.currentProfile?.remoteSocksListenDisplay ?? "—")", size: 10)
                             MiniBadge(text: adapterBadgeText, tone: adapterBadgeTone)
@@ -212,7 +223,7 @@ struct MenuBarView: View {
 
     private var localEndpointDisplay: String {
         guard let profile = model.currentProfile else { return "—" }
-        if isDynamicMode { return "使用 Mac 当前网络栈" }
+        if isDynamicMode { return L10n.t("使用 Mac 当前网络栈") }
         if let endpoint = model.currentSnapshot.activeLocalEndpoint {
             return "\(endpoint.displayEndpoint) · \(endpoint.protocol.displayName)"
         }
@@ -220,9 +231,9 @@ struct MenuBarView: View {
         case .manual(let endpoint), .auto(let endpoint):
             return "\(endpoint.displayEndpoint) · \(endpoint.protocol.displayName)"
         case .none where profile.connectionMode == .automatic:
-            return "未发现入口；自动模式将尝试 SOCKS5"
+            return L10n.t("未发现入口；自动模式将尝试 SOCKS5")
         case .none:
-            return "需要可验证的本地上游"
+            return L10n.t("需要可验证的本地上游")
         }
     }
 
@@ -239,8 +250,8 @@ struct MenuBarView: View {
     }
 
     private var localRouteBadge: String {
-        if isDynamicMode { return "不需要本地代理端口" }
-        if model.currentSnapshot.effectiveMode == .staticForward { return "本地入口已通过实测" }
+        if isDynamicMode { return L10n.t("不需要本地代理端口") }
+        if model.currentSnapshot.effectiveMode == .staticForward { return L10n.t("本地入口已通过实测") }
         return model.resolvedEndpointDescription
     }
 
@@ -257,9 +268,9 @@ struct MenuBarView: View {
 
     private var adapterBadgeText: String {
         let snapshot = model.currentSnapshot
-        if snapshot.httpAdapterStatus == .verified { return "HTTP CONNECT 已验证" }
+        if snapshot.httpAdapterStatus == .verified { return L10n.t("HTTP CONNECT 已验证") }
         if let detail = snapshot.httpAdapterDetail, !detail.isEmpty { return detail }
-        return "HTTP 入口待验证"
+        return L10n.t("HTTP 入口待验证")
     }
 
     private var adapterBadgeTone: StatusTone {
@@ -275,14 +286,14 @@ struct MenuBarView: View {
     private var checks: some View {
         let triad = model.healthTriad
         return VStack(spacing: 0) {
-            HealthCheckRow(title: isDynamicMode ? "Mac 网络出口" : "本地代理", display: triad.local, detail: localDetail(for: triad.local))
+            HealthCheckRow(title: isDynamicMode ? L10n.t("Mac 网络出口") : L10n.t("本地代理"), display: triad.local, detail: localDetail(for: triad.local))
             separator
-            HealthCheckRow(title: "SSH 隧道", display: triad.ssh, detail: sshDetail(for: triad.ssh))
+            HealthCheckRow(title: L10n.t("SSH 隧道"), display: triad.ssh, detail: sshDetail(for: triad.ssh))
             separator
-            HealthCheckRow(title: isDynamicMode ? "远端 SOCKS5" : "远端代理", display: triad.remote, detail: remoteDetail(for: triad.remote))
+            HealthCheckRow(title: isDynamicMode ? L10n.t("远端 SOCKS5") : L10n.t("远端代理"), display: triad.remote, detail: remoteDetail(for: triad.remote))
             if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
                 separator
-                HealthCheckRow(title: "HTTP 兼容入口", display: httpAdapterDisplay, detail: httpAdapterDetail)
+                HealthCheckRow(title: L10n.t("HTTP 兼容入口"), display: httpAdapterDisplay, detail: httpAdapterDetail)
             }
         }
         .padding(.vertical, 4)
@@ -290,7 +301,7 @@ struct MenuBarView: View {
         .onTapGesture {
             model.openSettings(tab: .logs)
         }
-        .help("点击查看日志定位原因")
+        .help(L10n.t("点击查看日志定位原因"))
     }
 
     private var separator: some View {
@@ -302,15 +313,15 @@ struct MenuBarView: View {
     private func localDetail(for display: HealthCheckDisplay) -> String {
         if isDynamicMode {
             switch display {
-            case .ok: return "经远端 SOCKS5 请求验证 Mac 当前网络出站；Clash 节点尚未确认"
-            case .unknown: return "尚未通过远端请求验证 Mac 出站"
-            case .failed: return "经 SSH 反向 SOCKS5 的公网请求失败"
+            case .ok: return L10n.t("经远端 SOCKS5 请求验证 Mac 当前网络出站；Clash 节点尚未确认")
+            case .unknown: return L10n.t("尚未通过远端请求验证 Mac 出站")
+            case .failed: return L10n.t("经 SSH 反向 SOCKS5 的公网请求失败")
             }
         }
         switch display {
-        case .ok: return "本地代理已通过协议验证"
-        case .unknown: return "尚未验证本地代理可用性"
-        case .failed: return "本地代理验证失败：请确认代理已启动或改用手动配置"
+        case .ok: return L10n.t("本地代理已通过协议验证")
+        case .unknown: return L10n.t("尚未验证本地代理可用性")
+        case .failed: return L10n.t("本地代理验证失败：请确认代理已启动或改用手动配置")
         }
     }
 
@@ -319,18 +330,18 @@ struct MenuBarView: View {
         case .ok:
             let base = "隧道运行中"
             return base
-        case .unknown: return "正在建立 SSH 连接…"
+        case .unknown: return L10n.t("正在建立 SSH 连接…")
         case .failed: return model.currentSnapshot.phase == .authRequired
-            ? "需要核对服务器指纹或 SSH 身份验证"
-            : "SSH 未连接"
+            ? L10n.t("需要核对服务器指纹或 SSH 身份验证")
+            : L10n.t("SSH 未连接")
         }
     }
 
     private func remoteDetail(for display: HealthCheckDisplay) -> String {
         switch display {
-        case .ok: return isDynamicMode ? "Linux SOCKS5 已通过远端 HTTPS 请求验证" : "远端代理端到端验证通过"
-        case .unknown: return isDynamicMode ? "Linux SOCKS5 尚未验证" : "远端代理未验证（未验证 ≠ 可用）"
-        case .failed: return "远端验证失败，请查看日志定位原因"
+        case .ok: return isDynamicMode ? L10n.t("Linux SOCKS5 已通过远端 HTTPS 请求验证") : L10n.t("远端代理端到端验证通过")
+        case .unknown: return isDynamicMode ? L10n.t("Linux SOCKS5 尚未验证") : L10n.t("远端代理未验证（未验证 ≠ 可用）")
+        case .failed: return L10n.t("远端验证失败，请查看日志定位原因")
         }
     }
 
@@ -344,7 +355,7 @@ struct MenuBarView: View {
     }
 
     private var httpAdapterDetail: String {
-        model.currentSnapshot.httpAdapterDetail ?? "等待 SOCKS5 验活后检查 Privoxy 与 HTTP CONNECT"
+        model.currentSnapshot.httpAdapterDetail ?? L10n.t("等待 SOCKS5 验活后检查 Privoxy 与 HTTP CONNECT")
     }
 
     // MARK: 操作
@@ -355,7 +366,7 @@ struct MenuBarView: View {
             Button {
                 model.runHealthCheck()
             } label: {
-                Label("检查连接", systemImage: "arrow.triangle.2.circlepath")
+                Label(L10n.t("检查连接"), systemImage: "arrow.triangle.2.circlepath")
                     .frame(maxWidth: .infinity)
             }
             .controlSize(.large)
@@ -371,7 +382,7 @@ struct MenuBarView: View {
             Button {
                 model.connect()
             } label: {
-                Label("连接服务器", systemImage: "arrow.up.forward")
+                Label(L10n.t("连接服务器"), systemImage: "arrow.up.forward")
                     .frame(maxWidth: .infinity)
             }
             .controlSize(.large)
@@ -380,7 +391,7 @@ struct MenuBarView: View {
             Button(role: .destructive) {
                 model.disconnect()
             } label: {
-                Label("断开连接", systemImage: "stop.fill")
+                Label(L10n.t("断开连接"), systemImage: "stop.fill")
                     .frame(maxWidth: .infinity)
             }
             .controlSize(.large)
@@ -400,24 +411,35 @@ struct MenuBarView: View {
     private var links: some View {
         HStack {
             Menu {
-                Button("完整环境变量示例") { model.copyRemoteCommandToPasteboard() }
+                Button(L10n.t("完整环境变量示例")) { model.copyRemoteCommandToPasteboard() }
                 if model.remoteSOCKSProbeText() != nil {
-                    Button("SOCKS5 验收 curl") { model.copyRemoteSOCKSProbeToPasteboard() }
+                    Button(L10n.t("SOCKS5 验收 curl")) { model.copyRemoteSOCKSProbeToPasteboard() }
                 }
                 if model.remoteHTTPCompatibilityText() != nil {
-                    Button("HTTP_PROXY + CONNECT 验收") { model.copyRemoteHTTPCompatibilityToPasteboard() }
+                    Button(L10n.t("HTTP_PROXY + CONNECT 验收")) { model.copyRemoteHTTPCompatibilityToPasteboard() }
                 }
             } label: {
-                Label("复制 Linux 命令", systemImage: "doc.on.doc")
+                Label(L10n.t("复制 Linux 命令"), systemImage: "doc.on.doc")
                     .font(.system(size: 11.5))
             }
             .menuStyle(.borderlessButton)
-            .help("复制 Linux SOCKS5 或 HTTP_PROXY 验收命令；不修改服务器配置")
+            .help(L10n.t("复制 Linux SOCKS5 或 HTTP_PROXY 验收命令；不修改服务器配置"))
             Spacer(minLength: 0)
+            if let update = model.updateInfo {
+                Button {
+                    model.openReleasePage()
+                } label: {
+                    Label(L10n.t("新版本 ") + "v\(update.latestVersion)", systemImage: "arrow.up.circle.fill")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Palette.blue)
+                }
+                .buttonStyle(.link)
+                .help(L10n.t("打开发布页下载新版本"))
+            }
             Button {
                 openSettingsFront(tab: .logs)
             } label: {
-                Label("查看日志", systemImage: "list.bullet.rectangle")
+                Label(L10n.t("查看日志"), systemImage: "list.bullet.rectangle")
                     .font(.system(size: 11.5))
             }
             .buttonStyle(.link)
@@ -425,7 +447,7 @@ struct MenuBarView: View {
     }
 
     private var footer: some View {
-        Text("产品重点：随时知道本地代理、SSH 隧道、远端代理各自是否正常，而不是只看到「SSH 已连接」。")
+        Text(L10n.t("产品重点：随时知道本地代理、SSH 隧道、远端代理各自是否正常，而不是只看到「SSH 已连接」。"))
             .font(.system(size: 10.5))
             .foregroundStyle(Palette.muted.opacity(0.85))
             .fixedSize(horizontal: false, vertical: true)

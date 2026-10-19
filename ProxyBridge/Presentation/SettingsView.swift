@@ -21,7 +21,7 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("设置")
+            Text(L10n.t("设置"))
                 .font(.system(size: 10.5, weight: .bold))
                 .foregroundStyle(Palette.muted)
                 .padding(.horizontal, 12)
@@ -41,7 +41,7 @@ struct SettingsView: View {
             Spacer(minLength: 12)
 
             HStack {
-                Text("我的服务器")
+                Text(L10n.t("我的服务器"))
                     .font(.system(size: 10.5, weight: .bold))
                     .foregroundStyle(Palette.muted)
                 Spacer()
@@ -71,7 +71,7 @@ struct SettingsView: View {
                         model.openSettings(tab: .servers)
                         model.requestCreateProfile()
                     } label: {
-                        Label("添加服务器", systemImage: "plus")
+                        Label(L10n.t("添加服务器"), systemImage: "plus")
                             .font(.system(size: 11.5, weight: .semibold))
                             .frame(maxWidth: .infinity)
                     }
@@ -134,19 +134,19 @@ struct SettingsView: View {
 extension SettingsTab {
     var title: String {
         switch self {
-        case .servers: return "服务器配置"
-        case .proxy: return "本地代理"
-        case .logs: return "连接日志"
-        case .general: return "通用设置"
+        case .servers: return L10n.t("服务器配置")
+        case .proxy: return L10n.t("本地代理")
+        case .logs: return L10n.t("连接日志")
+        case .general: return L10n.t("通用设置")
         }
     }
 
     var subtitle: String {
         switch self {
-        case .servers: return "管理 SSH 主机、身份认证及远程监听端口。"
-        case .proxy: return "读取本机系统代理设置，验证可用协议与监听端口。"
-        case .logs: return "显示最近的事件、健康检查与错误原因。"
-        case .general: return "管理启动、健康检查以及默认行为。"
+        case .servers: return L10n.t("管理 SSH 主机、身份认证及远程监听端口。")
+        case .proxy: return L10n.t("读取本机系统代理设置，验证可用协议与监听端口。")
+        case .logs: return L10n.t("显示最近的事件、健康检查与错误原因。")
+        case .general: return L10n.t("管理启动、健康检查以及默认行为。")
         }
     }
 

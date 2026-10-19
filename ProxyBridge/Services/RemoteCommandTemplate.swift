@@ -4,6 +4,36 @@ import Foundation
 /// 端口只接受 Int；内容全部来自受控常量，不拼接用户自由文本。
 enum RemoteCommandTemplate {
 
+    /// 远端缺失、需要用户自行安装的依赖（App 不安装软件、不用 sudo）。
+    enum RemoteTool: String, CaseIterable, Sendable {
+        case curl
+        case privoxy
+
+        var displayName: String { self == .curl ? "curl" : "Privoxy" }
+    }
+
+    /// 安装指引：覆盖常见发行版；只生成命令，执行由用户决定。
+    static func installHintCommands(component: RemoteTool) -> String {
+        switch component {
+        case .curl:
+            return """
+            # ProxyBridge 需要在服务器上用 curl 做端到端验证（App 不会替你安装）
+            # Debian / Ubuntu：
+            sudo apt-get install -y curl
+            # RHEL / CentOS / Fedora（旧系统把 dnf 换成 yum）：
+            sudo dnf install -y curl
+            """
+        case .privoxy:
+            return """
+            # HTTP 兼容入口（Codex HTTP_PROXY）依赖服务器上的 Privoxy；App 不会替你安装
+            # Debian / Ubuntu：
+            sudo apt-get install -y privoxy
+            # RHEL / CentOS / Fedora（旧系统把 dnf 换成 yum）：
+            sudo dnf install -y privoxy
+            """
+        }
+    }
+
     static func socksProbeCommand(remotePort: Int) -> String? {
         guard (1...65_535).contains(remotePort) else { return nil }
         return "curl --socks5-hostname 127.0.0.1:\(remotePort) -I --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models"

@@ -20,11 +20,11 @@ struct PasswordPromptCard: View {
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }
-                Text("密码仅用于本次连接（经系统 PTY 交给 ssh）；勾选「记住」则存入本机钥匙串，之后自动登录。")
+                Text(L10n.t("密码仅用于本次连接（经系统 PTY 交给 ssh）；勾选「记住」则存入本机钥匙串，之后自动登录。"))
                     .font(.system(size: 10.5))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Toggle("记住密码（本机钥匙串）", isOn: $rememberInput)
+                Toggle(L10n.t("记住密码（本机钥匙串）"), isOn: $rememberInput)
                     .toggleStyle(.checkbox)
                     .font(.system(size: 10.5))
                 HStack(spacing: 8) {
@@ -34,7 +34,7 @@ struct PasswordPromptCard: View {
                     Button("提交", action: submit)
                         .buttonStyle(.borderedProminent)
                         .disabled(passwordInput.isEmpty)
-                    Button("取消", role: .destructive) {
+                    Button(L10n.t("取消"), role: .destructive) {
                         passwordInput = ""
                         rememberInput = false
                         model.cancelPasswordPrompt()
@@ -52,7 +52,7 @@ struct PasswordPromptCard: View {
             rememberInput = false
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("输入 SSH 密码")
+        .accessibilityLabel(L10n.t("输入 SSH 密码"))
     }
 
     private func submit() {

@@ -1,5 +1,20 @@
 import Foundation
 
+/// 界面语言（P2 i18n）：跟随系统 / 简体中文 / English。
+enum AppLanguage: String, Codable, CaseIterable, Sendable {
+    case system
+    case chinese
+    case english
+
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .chinese: return "简体中文"
+        case .english: return "English"
+        }
+    }
+}
+
 /// 通用设置（通用设置 Tab 持久化的全部字段）。
 struct AppSettings: Codable, Equatable {
     /// 用户请求的登录启动偏好；界面以 SMAppService 实际状态为准。
@@ -11,6 +26,12 @@ struct AppSettings: Codable, Equatable {
     var localCheckIntervalSeconds: Int
     /// 复制日志时默认脱敏。
     var redactLogsOnCopy: Bool
+    /// 启动时检查 GitHub 上的新版本（只读公开 API，不上传任何数据）。
+    var checkForUpdates: Bool
+    /// 有活跃连接时防止 Mac 空闲休眠（合盖仍会睡眠）。
+    var keepAwakeWhileConnected: Bool
+    /// 界面语言。
+    var language: AppLanguage
 
     static let allowedRemoteIntervals: [Int] = [30, 60, 120, 300]
     static let allowedLocalIntervals: [Int] = [15, 30, 60]
@@ -21,7 +42,10 @@ struct AppSettings: Codable, Equatable {
             showNotifications: true,
             remoteCheckIntervalSeconds: 60,
             localCheckIntervalSeconds: 30,
-            redactLogsOnCopy: true
+            redactLogsOnCopy: true,
+            checkForUpdates: true,
+            keepAwakeWhileConnected: false,
+            language: .system
         )
     }
 
@@ -34,6 +58,47 @@ struct AppSettings: Codable, Equatable {
             s.localCheckIntervalSeconds = 30
         }
         return s
+    }
+
+    // MARK: - 兼容解码：旧 settings.json 缺新字段时回退默认值，而不是整体判损坏
+
+    private enum CodingKeys: String, CodingKey {
+        case launchAtLoginRequested, showNotifications, remoteCheckIntervalSeconds
+        case localCheckIntervalSeconds, redactLogsOnCopy, checkForUpdates
+        case keepAwakeWhileConnected, language
+    }
+
+    init(
+        launchAtLoginRequested: Bool,
+        showNotifications: Bool,
+        remoteCheckIntervalSeconds: Int,
+        localCheckIntervalSeconds: Int,
+        redactLogsOnCopy: Bool,
+        checkForUpdates: Bool = true,
+        keepAwakeWhileConnected: Bool = false,
+        language: AppLanguage = .system
+    ) {
+        self.launchAtLoginRequested = launchAtLoginRequested
+        self.showNotifications = showNotifications
+        self.remoteCheckIntervalSeconds = remoteCheckIntervalSeconds
+        self.localCheckIntervalSeconds = localCheckIntervalSeconds
+        self.redactLogsOnCopy = redactLogsOnCopy
+        self.checkForUpdates = checkForUpdates
+        self.keepAwakeWhileConnected = keepAwakeWhileConnected
+        self.language = language
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Self.defaults()
+        launchAtLoginRequested = try c.decodeIfPresent(Bool.self, forKey: .launchAtLoginRequested) ?? d.launchAtLoginRequested
+        showNotifications = try c.decodeIfPresent(Bool.self, forKey: .showNotifications) ?? d.showNotifications
+        remoteCheckIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .remoteCheckIntervalSeconds) ?? d.remoteCheckIntervalSeconds
+        localCheckIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .localCheckIntervalSeconds) ?? d.localCheckIntervalSeconds
+        redactLogsOnCopy = try c.decodeIfPresent(Bool.self, forKey: .redactLogsOnCopy) ?? d.redactLogsOnCopy
+        checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? d.checkForUpdates
+        keepAwakeWhileConnected = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeWhileConnected) ?? d.keepAwakeWhileConnected
+        language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? d.language
     }
 }
 

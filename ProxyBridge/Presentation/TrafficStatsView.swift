@@ -5,11 +5,14 @@ struct TrafficStatsView: View {
     let session: TrafficSessionModel
     let connected: Bool
     let supported: Bool
+    /// 连接建立时间（动态模式无流量数据时至少诚实展示会话时长）。
+    var connectedSince: Date?
     @State private var expanded = false
     private let uploadColor = Color(red: 0.28, green: 0.48, blue: 0.70)
     private let downloadColor = Color(red: 0.25, green: 0.56, blue: 0.42)
-    init(session: TrafficSessionModel, connected: Bool, supported: Bool = true, initiallyExpanded: Bool = false) {
+    init(session: TrafficSessionModel, connected: Bool, supported: Bool = true, connectedSince: Date? = nil, initiallyExpanded: Bool = false) {
         self.session = session; self.connected = connected; self.supported = supported
+        self.connectedSince = connectedSince
         _expanded = State(initialValue: initiallyExpanded)
     }
     private var value: TrafficSnapshot { session.snapshot }
@@ -19,33 +22,54 @@ struct TrafficStatsView: View {
         if supported {
             statistics
         } else {
-            HStack(alignment: .top, spacing: 8) {
-                Image(systemName: "chart.xyaxis.line")
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("流量统计暂不可用")
-                        .font(.caption.weight(.semibold))
-                    Text("动态 SOCKS5 不经过本地 Relay；应用不会把 SSH 进程字节误报为代理业务流量。")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.vertical, 8)
+            unsupported
         }
+    }
+
+    /// 动态 SOCKS5：不经过本地 Relay，业务字节无法诚实统计；
+    /// 给出原因 + 会话时长（每秒自刷新），而不是假装有数据。
+    private var unsupported: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "chart.xyaxis.line")
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(L10n.t("流量统计暂不可用"))
+                    .font(.caption.weight(.semibold))
+                Text(L10n.t("动态 SOCKS5 不经过本地 Relay；应用不会把 SSH 进程字节误报为代理业务流量。"))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let since = connectedSince {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(L10n.t("会话时长 ") + Self.duration(Date().timeIntervalSince(since)))
+                            .font(.caption2.weight(.medium))
+                            .monospacedDigit()
+                            .foregroundStyle(Palette.muted)
+                    }
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 8)
+    }
+
+    static func duration(_ seconds: TimeInterval) -> String {
+        let total = Int(max(0, seconds))
+        let hours = total / 3600, minutes = (total % 3600) / 60, secs = total % 60
+        if hours > 0 { return String(format: "%d:%02d:%02d", hours, minutes, secs) }
+        return String(format: "%02d:%02d", minutes, secs)
     }
 
     private var statistics: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 16) {
-                direction(title: "上传", symbol: "arrow.up", rate: value.uploadRate, bytes: value.uploadBytes, color: uploadColor)
-                direction(title: "下载", symbol: "arrow.down", rate: value.downloadRate, bytes: value.downloadBytes, color: downloadColor)
+                direction(title: L10n.t("上传"), symbol: "arrow.up", rate: value.uploadRate, bytes: value.uploadBytes, color: uploadColor)
+                direction(title: L10n.t("下载"), symbol: "arrow.down", rate: value.downloadRate, bytes: value.downloadBytes, color: downloadColor)
             }
             DisclosureGroup("流量详情", isExpanded: $expanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     if value.samples.isEmpty {
-                        Text("建立连接后显示最近 60 秒速率").foregroundStyle(.secondary)
+                        Text(L10n.t("建立连接后显示最近 60 秒速率")).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 90)
                     } else {
                         Canvas { context, size in
@@ -64,23 +88,23 @@ struct TrafficStatsView: View {
                             }
                         }
                         .frame(height: 90)
-                        .accessibilityLabel("最近 60 秒实际上传和下载速率曲线")
+                        .accessibilityLabel(L10n.t("最近 60 秒实际上传和下载速率曲线"))
                         HStack {
-                            Text("↑ 上传").foregroundStyle(uploadColor)
-                            Text("↓ 下载").foregroundStyle(downloadColor)
-                            Spacer(); Text("最近 60 秒").foregroundStyle(.secondary)
+                            Text(L10n.t("↑ 上传")).foregroundStyle(uploadColor)
+                            Text(L10n.t("↓ 下载")).foregroundStyle(downloadColor)
+                            Spacer(); Text(L10n.t("最近 60 秒")).foregroundStyle(.secondary)
                         }
                     }
                     HStack {
-                        Text("本次连接总流量")
+                        Text(L10n.t("本次连接总流量"))
                         Spacer()
                         Text(value.sessionID == nil ? "—" : TrafficFormatting.total(value.uploadBytes + value.downloadBytes)).monospacedDigit()
                     }
                     if let port = value.relayPort {
-                        Text("Relay 127.0.0.1:\(String(port)) · \(String(value.activeConnections)) 个 TCP 连接")
+                        Text("Relay 127.0.0.1:\(String(port)) · \(String(value.activeConnections))" + L10n.t(" 个 TCP 连接"))
                             .foregroundStyle(.secondary)
                     }
-                    Text("统计 Relay 业务字节，含代理验证请求，不含 SSH 开销或其他网卡流量。")
+                    Text(L10n.t("统计 Relay 业务字节，含代理验证请求，不含 SSH 开销或其他网卡流量。"))
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.caption)
@@ -97,7 +121,7 @@ struct TrafficStatsView: View {
             Label(title + "速率", systemImage: symbol).foregroundStyle(color).font(.caption)
             Text(live ? TrafficFormatting.rate(rate) : "—")
                 .font(.system(size: 17, weight: .semibold)).monospacedDigit()
-            Text("累计\(title)：" + (value.sessionID == nil ? "—" : TrafficFormatting.total(bytes)))
+            Text(L10n.t("累计") + title + L10n.t("：") + (value.sessionID == nil ? "—" : TrafficFormatting.total(bytes)))
                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }.frame(maxWidth: .infinity, alignment: .leading)
     }

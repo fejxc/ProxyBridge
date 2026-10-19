@@ -89,8 +89,18 @@ final class SSHTunnelCoordinator: TunnelService {
     }
 
     func disconnect(profileID: UUID) {
+        performDisconnect(profileID: profileID, idleDetail: "已断开（用户手动操作）；不会自动重连")
+    }
+
+    /// 系统原因断开（网络恢复重建 / 模式升级）：行为与用户断开一致，
+    /// 文案如实说明原因；调用方随后会立即重新连接。
+    func disconnectForSystemReason(profileID: UUID, reason: String) {
+        performDisconnect(profileID: profileID, idleDetail: "\(reason)；即将重建连接")
+    }
+
+    private func performDisconnect(profileID: UUID, idleDetail: String) {
         guard let session = sessions[profileID] else { return }
-        // 用户断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
+        // 断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
         session.userStopped = true
         session.relay?.stop()
         session.task?.cancel()
@@ -114,7 +124,7 @@ final class SSHTunnelCoordinator: TunnelService {
         onEvent?(.snapshot(stopping))
 
         var idle = baseSnapshot(profileID: profileID, phase: .idle)
-        idle.humanReadableDetail = "已断开（用户手动操作）；不会自动重连"
+        idle.humanReadableDetail = idleDetail
         onEvent?(.snapshot(idle))
     }
 
@@ -467,6 +477,7 @@ final class SSHTunnelCoordinator: TunnelService {
             session.networkReachability = nil
             finalSnap = baseSnapshot(profileID: id, phase: .degraded)
             finalSnap.humanReadableDetail = "隧道已建立，远端缺少 curl，无法验证（未验证 ≠ 可用）"
+            finalSnap.remoteCurlMissing = true
             session.phase = .degraded
         case .authRequired(let detail):
             scheduleAdapterCleanup(session: session, profile: profile, emitStatus: false)
@@ -547,6 +558,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: "健康检查完成：远端本次无法验证")
                 session.remoteVerified = nil
                 session.networkReachability = nil
+                snap.remoteCurlMissing = outcome == .remoteCurlMissing
                 snap.humanReadableDetail = "健康检查完成：远端本次无法验证，连接已降级"
             case .authRequired(let detail):
                 scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: detail)
@@ -660,6 +672,7 @@ final class SSHTunnelCoordinator: TunnelService {
             session.networkReachability = nil
             session.phase = .degraded
             snap.phase = .degraded
+            snap.remoteCurlMissing = true
             snap.humanReadableDetail = "本地代理已切换到 \(endpoint.displayEndpoint)；远端缺少 curl，无法重验（未验证 ≠ 可用）"
         default:
             session.remoteVerified = false
@@ -715,6 +728,10 @@ final class SSHTunnelCoordinator: TunnelService {
 
         var snap = baseSnapshot(profileID: profileID, phase: phase)
         snap.humanReadableDetail = detail
+        // 首次连接（known_hosts 无记录）：标记 UI 可用的 TOFU 引导
+        if case .hostKeyUnknown = classification {
+            snap.hostKeyNeedsTrust = true
+        }
         onEvent?(.snapshot(snap))
     }
 

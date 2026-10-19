@@ -11,6 +11,8 @@ struct ServerEditorView: View {
     /// 草稿对应的原始值（未保存变更检测）。
     @State private var lastLoaded: ServerProfile?
     @State private var showUnsavedBanner = false
+    /// ~/.ssh/config 导入面板。
+    @State private var importEntries: [SSHConfigEntry]?
 
     var body: some View {
         Group {
@@ -18,6 +20,14 @@ struct ServerEditorView: View {
                 editorForm
             } else {
                 emptyPane
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { importEntries != nil },
+            set: { if !$0 { importEntries = nil } }
+        )) {
+            if let entries = importEntries {
+                SSHConfigImportSheet(entries: entries)
             }
         }
         .task(id: editSourceId) {
@@ -38,20 +48,29 @@ struct ServerEditorView: View {
     private var emptyPane: some View {
         SectionCard {
             VStack(alignment: .leading, spacing: 12) {
-                Text("未选择服务器")
+                Text(L10n.t("未选择服务器"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("添加一台服务器开始使用：填写名称、SSH 主机、端口、用户名即可（连接前请先在终端 ssh 一次以信任主机指纹）。")
+                Text(L10n.t("添加一台服务器开始使用：填写名称、SSH 主机、端口、用户名即可（首次连接时可在应用内核对并信任主机指纹，也可在终端先 ssh 一次）。"))
                     .font(.system(size: 11.5))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    model.requestCreateProfile()
-                } label: {
-                    Label("添加服务器", systemImage: "plus")
+                HStack(spacing: 8) {
+                    Button {
+                        model.requestCreateProfile()
+                    } label: {
+                        Label(L10n.t("添加服务器"), systemImage: "plus")
+                    }
+                    .controlSize(.regular)
+                    .buttonStyle(.borderedProminent)
+                    Button {
+                        importEntries = model.availableSSHConfigEntries()
+                    } label: {
+                        Label(L10n.t("从 ~/.ssh/config 导入"), systemImage: "square.and.arrow.down.on.square")
+                    }
+                    .controlSize(.regular)
+                    .buttonStyle(.bordered)
                 }
-                .controlSize(.regular)
-                .buttonStyle(.borderedProminent)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 20)
@@ -116,6 +135,82 @@ extension ServerProfile {
     )
 }
 
+/// ~/.ssh/config 导入面板（P2）：列出可导入条目，勾选后创建服务器配置。
+/// 只读取 HostName / Port / User / IdentityFile 四个指令，其他指令不迁移。
+@MainActor
+private struct SSHConfigImportSheet: View {
+    @Environment(AppViewModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let entries: [SSHConfigEntry]
+    @State private var selected: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(L10n.t("从 ~/.ssh/config 导入"))
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Palette.ink)
+            Text(L10n.t("仅读取 HostName / Port / User / IdentityFile；导入后可再编辑。与既有配置同主机、同端口、同用户名的条目自动跳过。"))
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(entries) { entry in
+                        Button {
+                            if selected.contains(entry.alias) { selected.remove(entry.alias) }
+                            else { selected.insert(entry.alias) }
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: selected.contains(entry.alias) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selected.contains(entry.alias) ? Palette.blue : Palette.muted)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(entry.alias)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(Palette.ink)
+                                    MonoText(
+                                        text: "\(entry.hostName ?? entry.alias):\(entry.port ?? 22)" +
+                                            (entry.user.map { " · \($0)" } ?? "") +
+                                            (entry.identityFile.map { " · \($0)" } ?? ""),
+                                        size: 10
+                                    )
+                                    .foregroundStyle(Palette.muted)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .contentShape(Rectangle())
+                            .background(Palette.softFill)
+                            .clipShape(RoundedRectangle(cornerRadius: 7))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+            HStack {
+                Button(L10n.t("全选")) {
+                    selected = Set(entries.map(\.alias))
+                }
+                .buttonStyle(.link)
+                Spacer()
+                Button(L10n.t("取消")) { dismiss() }
+                    .buttonStyle(.bordered)
+                Button(L10n.t("导入选中（") + "\(selected.count)") {
+                    let picked = entries.filter { selected.contains($0.alias) }
+                    _ = model.importSSHConfigEntries(picked)
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selected.isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 460)
+        .onAppear { selected = Set(entries.map(\.alias)) } // 默认全选
+    }
+}
+
 /// 表单主体。
 @MainActor
 struct ServerEditorForm: View {
@@ -142,24 +237,24 @@ struct ServerEditorForm: View {
                 InfoBlock(text: "此服务器当前有活跃连接：修改主机 / 端口 / 认证 / 远程监听端口后，需断开并重连才能生效（旧隧道仍按旧配置运行）。")
             }
 
-            SectionCard(title: "基本信息") {
+            SectionCard(title: L10n.t("基本信息")) {
                 VStack(spacing: 14) {
                     FormRow(label: "服务器名称", help: "1–40 字符，用于识别") {
-                        TextField("例如：实验室 GPU 服务器", text: $profile.name)
+                        TextField(L10n.t("例如：实验室 GPU 服务器"), text: $profile.name)
                     }
                     FormRow(label: "SSH 主机", help: "IP 或域名；暂不支持 IPv6 字面量与包含空白的主机") {
-                        TextField("10.x.x.x 或 example.com", text: $profile.host)
+                        TextField(L10n.t("10.x.x.x 或 example.com"), text: $profile.host)
                             .autocorrectionDisabled()
                     }
                     FormRow(label: "SSH 端口") {
                         PortField(value: $profile.sshPort, prompt: "SSH 端口")
                     }
                     FormRow(label: "用户名") {
-                        TextField("SSH 用户名", text: $profile.username)
+                        TextField(L10n.t("SSH 用户名"), text: $profile.username)
                             .autocorrectionDisabled()
                     }
                     FormRow(label: "认证方式") {
-                        Picker("认证方式", selection: $profile.authMode) {
+                        Picker(L10n.t("认证方式"), selection: $profile.authMode) {
                             ForEach(AuthenticationMode.allCases, id: \.self) { mode in
                                 Text(mode.displayName).tag(mode)
                             }
@@ -170,7 +265,7 @@ struct ServerEditorForm: View {
                         FormRow(label: "SSH 密码", help: nil) {
                             VStack(alignment: .leading, spacing: 8) {
                                 InfoBlock(text: "连接时会在面板中请求输入密码。勾选「记住密码」后密码存入本机钥匙串（系统加密存储），绝不写入 profiles.json 或日志；认证失败会自动清除已存密码。")
-                                Toggle("记住密码（存入本机钥匙串）", isOn: Binding(
+                                Toggle(L10n.t("记住密码（存入本机钥匙串）"), isOn: Binding(
                                     get: { profile.rememberPassword },
                                     set: { on in
                                         profile.rememberPassword = on
@@ -181,10 +276,10 @@ struct ServerEditorForm: View {
                                 .font(.system(size: 11))
                                 if hasStoredPassword {
                                     HStack(spacing: 8) {
-                                        Label("已记住密码（本机钥匙串）", systemImage: "checkmark.seal.fill")
+                                        Label(L10n.t("已记住密码（本机钥匙串）"), systemImage: "checkmark.seal.fill")
                                             .font(.system(size: 11))
                                             .foregroundStyle(Palette.green)
-                                        Button("忘记密码") {
+                                        Button(L10n.t("忘记密码")) {
                                             onForgetStoredPassword()
                                         }
                                         .buttonStyle(.link)
@@ -202,7 +297,7 @@ struct ServerEditorForm: View {
                                     set: { profile.identityFilePath = $0.isEmpty ? nil : $0 }
                                 ))
                                 .autocorrectionDisabled()
-                                Button("浏览…") { browseKeyFile() }
+                                Button(L10n.t("浏览…")) { browseKeyFile() }
                                     .controlSize(.small)
                             }
                         }
@@ -210,10 +305,10 @@ struct ServerEditorForm: View {
                 }
             }
 
-            SectionCard(title: "反向代理配置") {
+            SectionCard(title: L10n.t("反向代理配置")) {
                 VStack(spacing: 14) {
                     FormRow(label: "连接模式", help: "自动模式优先使用真实验证通过的本地代理，否则切换到 OpenSSH 动态 SOCKS5。") {
-                        Picker("连接模式", selection: $profile.connectionMode) {
+                        Picker(L10n.t("连接模式"), selection: $profile.connectionMode) {
                             ForEach(ConnectionMode.allCases, id: \.self) { mode in
                                 Text(mode.displayName).tag(mode)
                             }
@@ -232,11 +327,11 @@ struct ServerEditorForm: View {
                         }
                         FormRow(label: "HTTP 兼容入口", help: "默认在 Linux 127.0.0.1:7890 提供 Codex HTTP_PROXY/HTTPS_PROXY；底层 SOCKS5 使用独立端口。需要 Linux 已安装 Privoxy。不会安装软件或修改系统配置。") {
                             VStack(alignment: .leading, spacing: 7) {
-                                Toggle("提供 HTTP 入口（Codex 继续使用 7890）", isOn: $profile.httpAdapterEnabled)
+                                Toggle(L10n.t("提供 HTTP 入口（Codex 继续使用 7890）"), isOn: $profile.httpAdapterEnabled)
                                     .controlSize(.small)
                                 if profile.httpAdapterEnabled {
                                     loopbackPortField($profile.remoteHTTPPort, prompt: "HTTP 端口")
-                                    Text("仅在 SOCKS5 已通过真实请求后启动；若 Privoxy 不可用，SOCKS5 仍保留。")
+                                    Text(L10n.t("仅在 SOCKS5 已通过真实请求后启动；若 Privoxy 不可用，SOCKS5 仍保留。"))
                                         .font(.system(size: 10.5))
                                         .foregroundStyle(Palette.muted)
                                         .fixedSize(horizontal: false, vertical: true)
@@ -253,7 +348,7 @@ struct ServerEditorForm: View {
                     if profile.connectionMode != .reverseDynamic {
                         FormRow(label: "流量统计 Relay", help: "仅用于静态转发；动态 SOCKS5 的 SSH 业务流量不通过此 Relay 统计。") {
                         VStack(alignment: .leading, spacing: 6) {
-                            Toggle("固定本地 Relay 端口", isOn: Binding(get: { profile.relayPort != nil }, set: { profile.relayPort = $0 ? 17997 : nil }))
+                            Toggle(L10n.t("固定本地 Relay 端口"), isOn: Binding(get: { profile.relayPort != nil }, set: { profile.relayPort = $0 ? 17997 : nil }))
                             if profile.relayPort != nil {
                                 PortField(value: Binding(get: { profile.relayPort ?? 17997 }, set: { profile.relayPort = $0 }), prompt: "Relay 端口")
                             }
@@ -261,7 +356,7 @@ struct ServerEditorForm: View {
                         }
                     }
                     FormRow(label: "首选协议", help: "自动检测模式下优先采用该协议的实测结果；手动模式以手动端点为准。") {
-                        Picker("首选协议", selection: $profile.preferredProtocol) {
+                        Picker(L10n.t("首选协议"), selection: $profile.preferredProtocol) {
                             Text("HTTP").tag(ProxyProtocol.http)
                             Text("SOCKS5").tag(ProxyProtocol.socks5)
                         }
@@ -269,11 +364,11 @@ struct ServerEditorForm: View {
                         .frame(width: 180)
                     }
                     FormRow(label: "自动重连") {
-                        Toggle("网络波动时自动恢复 SSH 连接", isOn: $profile.reconnectEnabled)
+                        Toggle(L10n.t("网络波动时自动恢复 SSH 连接"), isOn: $profile.reconnectEnabled)
                             .controlSize(.small)
                     }
                     FormRow(label: "启动后连接") {
-                        Toggle("App 启动后，自动连接此服务器", isOn: $profile.connectAtLaunch)
+                        Toggle(L10n.t("App 启动后，自动连接此服务器"), isOn: $profile.connectAtLaunch)
                             .controlSize(.small)
                     }
                 }
@@ -306,7 +401,7 @@ struct ServerEditorForm: View {
                 Button(role: .destructive) {
                     confirmDelete = true
                 } label: {
-                    Text("删除配置")
+                    Text(L10n.t("删除配置"))
                 }
                 .controlSize(.large)
                 .disabled(isNew)
@@ -315,19 +410,19 @@ struct ServerEditorForm: View {
                     isPresented: $confirmDelete,
                     titleVisibility: .visible
                 ) {
-                    Button("删除（不可撤销）", role: .destructive) { onDelete(profile) }
-                    Button("取消", role: .cancel) {}
+                    Button(L10n.t("删除（不可撤销）"), role: .destructive) { onDelete(profile) }
+                    Button(L10n.t("取消"), role: .cancel) {}
                 }
 
                 Spacer()
                 if isNew {
-                    Button("放弃") { onDiscard() }
+                    Button(L10n.t("放弃")) { onDiscard() }
                         .controlSize(.large)
                 }
                 Button {
                     onSave(profile)
                 } label: {
-                    Text("保存更改")
+                    Text(L10n.t("保存更改"))
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)

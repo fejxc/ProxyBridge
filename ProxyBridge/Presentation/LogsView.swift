@@ -47,23 +47,23 @@ struct LogsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Picker("时间", selection: $timeScope) {
+                Picker(L10n.t("时间"), selection: $timeScope) {
                     ForEach(TimeScope.allCases) { scope in
                         Text(scope.title).tag(scope)
                     }
                 }
                 .frame(width: 110)
 
-                Picker("级别", selection: $levelFilter) {
-                    Text("全部级别").tag(LogLevel?.none)
+                Picker(L10n.t("级别"), selection: $levelFilter) {
+                    Text(L10n.t("全部级别")).tag(LogLevel?.none)
                     ForEach(LogLevel.allCases, id: \.self) { level in
                         Text(level.displayName).tag(LogLevel?.some(level))
                     }
                 }
                 .frame(width: 120)
 
-                Picker("服务器", selection: $profileFilter) {
-                    Text("全部服务器").tag(UUID?.none)
+                Picker(L10n.t("服务器"), selection: $profileFilter) {
+                    Text(L10n.t("全部服务器")).tag(UUID?.none)
                     ForEach(model.profiles) { p in
                         Text(p.name).tag(UUID?.some(p.id))
                     }
@@ -85,7 +85,7 @@ struct LogsView: View {
                 Button {
                     model.logStore.removeAll()
                 } label: {
-                    Label("清空", systemImage: "trash")
+                    Label(L10n.t("清空"), systemImage: "trash")
                 }
             }
 

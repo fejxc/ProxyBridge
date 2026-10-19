@@ -33,6 +33,7 @@ struct SmokeMain {
         await relayLifecycleChecks()
         await relayRetargetChecks()
         await tunnelCoordinatorChecks()
+        await featureChecks()
         loopbackGuardChecks()
 
         print("----------------------------------------")

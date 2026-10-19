@@ -15,11 +15,11 @@ struct ProxySettingsView: View {
             if model.currentProfile?.connectionMode == .reverseDynamic {
                 InfoBlock(text: "当前使用动态 SOCKS5：不需要 Mac 本地 HTTP/SOCKS 端口。此页的本地代理入口仅在切换到静态或自动模式时使用。")
             }
-            SectionCard(title: "代理来源") {
+            SectionCard(title: L10n.t("代理来源")) {
                 VStack(alignment: .leading, spacing: 14) {
-                    Picker("模式", selection: modeBinding) {
-                        Text("自动检测").tag(ProxySelectionMode.automatic)
-                        Text("手动指定").tag(ProxySelectionMode.manual)
+                    Picker(L10n.t("模式"), selection: modeBinding) {
+                        Text(L10n.t("自动检测")).tag(ProxySelectionMode.automatic)
+                        Text(L10n.t("手动指定")).tag(ProxySelectionMode.manual)
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 260)
@@ -33,7 +33,7 @@ struct ProxySettingsView: View {
             }
 
             if !model.detection.limitations.isEmpty {
-                SectionCard(title: "限制与说明") {
+                SectionCard(title: L10n.t("限制与说明")) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(model.detection.limitations, id: \.self) { limit in
                             Label(limit, systemImage: "exclamationmark.circle")
@@ -77,7 +77,7 @@ struct ProxySettingsView: View {
             if model.detection.isScanning {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("正在检测本地代理…")
+                    Text(L10n.t("正在检测本地代理…"))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }
@@ -100,7 +100,7 @@ struct ProxySettingsView: View {
                 Button {
                     model.redetectProxy()
                 } label: {
-                    Label("重新检测", systemImage: "arrow.triangle.2.circlepath")
+                    Label(L10n.t("重新检测"), systemImage: "arrow.triangle.2.circlepath")
                 }
                 .controlSize(.regular)
             }
@@ -117,10 +117,10 @@ struct ProxySettingsView: View {
             }
             .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 4) {
-                Text("未发现可用的本地代理候选")
+                Text(L10n.t("未发现可用的本地代理候选"))
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("未发现可验证的本地代理端口。可手动指定入口；若代理使用 TUN/Network Extension，也可以使用动态 SOCKS5。")
+                Text(L10n.t("未发现可验证的本地代理端口。可手动指定入口；若代理使用 TUN/Network Extension，也可以使用动态 SOCKS5。"))
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
@@ -147,7 +147,7 @@ struct ProxySettingsView: View {
                 }
                 .frame(width: 28, height: 28)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("检测到本地代理端点")
+                    Text(L10n.t("检测到本地代理端点"))
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                     Text(scannedAtText)
@@ -184,7 +184,7 @@ struct ProxySettingsView: View {
     private func candidateCard(_ candidate: ProxyCandidate) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("\(candidate.endpoint.protocol.displayName) 代理")
+                Text(candidate.endpoint.protocol.displayName + L10n.t(" 代理"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Palette.ink)
                 Spacer()
@@ -192,7 +192,7 @@ struct ProxySettingsView: View {
             }
             MonoText(text: candidate.endpoint.displayEndpoint, size: 11.5)
                 .foregroundStyle(Palette.muted)
-            Text("来源：\(candidate.endpoint.origin.displayName)")
+            Text(L10n.t("来源：") + candidate.endpoint.origin.displayName)
                 .font(.system(size: 10.5))
                 .foregroundStyle(Palette.muted.opacity(0.9))
             if let note = candidate.note {
@@ -242,7 +242,7 @@ struct ProxySettingsView: View {
                         PortField(value: $manualPort, prompt: "端口")
                     }
                     FormRow(label: "协议", help: "以连接时的实测验证为准") {
-                        Picker("协议", selection: $manualProtocol) {
+                        Picker(L10n.t("协议"), selection: $manualProtocol) {
                         Text("HTTP").tag(ProxyProtocol.http)
                         Text("SOCKS5").tag(ProxyProtocol.socks5)
                         Text("Mixed").tag(ProxyProtocol.mixed)
@@ -264,7 +264,7 @@ struct ProxySettingsView: View {
             }
 
             HStack {
-                Text("手动指定的优先级高于自动检测结果；连接前仍会实测验证。")
+                Text(L10n.t("手动指定的优先级高于自动检测结果；连接前仍会实测验证。"))
                     .font(.system(size: 10.5))
                     .foregroundStyle(Palette.muted)
                 Spacer()
@@ -273,7 +273,7 @@ struct ProxySettingsView: View {
                         host: manualHost, port: manualPort, protocol: manualProtocol
                     )
                 } label: {
-                    Text("应用手动代理")
+                    Text(L10n.t("应用手动代理"))
                 }
                 .buttonStyle(.borderedProminent)
             }

@@ -23,6 +23,12 @@ final class AppViewModel {
     /// SSH 密码的安全存储（生产 Keychain；测试内存实现）。
     let trafficStore = TrafficStore()
     let secrets: any PasswordStoring
+    /// 主机指纹信任（TOFU）：nil = 功能不可用（测试环境）。
+    private let hostKeyTrust: (any HostKeyTrustProviding)?
+    /// 更新检查：nil = 功能不可用。
+    private let updateChecker: (any UpdateChecking)?
+    /// 防「空闲休眠」电源断言：nil = 功能不可用。
+    private let powerAssertion: (any PowerAssertionControlling)?
 
     // MARK: - 状态
 
@@ -38,6 +44,34 @@ final class AppViewModel {
     private(set) var settings: AppSettings = .defaults()
     var settingsTab: SettingsTab = .servers
     var showSettingsWindow: (() -> Void)?
+
+    // MARK: - 主机指纹引导（P0：首次连接免终端）
+    /// 等待用户核对主机指纹的 profile（nil = 无）。
+    private(set) var pendingHostKeyProfileId: UUID?
+    /// 指纹扫描进度/结果（配合 pendingHostKeyProfileId 展示）。
+    enum HostKeyScanState: Equatable {
+        case idle
+        case scanning
+        case fetched([HostKeyRecord])
+        case failed(String)
+    }
+    private(set) var hostKeyScan: HostKeyScanState = .idle
+
+    // MARK: - 更新检查（P0）
+    /// 发现的新版本（nil = 无提醒）。
+    private(set) var updateInfo: UpdateInfo?
+
+    // MARK: - 动态→静态回升（P1）
+    /// 升回静态的冷却记录（防抖：代理不稳时避免模式反复横跳）。
+    private var upgradeAttempts: [UUID: Date] = [:]
+    /// 上一次扫描看到的已验证端点（要求连续两次扫描一致才升级）。
+    private var lastSeenVerifiedEndpoint: [UUID: String] = [:]
+    private static let upgradeRetryCooldown: TimeInterval = 60
+
+    // MARK: - 防休眠/会话时长（P1/P2）
+    /// 各 profile 当前连接建立时间（展示会话时长用）。
+    private(set) var connectedSince: [UUID: Date] = [:]
+    private var keepAwakeFailureLogged = false
 
     private var document: ProfilesDocument = .empty()
     private let systemServices: (any AppSystemIntegrating)?
@@ -71,7 +105,10 @@ final class AppViewModel {
         proxyDetector: ProxyDetectorService,
         logStore: LogStore,
         secrets: any PasswordStoring,
-        systemServices: (any AppSystemIntegrating)? = nil
+        systemServices: (any AppSystemIntegrating)? = nil,
+        hostKeyTrust: (any HostKeyTrustProviding)? = nil,
+        updateChecker: (any UpdateChecking)? = nil,
+        powerAssertion: (any PowerAssertionControlling)? = nil
     ) {
         self.profileStore = profileStore
         self.settingsStore = settingsStore
@@ -80,6 +117,9 @@ final class AppViewModel {
         self.logStore = logStore
         self.secrets = secrets
         self.systemServices = systemServices
+        self.hostKeyTrust = hostKeyTrust
+        self.updateChecker = updateChecker
+        self.powerAssertion = powerAssertion
 
         bootstrap()
     }
@@ -106,12 +146,16 @@ final class AppViewModel {
             ),
             logStore: LogStore(),
             secrets: KeychainPasswordStore(),
-            systemServices: AppSystemServices()
+            systemServices: AppSystemServices(),
+            hostKeyTrust: HostKeyTrustService(),
+            updateChecker: GitHubReleaseUpdateChecker(),
+            powerAssertion: PowerAssertionService()
         )
     }
 
     private func bootstrap() {
         settings = settingsStore.load()
+        L10n.apply(settings.language)
         if settingsStore.lastLoadWasCorrupted {
             logStore.append(raw: "settings.json 无法解析，已回退默认设置（文件保留原样，便于人工排查）", level: .error)
         }
@@ -152,6 +196,9 @@ final class AppViewModel {
             self?.proxyDetector.detect()
             self?.tunnel.resumeAfterWake()
         }
+        systemServices?.onNetworkRestored = { [weak self] in
+            self?.handleNetworkRestored()
+        }
         if let runtime = tunnel as? ManagedTunnelService {
             runtime.resolveEndpoint = { [weak self] profile in
                 guard let self else { return nil }
@@ -183,6 +230,15 @@ final class AppViewModel {
         }
         proxyDetector.startObservingSystemChanges()
         proxyDetector.detect()
+
+        // 更新检查：延迟 3 秒启动，不与首连/检测抢资源（只读公开 API，无上行数据）
+        if settings.checkForUpdates {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard let self, self.settings.checkForUpdates else { return }
+                await self.checkForUpdates(manual: false)
+            }
+        }
     }
 
     private func wireServices() {
@@ -213,6 +269,7 @@ final class AppViewModel {
                 self.pendingStartupProfiles.removeAll()
                 for profile in self.profiles where ids.contains(profile.id) { self.connect(profile: profile) }
                 self.retargetActiveTunnelsIfEndpointChanged()
+                self.upgradeDynamicTunnelsWhenProxyRecovered()
             }
         }
     }
@@ -251,6 +308,172 @@ final class AppViewModel {
         proxyDetector.detect()
     }
 
+    /// 网络路径恢复（Wi-Fi 重连/VPN 起来）：立即重扫本地代理 + 重建允许自动重连的隧道。
+    private func handleNetworkRestored() {
+        logStore.append(raw: "网络路径已恢复：重扫本地代理并重建允许自动重连的隧道", level: .info)
+        proxyDetector.detect()
+        tunnel.handleNetworkRestoration()
+    }
+
+    /// P1 自动回升：automatic 模式回退到动态 SOCKS5 后，本地代理恢复并连续两次扫描
+    /// 验证同一端点时，断开重建以切回静态转发（静态模式有流量统计、走 Clash 规则）。
+    /// 密码未记住的密码模式不自动升级（避免反复弹密码框）；每 profile 60s 冷却。
+    private func upgradeDynamicTunnelsWhenProxyRecovered() {
+        for profile in profiles {
+            guard profile.connectionMode == .automatic,
+                  tunnel.isActive(profileID: profile.id),
+                  resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .reverseDynamic,
+                  let verified = detection.bestVerifiedEndpoint(preferred: profile.preferredProtocol) else {
+                if !detection.candidates.isEmpty {
+                    lastSeenVerifiedEndpoint[profile.id] = nil
+                }
+                continue
+            }
+            // 连续两次扫描看到同一已验证端点才升级（防瞬时恢复引起模式横跳）
+            let seenBefore = lastSeenVerifiedEndpoint[profile.id] == verified.id
+            lastSeenVerifiedEndpoint[profile.id] = verified.id
+            guard seenBefore else { continue }
+            if profile.authMode == .password && !profile.rememberPassword {
+                logOncePerCooldown(profileID: profile.id, key: &upgradeHintsShown,
+                                   message: "本地代理已恢复，但「\(profile.name)」使用未记住的密码，为避免反复询问不自动切回静态；可手动重连升级")
+                continue
+            }
+            let now = Date()
+            if let last = upgradeAttempts[profile.id], now.timeIntervalSince(last) < Self.upgradeRetryCooldown { continue }
+            upgradeAttempts[profile.id] = now
+            logStore.append(
+                raw: "本地代理已恢复验证（\(verified.displayEndpoint)）：把「\(profile.name)」从动态 SOCKS5 切回静态转发，正在重建连接",
+                level: .info, profileId: profile.id
+            )
+            tunnel.disconnectForSystemReason(profileID: profile.id, reason: "本地代理已恢复，切回静态转发")
+            connect(profile: profile)
+        }
+    }
+
+    /// 每 profile 冷却一次的提示（防日志刷屏）。
+    private var upgradeHintsShown: Set<UUID> = []
+    private func logOncePerCooldown(profileID: UUID, key: inout Set<UUID>, message: String) {
+        guard !key.contains(profileID) else { return }
+        key.insert(profileID)
+        logStore.append(raw: message, level: .info, profileId: profileID)
+        Task { @MainActor [weak self, profileID] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.upgradeRetryCooldown * 1_000_000_000))
+            self?.upgradeHintsShown.remove(profileID)
+        }
+    }
+
+    // MARK: - 主机指纹引导（P0：首次连接免终端）
+
+    var pendingHostKeyProfileName: String? {
+        pendingHostKeyProfileId.flatMap { id in profiles.first { $0.id == id }?.name }
+    }
+
+    /// 用户点「获取并核对指纹」：ssh-keyscan 拉取远端公钥与 SHA256 指纹。
+    func requestHostKeyScan() {
+        guard let id = pendingHostKeyProfileId,
+              let profile = profiles.first(where: { $0.id == id }) else { return }
+        guard let hostKeyTrust else {
+            hostKeyScan = .failed("当前构建未装配指纹扫描服务")
+            return
+        }
+        hostKeyScan = .scanning
+        logStore.append(raw: "正在获取「\(profile.name)」的主机指纹（ssh-keyscan \(profile.host):\(profile.sshPort)）", level: .info, profileId: id)
+        Task { @MainActor [weak self, hostKeyTrust] in
+            let records = await hostKeyTrust.scan(host: profile.host, port: profile.sshPort)
+            guard let self, self.pendingHostKeyProfileId == id else { return }
+            if records.isEmpty {
+                self.hostKeyScan = .failed("未获取到主机公钥：网络不可达、SSH 端口未开放或主机名错误")
+                self.logStore.append(raw: "主机指纹获取失败（无返回）", level: .error, profileId: id)
+            } else {
+                self.hostKeyScan = .fetched(records)
+            }
+        }
+    }
+
+    /// 用户确认指纹无误：写入 known_hosts 并自动重连。
+    func confirmHostKeyAndReconnect() {
+        guard let id = pendingHostKeyProfileId,
+              let profile = profiles.first(where: { $0.id == id }),
+              case .fetched(let records) = hostKeyScan else { return }
+        guard hostKeyTrust?.trust(records) == true else {
+            hostKeyScan = .failed("写入 known_hosts 失败：请检查 ~/.ssh 目录与文件权限")
+            return
+        }
+        logStore.append(
+            raw: "已信任「\(profile.name)」的主机指纹（写入 \(records.count) 条公钥），自动重连",
+            level: .success, profileId: id
+        )
+        clearHostKeyPrompt(profileID: id)
+        connect(profile: profile)
+    }
+
+    /// 用户放弃：保持 authRequired 终态（不自动重试，语义与取消密码输入一致）。
+    func dismissHostKeyPrompt() {
+        guard let id = pendingHostKeyProfileId else { return }
+        logStore.append(raw: "已跳过主机指纹确认；可稍后在终端 ssh 一次或重新连接再试", level: .info, profileId: id)
+        clearHostKeyPrompt(profileID: id)
+    }
+
+    private func clearHostKeyPrompt(profileID: UUID) {
+        if pendingHostKeyProfileId == profileID {
+            pendingHostKeyProfileId = nil
+            hostKeyScan = .idle
+        }
+    }
+
+    // MARK: - 更新检查（P0）
+
+    static var currentVersion: String {
+        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
+    }
+
+    /// 检查新版本。manual = true 时无论成败都给出日志反馈（设置页按钮触发）。
+    func checkForUpdates(manual: Bool) async {
+        guard let updateChecker else {
+            if manual { logStore.append(raw: "当前构建未装配更新检查服务", level: .warning) }
+            return
+        }
+        guard let info = await updateChecker.latestRelease() else {
+            if manual { logStore.append(raw: "检查更新失败：网络不可用或 GitHub 暂时无法访问", level: .warning) }
+            return
+        }
+        if Version.isNewer(candidate: info.latestVersion, current: Self.currentVersion) {
+            guard updateInfo?.latestVersion != info.latestVersion else { return }
+            updateInfo = info
+            logStore.append(raw: "发现新版本 v\(info.latestVersion)（当前 v\(Self.currentVersion)）：菜单栏点击「新版本」可打开下载页", level: .info)
+        } else if manual {
+            logStore.append(raw: "已是最新版本（v\(Self.currentVersion)）", level: .success)
+        }
+    }
+
+    /// 打开发布页（有新版本时直达该版本页面）。
+    func openReleasePage() {
+        let url = updateInfo?.releaseURL ?? URL(string: "https://github.com/fejxc/ProxyBridge/releases")
+        guard let url else { return }
+        NSWorkspace.shared.open(url)
+        logStore.append(raw: "已打开发布页\(updateInfo.map { "（v\($0.latestVersion)）" } ?? "")", level: .info)
+    }
+
+    // MARK: - 防空闲休眠（P1）
+
+    /// 依据「设置开关 + 是否有活跃隧道」持有/释放电源断言。
+    /// 断言只防「空闲休眠」：合盖、强制睡眠不受影响（如实告知，不虚标）。
+    private func updateKeepAwakeAssertion() {
+        let activePhases: Set<TunnelPhase> = [.checking, .connecting, .reconnecting, .connected, .degraded]
+        let hasActiveTunnel = profiles.contains {
+            snapshots[$0.id]?.sshProcessRunning == true && activePhases.contains(snapshots[$0.id]?.phase ?? .idle)
+        }
+        if settings.keepAwakeWhileConnected, hasActiveTunnel {
+            if powerAssertion?.acquire(reason: "ProxyBridge 活跃 SSH 隧道转发") != true, !keepAwakeFailureLogged {
+                keepAwakeFailureLogged = true
+                logStore.append(raw: "防止空闲休眠断言创建失败：系统可能仍会休眠", level: .warning)
+            }
+        } else {
+            powerAssertion?.release()
+            keepAwakeFailureLogged = false
+        }
+    }
+
     // MARK: - 派生状态
 
     var currentProfile: ServerProfile? {
@@ -282,7 +505,7 @@ final class AppViewModel {
     var resolvedEndpointDescription: String {
         guard let profile = currentProfile else { return "—" }
         if profile.connectionMode == .reverseDynamic {
-            return "动态 SOCKS5 · 不需要本地代理端口"
+            return L10n.t("动态 SOCKS5 · 不需要本地代理端口")
         }
         return EndpointResolver.describe(
             EndpointResolver.resolve(profile: profile, detection: detection),
@@ -313,7 +536,7 @@ final class AppViewModel {
         case .idle, .error, .authRequired:
             return currentProfile == nil ? .busy("未选择服务器") : .connect
         case .checking, .connecting, .reconnecting, .disconnecting:
-            return .busy("处理中…")
+            return .busy(L10n.t("处理中…"))
         case .connected, .degraded:
             return .disconnect
         }
@@ -451,6 +674,7 @@ final class AppViewModel {
         notificationGenerations[id] = nil
         notificationPolicy.reset(profileID: id)
         finishPasswordPrompt(profileID: id)
+        clearHostKeyPrompt(profileID: id)
         if currentProfileId == id {
             currentProfileId = profiles.first?.id
         }
@@ -633,7 +857,9 @@ final class AppViewModel {
         var next = settings
         mutate(&next)
         settings = next.sanitized
+        L10n.apply(settings.language)
         tunnel.updateRuntimeSettings(settings)
+        updateKeepAwakeAssertion()
         if !settings.showNotifications {
             notificationTasks.values.forEach { $0.cancel() }
             notificationTasks.removeAll()
@@ -645,6 +871,62 @@ final class AppViewModel {
         } catch {
             logStore.append(raw: "保存设置失败：\(error.localizedDescription)", level: .error)
         }
+    }
+
+    // MARK: - ~/.ssh/config 导入（P2）
+
+    /// 可导入的 ssh config 条目；文件不存在返回 nil。
+    func availableSSHConfigEntries() -> [SSHConfigEntry]? {
+        SSHConfigParser.loadDefaultConfig()
+    }
+
+    /// 导入选中的条目为服务器（校验失败或与既有配置重复的跳过）。返回成功导入数。
+    @discardableResult
+    func importSSHConfigEntries(_ entries: [SSHConfigEntry]) -> Int {
+        var imported = 0
+        for entry in entries {
+            var profile = ServerProfile(
+                name: entry.alias,
+                host: entry.hostName ?? entry.alias,
+                sshPort: entry.port ?? 22,
+                username: entry.user ?? "",
+                remotePort: 7890
+            )
+            if let identity = entry.identityFile {
+                profile.authMode = .identityFile
+                profile.identityFilePath = identity
+            }
+            guard ServerProfileRule.validate(profile).isValid else { continue }
+            guard !profiles.contains(where: {
+                $0.host == profile.host && $0.sshPort == profile.sshPort && $0.username == profile.username
+            }) else { continue }
+            upsertProfile(profile)
+            imported += 1
+        }
+        if imported > 0 {
+            logStore.append(raw: "从 ~/.ssh/config 导入 \(imported) 台服务器（仅 HostName/Port/User/IdentityFile，不含其他指令）", level: .success)
+        }
+        return imported
+    }
+
+    // MARK: - 远端依赖指引（P2：从「如实报障」到「给出下一步」）
+
+    /// 当前 profile 的远端缺失依赖（curl / Privoxy）；nil = 无。
+    var remoteToolHint: RemoteCommandTemplate.RemoteTool? {
+        guard let profile = currentProfile, tunnel.isActive(profileID: profile.id) else { return nil }
+        let snap = snapshots[profile.id]
+        if snap?.remoteCurlMissing == true { return .curl }
+        if snap?.httpAdapterStatus == .notInstalled { return .privoxy }
+        return nil
+    }
+
+    /// 复制安装指引；安装完成后点「检查连接」重新验证。
+    func copyRemoteToolInstallHint() {
+        guard let tool = remoteToolHint else { return }
+        let text = RemoteCommandTemplate.installHintCommands(component: tool)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        logStore.append(raw: "已复制远端 \(tool.displayName) 安装指引；安装后点「检查连接」重新验证", level: .info, profileId: currentProfileId)
     }
 
     // MARK: - 复制
@@ -769,6 +1051,23 @@ final class AppViewModel {
         if snap.phase == .degraded, snap.localProxyVerified == false, snap.sshProcessRunning {
             scheduleProxyRescanAfterLocalFailure()
         }
+        // 主机指纹引导：置位时登记待确认；离开该 profile 的会话即清除
+        if snap.hostKeyNeedsTrust {
+            if pendingHostKeyProfileId == nil {
+                pendingHostKeyProfileId = snap.profileId
+                hostKeyScan = .idle
+            }
+        } else if pendingHostKeyProfileId == snap.profileId, !snap.hostKeyNeedsTrust,
+                  snap.phase != .authRequired {
+            clearHostKeyPrompt(profileID: snap.profileId)
+        }
+        // 会话时长（动态模式流量不可用时的诚实展示）
+        if snap.sshProcessRunning, [.connected, .degraded].contains(snap.phase) {
+            if connectedSince[snap.profileId] == nil { connectedSince[snap.profileId] = Date() }
+        } else {
+            connectedSince[snap.profileId] = nil
+        }
+        updateKeepAwakeAssertion()
         guard previous?.phase != snap.phase || previous?.humanReadableDetail != snap.humanReadableDetail else { return }
         let name = profiles.first { $0.id == snap.profileId }?.name ?? "?"
         let level: LogLevel
@@ -863,6 +1162,9 @@ final class AppViewModel {
         pendingStartupProfiles.removeAll()
         pendingPasswordProfileId = nil
         passwordPromptQueue.removeAll()
+        clearHostKeyPrompt(profileID: pendingHostKeyProfileId ?? UUID())
+        connectedSince.removeAll()
+        powerAssertion?.release()
         systemServices?.stopObserving()
         tunnel.terminateAllSessions()
     }

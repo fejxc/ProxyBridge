@@ -13,6 +13,10 @@ protocol TunnelService: AnyObject {
     /// 之后只允许发出 disconnecting → idle，绝不再自动重连（U13）。
     func disconnect(profileID: UUID)
 
+    /// 系统原因（网络恢复重建 / 模式升级）的断开：语义与 disconnect 相同
+    /// （终态、清进程、取消任务），仅提示文案不同；随后由调用方立即重连。
+    func disconnectForSystemReason(profileID: UUID, reason: String)
+
     /// 手动「检查连接」：只做验证，不改配置。
     func runHealthCheck(profileID: UUID)
 
@@ -25,6 +29,8 @@ protocol TunnelService: AnyObject {
     func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool)
     func prepareForSleep()
     func resumeAfterWake()
+    /// 网络路径恢复：绕过退避立即重连允许自动重连的会话（默认无操作）。
+    func handleNetworkRestoration()
 
     /// 该 profile 当前是否有活跃任务/进程。
     func isActive(profileID: UUID) -> Bool
@@ -42,10 +48,12 @@ protocol TunnelService: AnyObject {
 extension TunnelService {
     func runLocalHealthCheck(profileID: UUID) { runHealthCheck(profileID: profileID) }
     func retargetLocalEndpoint(profileID: UUID, endpoint: LocalProxyEndpoint) {}
+    func disconnectForSystemReason(profileID: UUID, reason: String) { disconnect(profileID: profileID) }
     func updateRuntimeSettings(_ settings: AppSettings) {}
     func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool) {}
     func prepareForSleep() {}
     func resumeAfterWake() {}
+    func handleNetworkRestoration() {}
 }
 
 /// 传给隧道服务的一份完整连接描述。

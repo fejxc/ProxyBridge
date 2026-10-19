@@ -63,6 +63,15 @@ final class ManagedTunnelService: TunnelService {
     }
 
     func disconnect(profileID: UUID) {
+        performDisconnect(profileID: profileID, systemReason: nil)
+    }
+
+    /// 系统原因断开（网络重建/模式升级）：清理逻辑与用户断开一致，文案如实。
+    func disconnectForSystemReason(profileID: UUID, reason: String) {
+        performDisconnect(profileID: profileID, systemReason: reason)
+    }
+
+    private func performDisconnect(profileID: UUID, systemReason: String?) {
         desired[profileID] = nil
         generations[profileID] = nil
         retries.removeValue(forKey: profileID)?.cancel()
@@ -71,10 +80,14 @@ final class ManagedTunnelService: TunnelService {
         remoteDue[profileID] = nil
         connectedAt[profileID] = nil
         attempts[profileID] = nil
-        underlying.disconnect(profileID: profileID)
+        if let reason = systemReason {
+            underlying.disconnectForSystemReason(profileID: profileID, reason: reason)
+        } else {
+            underlying.disconnect(profileID: profileID)
+        }
         if snapshots[profileID]?.phase != .idle {
             var snapshot = TunnelSnapshot.idle(profileID)
-            snapshot.humanReadableDetail = "已断开（用户手动操作）；不会自动重连"
+            snapshot.humanReadableDetail = systemReason ?? "已断开（用户手动操作）；不会自动重连"
             snapshots[profileID] = snapshot
             onEvent?(.snapshot(snapshot))
         }
@@ -171,6 +184,44 @@ final class ManagedTunnelService: TunnelService {
         resumeIDs.removeAll()
         for id in ids { scheduleRetry(id: id, delay: wakeDelaySeconds, reason: "Mac 已唤醒") }
         startMonitor()
+    }
+
+    /// 网络路径恢复（Wi-Fi 重连/VPN 起来）：绕过退避立即重连，不再等 SSH ServerAlive 超时。
+    /// 只作用于 desired 中且开启自动重连的 profile：退避中的取消等待；活跃的回收重建。
+    /// 未开自动重连的会话保持原语义（死亡后进入终态，不自动恢复）。
+    func handleNetworkRestoration() {
+        guard !sleeping else { return }
+        for id in desired.keys {
+            guard desired[id]?.profile.reconnectEnabled == true else { continue }
+            if retries.removeValue(forKey: id) != nil {
+                reconnectNow(id: id, reason: "网络已恢复")
+            } else if isActive(profileID: id) {
+                underlying.disconnectForSystemReason(profileID: id, reason: "网络已恢复")
+                reconnectNow(id: id, reason: "网络已恢复")
+            }
+        }
+        startMonitor()
+    }
+
+    /// 立即按期望配置重连：重新解析端点、重置健康检查排程与退避计数。
+    private func reconnectNow(id: UUID, reason: String) {
+        guard !sleeping, var configuration = desired[id], configuration.profile.reconnectEnabled else { return }
+        if let resolve = resolveEndpoint { configuration.localEndpoint = resolve(configuration.profile) }
+        desired[id] = configuration
+        generations[id] = UUID()
+        attempts[id] = 0
+        connectedAt[id] = nil
+        localDue[id] = nil
+        remoteDue[id] = nil
+        var snapshot = snapshots[id] ?? .idle(id)
+        snapshot.phase = .reconnecting
+        snapshot.sshProcessRunning = false
+        snapshot.localProxyVerified = nil
+        snapshot.remoteProbeVerified = nil
+        snapshot.humanReadableDetail = "\(reason)；正在重建连接"
+        snapshots[id] = snapshot
+        onEvent?(.snapshot(snapshot))
+        underlying.connect(configuration: configuration)
     }
 
     func terminateAllSessions() {

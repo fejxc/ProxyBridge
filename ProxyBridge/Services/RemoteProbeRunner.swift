@@ -111,7 +111,7 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
         }
         if exitCode == 255 {
             switch SSHErrorClassifier.classify(exitCode: exitCode, stderr: stderr) {
-            case .authRequired(let detail):
+            case .hostKeyUnknown(let detail), .authRequired(let detail):
                 return .authRequired(detail: detail)
             case .error(let errorDetail):
                 return .connectionFailure(reason: errorDetail.isEmpty ? "SSH 连接失败（exit 255）" : errorDetail)
@@ -437,7 +437,7 @@ final class SSHRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging {
 
     private func classifyFailure(exitCode: Int32, stderr: String) -> RemoteHTTPAdapterStartResult {
         switch SSHErrorClassifier.classify(exitCode: exitCode, stderr: stderr) {
-        case .authRequired(let detail): return .authRequired(detail)
+        case .hostKeyUnknown(let detail), .authRequired(let detail): return .authRequired(detail)
         case .error(let detail): return .unavailable(detail)
         case .genericFailure(let code): return .unavailable("SSH 命令失败（exit \(code)）：\(LogRedaction.sanitize(stderr))")
         }

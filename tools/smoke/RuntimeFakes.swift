@@ -33,11 +33,17 @@ final class RuntimeTunnelSpy: TunnelService {
 final class RuntimeSystemSpy: AppSystemIntegrating {
     var onSleep: (() -> Void)?
     var onWake: (() -> Void)?
+    var onNetworkRestored: (() -> Void)?
     var loginState: LoginItemState = .disabled
     var permission: NotificationPermission = .notDetermined
     var loginShouldFail = false
     var requests = 0
     var notifications: [String] = []
+    var networkRestoredCalls = 0
+    func simulateNetworkRestored() {
+        networkRestoredCalls += 1
+        onNetworkRestored?()
+    }
     func setLoginEnabled(_ enabled: Bool) async throws {
         if loginShouldFail { throw NSError(domain: "RuntimeTest", code: 1) }
         loginState = enabled ? .requiresApproval : .disabled

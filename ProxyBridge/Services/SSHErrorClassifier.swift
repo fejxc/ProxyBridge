@@ -5,6 +5,8 @@ enum SSHErrorClassifier {
 
     /// 分类结论 → 状态机相 + 人可读文案。
     enum Classification: Equatable, Sendable {
+        /// 首次连接、known_hosts 无记录（TOFU 可引导：应用内核对指纹后写入）
+        case hostKeyUnknown(detail: String)
         /// 认证或主机密钥问题 → authRequired（停止无意义重试，等用户处理）
         case authRequired(detail: String)
         /// 转发绑定失败 / sshd 禁止转发 / 网络不可达等 → error
@@ -20,7 +22,12 @@ enum SSHErrorClassifier {
         // 顺序敏感：host key 判定须在 permission denied 之前
         // （"Host key verification failed." 不含 permission denied，但同属 authRequired 域）
         if lower.contains("host key verification failed") {
-            return .authRequired(detail: "服务器主机密钥未通过校验：请先在终端手动 ssh 一次，核对指纹并写入 known_hosts 后重试")
+            // 密钥变化（REMOTE HOST IDENTIFICATION HAS CHANGED / has changed）是潜在劫持信号：
+            // 绝不提供一键覆盖，必须人工核对后自行移除旧记录
+            if lower.contains("has changed") || lower.contains("host key verification failed") && lower.contains("offending") {
+                return .authRequired(detail: "服务器主机密钥与 known_hosts 记录不一致：可能是服务器重装，也可能是连接被劫持。请通过可信渠道核对后，在终端运行 ssh-keygen -R 清除旧记录再重试")
+            }
+            return .hostKeyUnknown(detail: "首次连接该服务器：known_hosts 尚无记录。可在应用内核对指纹并信任，或自行在终端 ssh 一次")
         }
         if lower.contains("permission denied") {
             if lower.contains("publickey") || lower.contains("password") || lower.contains("keyboard-interactive") {
@@ -58,6 +65,8 @@ enum SSHErrorClassifier {
     /// 分类 → 状态机快照字段（相 + 文案）。
     static func phaseAndDetail(for classification: Classification) -> (phase: TunnelPhase, detail: String) {
         switch classification {
+        case .hostKeyUnknown(let detail):
+            return (.authRequired, detail)
         case .authRequired(let detail):
             return (.authRequired, detail)
         case .error(let detail):
