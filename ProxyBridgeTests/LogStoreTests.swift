@@ -57,4 +57,29 @@ final class LogStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.remoteCheckIntervalSeconds, 120)
         XCTAssertFalse(store.lastLoadWasCorrupted, "正常重载不算损坏")
     }
+
+    /// 落盘副本：live 构造写入文件、包含脱敏内容、超限轮转；内存构造不触碰磁盘。
+    func testPersistentLogWritesAndRotates() throws {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let store = LogStore.live(directoryURL: temp.url)
+        store.append(raw: "连接 10.11.154.192 失败 sunyun@10.11.154.192 Bearer abcdef1234567890", level: .warning)
+        let file = temp.url.appendingPathComponent("app.log")
+        let content = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(content.contains("10.11.154.192"), "IP 保留供排障")
+        XCTAssertFalse(content.contains("abcdef1234567890"), "凭据必须脱敏")
+        XCTAssertTrue(content.split(separator: "\n").count >= 3, "启动行 + 写入行")
+
+        store.fileSizeLimit = 64 // 极小阈值触发轮转
+        store.append(raw: "再写一条触发轮转", level: .info)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: temp.url.appendingPathComponent("app.log.1").path),
+                      "超限后归档为 app.log.1")
+        let rotated = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertTrue(rotated.contains("再写一条触发轮转"), "轮转后新内容写入新文件")
+
+        // 内存构造不落盘（测试/冒烟默认，不污染用户目录）
+        let memoryOnly = LogStore()
+        memoryOnly.append(raw: "仅内存", level: .info)
+        XCTAssertNil(memoryOnly.fileURL)
+    }
 }

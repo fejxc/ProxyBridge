@@ -143,6 +143,26 @@ extension SmokeMain {
 
         // F12–F14 远端残留诊断清理
         await janitorChecks()
+
+        // F16 日志落盘：真实文件写入、脱敏、轮转、内存构造不触碰磁盘
+        let logDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProxyBridgeSmokeLog-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: logDir) }
+        let persistStore = LogStore.live(directoryURL: logDir)
+        persistStore.append(raw: "sunyun@10.11.154.192 Bearer abcdef1234567890", level: .warning)
+        let logFile = logDir.appendingPathComponent("app.log")
+        let logText = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+        persistStore.fileSizeLimit = 64
+        persistStore.append(raw: "rotate-trigger", level: .info)
+        let rotatedText = (try? String(contentsOf: logFile, encoding: .utf8)) ?? ""
+        let memoryStore = LogStore()
+        memoryStore.append(raw: "memory-only", level: .info)
+        check("F16", "日志落盘：脱敏写入真实文件、超限轮转归档、内存构造不触碰磁盘",
+              logText.contains("10.11.154.192") && !logText.contains("abcdef1234567890")
+                && FileManager.default.fileExists(atPath: logDir.appendingPathComponent("app.log.1").path)
+                && rotatedText.contains("rotate-trigger")
+                && memoryStore.fileURL == nil)
     }
 
     @MainActor

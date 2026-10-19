@@ -83,6 +83,8 @@ final class AppViewModel {
     /// 各 profile 当前连接建立时间（展示会话时长用）。
     private(set) var connectedSince: [UUID: Date] = [:]
     private var keepAwakeFailureLogged = false
+    /// 已提示过「未开自动重连」的失败 profile（成功后复位，可再次提示）。
+    private var reconnectHintShown: Set<UUID> = []
 
     // MARK: - 远端残留诊断清理（端口冲突自愈闭环）
     /// 端口冲突卡状态（nil = 无卡）。
@@ -169,7 +171,7 @@ final class AppViewModel {
                 prober: CurlProxyProbe(),
                 monitor: SCDynamicStoreChangeMonitor()
             ),
-            logStore: LogStore(),
+            logStore: LogStore.live(),
             secrets: KeychainPasswordStore(),
             systemServices: AppSystemServices(),
             hostKeyTrust: HostKeyTrustService(),
@@ -933,6 +935,13 @@ final class AppViewModel {
         }
     }
 
+    /// 在 Finder 中定位磁盘日志文件（~/Library/Logs/ProxyBridge/app.log）。
+    func revealLogFile() {
+        guard let url = logStore.fileURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        logStore.append(raw: "已在 Finder 中定位日志文件", level: .info)
+    }
+
     // MARK: - 远端残留诊断清理（端口冲突自愈闭环）
 
     var portConflictProfileName: String? {
@@ -1223,6 +1232,19 @@ final class AppViewModel {
             if connectedSince[snap.profileId] == nil { connectedSince[snap.profileId] = Date() }
         } else {
             connectedSince[snap.profileId] = nil
+        }
+        // 失败终态且未开启自动重连：明确指出可开启（每次失败提示一次，成功后复位）
+        if snap.phase == .connected {
+            reconnectHintShown.remove(snap.profileId)
+        } else if [.error, .authRequired].contains(snap.phase),
+                  !tunnel.isActive(profileID: snap.profileId),
+                  let profile = profiles.first(where: { $0.id == snap.profileId }),
+                  !profile.reconnectEnabled,
+                  reconnectHintShown.insert(snap.profileId).inserted {
+            logStore.append(
+                raw: "「\(profile.name)」连接已失败且未开启自动重连；需要自动恢复请在服务器配置中打开「网络波动时自动恢复 SSH 连接」",
+                level: .info, profileId: snap.profileId
+            )
         }
         updateKeepAwakeAssertion()
         guard previous?.phase != snap.phase || previous?.humanReadableDetail != snap.humanReadableDetail else { return }

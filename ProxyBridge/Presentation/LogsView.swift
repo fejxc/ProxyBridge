@@ -83,6 +83,13 @@ struct LogsView: View {
                       : "当前设置：复制时不脱敏（包含主机与用户名），可在通用设置中开启")
 
                 Button {
+                    model.revealLogFile()
+                } label: {
+                    Label(L10n.t("定位日志文件"), systemImage: "folder.magnifier")
+                }
+                .help("在 Finder 中打开 ~/Library/Logs/ProxyBridge/app.log；完整历史记录在磁盘上，重启不丢失")
+
+                Button {
                     model.logStore.removeAll()
                 } label: {
                     Label(L10n.t("清空"), systemImage: "trash")

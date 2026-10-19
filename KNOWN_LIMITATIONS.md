@@ -21,6 +21,10 @@
 - 当前工程未启用 App Sandbox；尚未验证 Sandbox 下的网络权限和 SSH 子进程限制。
 - 本机完成 arm64 验证与 arm64/x86_64 通用包编译，未在 Intel 实机运行 1.2.0，1.2.0 已通过 GitHub CI（含 Xcode/XCTest）、arm64/x86_64 原生编译与 TCP 测试，并发布通用 DMG。详见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
+## 开发分支补充
+
+- **日志落盘**：`~/Library/Logs/ProxyBridge/app.log` 为脱敏后的完整记录（超 2MB 轮转为 `app.log.1`，保留一代）；UI 内环形缓冲 500 条与「清空」按钮只影响界面，不删除磁盘记录。App 自身不收集或上传日志。
+
 ## 1.4.2 补充
 
 - **端口冲突重试窗口**：远端转发端口被旧 sshd 占用时自动重试 3 分钟；若服务器 sshd 配置了很长的客户端探活超时（或端口被他人长期占用），3 分钟后仍会失败并转为终态指引（更换端口或联系管理员）。服务器端设置 `ClientAliveInterval 60` / `ClientAliveCountMax 3` 可让 sshd 及时释放失效转发，从根上减少此类冲突——应用不修改 sshd 配置。

@@ -199,6 +199,7 @@ enum L10n {
         "重新诊断": "Re-diagnose",
         "忽略": "Ignore",
         "清理残留并重连": "Clean leftovers and reconnect",
+        "定位日志文件": "Reveal log file",
         "仅清理同用户的僵尸 sshd 与本 App 的孤儿 Privoxy；其他进程不会被触碰。": "Only same-user stale sshd sessions and this app's orphaned Privoxy are cleaned; other processes are never touched.",
         "僵尸 sshd · 可清理": "stale sshd · cleanable",
         "孤儿 Privoxy · 可清理": "orphan Privoxy · cleanable",
