@@ -4,11 +4,11 @@
   <img src="ProxyBridge/Resources/AppIcon.png" alt="ProxyBridge 应用图标" width="112">
 </p>
 
-**macOS 14+ 菜单栏 SSH 反向代理工具。**支持把 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 代理静态转发到 Linux，也支持 OpenSSH 原生反向动态 SOCKS5，兼容 Clash Network Extension/TUN 没有本地代理端口的场景。
+**在 Mac 菜单栏一键把本地代理「带」到 Linux 服务器。**ProxyBridge 通过系统 SSH 建立反向隧道，让服务器上的开发工具（Codex、curl、pip 等）直接使用 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 代理出海；也支持 OpenSSH 原生反向动态 SOCKS5，兼容 Clash Network Extension/TUN 没有本地代理端口的场景。需要 macOS 14+。
 
 [下载 1.4.3 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.4.3/ProxyBridge-1.4.3-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 
-当前公开稳定版为 v1.4.3：v2 连接模式、本地代理端点动态跟随、首次连接指纹引导、更新检查、网络恢复快速重连、自动回升与中英界面；远端端口冲突自动重试 + SSH 诊断一键清理自家残留。
+当前公开稳定版为 v1.4.3：三种连接模式、本地代理端点动态跟随、首次连接指纹引导、更新检查、网络恢复快速重连、自动回升、远端端口冲突自动重试与 SSH 诊断一键清理，界面支持中文/English。
 
 ## 安装
 
@@ -34,15 +34,13 @@
 - 支持本地与远端周期检查、睡眠和唤醒恢复、系统登录项、启动时连接选定服务器及连接异常通知。
 - 日志会脱敏，不记录密码、密钥内容或完整认证信息。
 
-## 实时流量（1.2.0）
+## 实时流量统计
 
-当前源码新增本地 TCP Relay，链路为 `Linux → SSH → Mac Relay → 本地代理`。连接面板显示实际上传、下载速率及累计流量，展开可查看最近 60 秒曲线。上传指 Linux → Mac 本地代理，下载为反方向；只统计 Relay 成功转发的业务字节，包含代理健康检查，不包含 SSH 协议开销。断开保留本次累计量，重连开始新统计。
+静态转发模式内置本地 TCP Relay，链路为 `Linux → SSH → Mac Relay → 本地代理`。连接面板显示实际上传、下载速率及累计流量，展开可查看最近 60 秒曲线。上传指 Linux → Mac 本地代理，下载为反方向；只统计 Relay 成功转发的业务字节，包含代理健康检查，不包含 SSH 协议开销。断开保留本次累计量，重连开始新统计。动态 SOCKS5 模式不经过本地 Relay，面板会如实展示会话时长与无法统计业务字节的原因。
 
-Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器编辑窗口的「流量统计 Relay」中可指定固定端口（建议 17997）；端口占用时会停止连接并报告原因。旧配置可直接使用，无需改动服务器代理端口。
+Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器编辑窗口的「流量统计 Relay」中可指定固定端口（建议 17997）；端口占用时会停止连接并报告原因。实现与验收细节见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
-1.2.0 已发布，可在[版本页面](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)下载。实现和验收见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
-
-## v2 连接模式与 Linux 验收
+## 连接模式与 Linux 端使用
 
 | 模式 | 数据路径 | Linux 代理地址 |
 |---|---|---|
@@ -50,7 +48,7 @@ Relay 默认由系统分配空闲端口，仅监听 `127.0.0.1`。在服务器�
 | 传统端口转发 | Linux 回环 → SSH `-R remote:local` → Mac 的 HTTP/SOCKS/Mixed 上游 | 按上游协议使用 `remotePort` |
 | 动态 SOCKS5 | Linux SOCKS5 → SSH `-R 127.0.0.1:port` → Mac 网络栈 | SOCKS5 `127.0.0.1:17890` |
 
-动态 SOCKS5 的手工验收（先在 Mac 上启动隧道；替换 SSH 信息和端口）：
+动态 SOCKS5 的手工验证（先在 Mac 上启动隧道；替换 SSH 信息和端口）：
 
 ```bash
 ssh -N -T -o BatchMode=yes -o StrictHostKeyChecking=yes \
@@ -124,8 +122,8 @@ bash scripts/build_dmg.sh 1.4.3 # 构建通用 DMG 和 SHA-256 文件
 
 SSH 强制 `StrictHostKeyChecking=yes`，远端只监听服务器本机回环地址。认证密码不会进入 SSH 参数、环境变量或应用日志。请勿通过更改 SSH 主机密钥检查或开放公网监听来排障。
 
-应用支持 macOS 14 及以上版本。动态 SOCKS5 通过 SSH 客户端的 Mac 网络栈发起 TCP 出站，不承诺 UDP、透明系统代理或 Clash 节点路由。现有 `StrictHostKeyChecking=yes` 保留；远端代理不对 LAN 或公网开放。v2 的真实 Linux/Clash 端到端项目与本机测试结果见[升级验收报告](docs/PROXYBRIDGE_V2_ACCEPTANCE.md)、[已知限制](KNOWN_LIMITATIONS.md)和[阶段 D 报告](docs/PHASE_D_REPORT.md)。
+应用支持 macOS 14 及以上版本。动态 SOCKS5 通过 SSH 客户端的 Mac 网络栈发起 TCP 出站，不承诺 UDP、透明系统代理或 Clash 节点路由。现有 `StrictHostKeyChecking=yes` 保留；远端代理不对 LAN 或公网开放。真实 Linux/Clash 端到端验收流程与结果见[升级验收报告](docs/PROXYBRIDGE_V2_ACCEPTANCE.md)、[已知限制](KNOWN_LIMITATIONS.md)和[阶段 D 报告](docs/PHASE_D_REPORT.md)。
 
 ## 许可证
 
-当前仓库尚未添加 `LICENSE` 文件。
+本项目基于 [MIT License](LICENSE) 开源。使用、修改与分发请遵循许可证条款；软件按「现状」提供，不附带任何担保。
