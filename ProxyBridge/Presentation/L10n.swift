@@ -183,6 +183,13 @@ enum L10n {
         // MARK: 其他
         "远端缺少 ": "Missing on server: ",
         "新版本 ": "New release: ",
+        "可用": " available",
+        "正在检查…": "Checking…",
+        "发现新版本 v": "Update available: v",
+        "（当前 v": " (current v",
+        "）": ")",
+        "确认退出": "Confirm quit",
+        "SSH 进程会被终止，不会遗留。": "SSH processes will be terminated; nothing is left behind.",
 
         // MARK: 服务器编辑器
         "10.x.x.x 或 example.com": "10.x.x.x or example.com",

@@ -263,6 +263,49 @@ final class AppViewModelFeatureTests: XCTestCase {
         let (model2, _, _, _, _) = makeModel(directory: temp.url, updater: StubUpdateChecker(info: same))
         await model2.checkForUpdates(manual: false)
         XCTAssertNil(model2.updateInfo, "相同版本不得误报更新")
+
+        // 手动检查失败必须给出界面反馈（此前静默只写日志）
+        let (model3, _, _, _, _) = makeModel(directory: temp.url, updater: StubUpdateChecker(info: nil))
+        await model3.checkForUpdates(manual: true)
+        if case .failed = model3.updateCheckUIState {} else {
+            XCTFail("手动检查失败应进入 failed 状态，实际 \(model3.updateCheckUIState)")
+        }
+    }
+
+    /// 发现新版本：系统通知每版本只发一次；界面提醒（updateInfo）持续保留。
+    func testUpdateNotificationSentOncePerVersion() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        final class StubSystemServices: AppSystemIntegrating {
+            var onSleep: (() -> Void)?
+            var onWake: (() -> Void)?
+            var onNetworkRestored: (() -> Void)?
+            var loginState: LoginItemState = .disabled
+            private(set) var updateNotifications: [String] = []
+            func setLoginEnabled(_ enabled: Bool) async throws {}
+            func notificationPermission(request: Bool) async throws -> NotificationPermission { .allowed }
+            func postNotification(profileID: UUID, body: String) async throws {}
+            func postUpdateNotification(version: String) async throws { updateNotifications.append(version) }
+            func clearNotifications() {}
+            func stopObserving() {}
+        }
+        let system = StubSystemServices()
+        let newer = UpdateInfo(latestVersion: "999.0.0", releaseURL: URL(string: "https://example.com")!)
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: temp.url),
+            settingsStore: AppSettingsStore(directoryURL: temp.url),
+            tunnel: TunnelSpy(),
+            proxyDetector: MockProxyDetector(),
+            logStore: LogStore(),
+            secrets: InMemoryPasswordStore(),
+            systemServices: system,
+            updateChecker: StubUpdateChecker(info: newer)
+        )
+        await model.checkForUpdates(manual: false)
+        await model.checkForUpdates(manual: false) // 同版本重复检查
+        let notified = await waitUntilMain { system.updateNotifications.count == 1 }
+        XCTAssertTrue(notified, "同版本第二次检查不得重复通知，实际 \(system.updateNotifications)")
+        XCTAssertNotNil(model.updateInfo, "界面横幅持续保留")
     }
 
     func testKeepAwakeFollowsSettingAndActiveTunnel() {

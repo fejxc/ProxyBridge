@@ -125,11 +125,39 @@ struct GeneralSettingsView: View {
                         Button(L10n.t("检查更新")) {
                             Task { await model.checkForUpdates(manual: true) }
                         }
+                        .disabled(model.updateCheckUIState == .checking)
+                        if model.updateCheckUIState == .checking {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(L10n.t("正在检查…"))
+                                .font(.system(size: 11))
+                                .foregroundStyle(Palette.muted)
+                        }
                         if model.updateInfo != nil {
                             Button(L10n.t("打开发布页")) { model.openReleasePage() }
                         }
                     }
                     .padding(.top, 4)
+                    // 手动检查的可见反馈（此前只写日志，界面无感）
+                    switch model.updateCheckUIState {
+                    case .failed(let reason):
+                        Text(reason)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    case .idle:
+                        if let update = model.updateInfo {
+                            Text(L10n.t("发现新版本 v") + update.latestVersion + L10n.t("（当前 v") + AppViewModel.currentVersion + L10n.t("）"))
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Palette.blue)
+                        } else {
+                            Text(L10n.t("已是最新版本（v") + AppViewModel.currentVersion + L10n.t("）"))
+                                .font(.system(size: 11))
+                                .foregroundStyle(Palette.muted)
+                        }
+                    case .checking:
+                        EmptyView()
+                    }
                 }
             }
         }

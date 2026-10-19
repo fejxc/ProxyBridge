@@ -39,6 +39,7 @@ final class RuntimeSystemSpy: AppSystemIntegrating {
     var loginShouldFail = false
     var requests = 0
     var notifications: [String] = []
+    var updateNotifications: [String] = []
     var networkRestoredCalls = 0
     func simulateNetworkRestored() {
         networkRestoredCalls += 1
@@ -54,6 +55,9 @@ final class RuntimeSystemSpy: AppSystemIntegrating {
     }
     func postNotification(profileID: UUID, body: String) async throws {
         if permission == .allowed { notifications.append(body) }
+    }
+    func postUpdateNotification(version: String) async throws {
+        if permission == .allowed { updateNotifications.append(version) }
     }
     func clearNotifications() { notifications.removeAll() }
     func stopObserving() {}

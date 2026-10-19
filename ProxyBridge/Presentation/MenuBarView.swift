@@ -5,7 +5,10 @@ import AppKit
 @MainActor
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
+    /// 退出二步确认（MenuBarExtra 面板里系统 confirmationDialog 常无法呈现，
+    /// 改为面板内联确认条；8 秒无操作自动复位）。
     @State private var confirmQuit = false
+    @State private var confirmQuitResetTask: Task<Void, Never>?
 
     /// 打开设置并把窗口带到前台（菜单栏应用无 Dock 图标，必须显式激活）。
     private func openSettingsFront(tab: SettingsTab) {
@@ -18,9 +21,39 @@ struct MenuBarView: View {
         model.profiles.contains { model.tunnel.isActive(profileID: $0.id) }
     }
 
+    /// 活跃隧道数量（确认条文案用）。
+    private var activeTunnelCount: Int {
+        model.profiles.filter { model.tunnel.isActive(profileID: $0.id) }.count
+    }
+
+    private func requestQuit() {
+        guard hasActiveTunnel else {
+            NSApplication.shared.terminate(nil) // 触发 willTerminate → 清理全部子进程
+            return
+        }
+        confirmQuit = true
+        confirmQuitResetTask?.cancel()
+        confirmQuitResetTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            confirmQuit = false
+        }
+    }
+
+    private func cancelQuit() {
+        confirmQuitResetTask?.cancel()
+        confirmQuit = false
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+            if confirmQuit {
+                quitConfirmBar
+            }
+            if let update = model.updateInfo {
+                updateBanner(update)
+            }
             if model.profiles.isEmpty {
                 emptyState
             } else {
@@ -56,19 +89,75 @@ struct MenuBarView: View {
         .padding(16)
         .frame(width: 368)
         .background(Palette.background)
-        .confirmationDialog(
-            "确定退出 ProxyBridge？",
-            isPresented: $confirmQuit,
-            titleVisibility: .visible
-        ) {
-            Button(L10n.t("退出并断开所有隧道"), role: .destructive) {
-                NSApplication.shared.terminate(nil)
-            }
-            Button(L10n.t("取消"), role: .cancel) {}
-        } message: {
-            Text(L10n.t("当前有活跃的 SSH 连接，退出会断开这些隧道（不会遗留 ssh 进程）。"))
-        }
+        .onDisappear { cancelQuit() }
     }
+
+    /// 退出确认条：面板内联，不依赖系统对话框。
+    private var quitConfirmBar: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(Palette.red)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("退出将断开 \(activeTunnelCount) 条活跃隧道")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(Palette.ink)
+                Text("SSH 进程会被终止，不会遗留。")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Palette.muted)
+            }
+            Spacer(minLength: 4)
+            Button {
+                cancelQuit()
+                NSApplication.shared.terminate(nil)
+            } label: {
+                Text("确认退出")
+            }
+            .controlSize(.small)
+            .buttonStyle(.borderedProminent)
+            .tint(Palette.red)
+            Button(L10n.t("取消"), role: .cancel) {
+                cancelQuit()
+            }
+            .controlSize(.small)
+            .buttonStyle(.bordered)
+        }
+        .padding(10)
+        .background(Palette.red.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("退出确认")
+    }
+
+    /// 新版本横幅：面板顶部醒目入口（替代仅 links 行的小链接）。
+    private func updateBanner(_ update: UpdateInfo) -> some View {
+        Button {
+            model.openReleasePage()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .foregroundStyle(Palette.blue)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.t("新版本 ") + "v\(update.latestVersion) " + L10n.t("可用"))
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(Palette.ink)
+                    Text("v\(Self.currentVersion) → v\(update.latestVersion)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Palette.muted)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "arrow.right.circle")
+                    .foregroundStyle(Palette.blue)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("新版本提示")
+    }
+
+    private static var currentVersion: String { AppViewModel.currentVersion }
 
     // MARK: 头部
 
@@ -92,11 +181,7 @@ struct MenuBarView: View {
             }
             Spacer(minLength: 0)
             Button {
-                if hasActiveTunnel {
-                    confirmQuit = true
-                } else {
-                    NSApplication.shared.terminate(nil) // 触发 willTerminate → 清理全部子进程
-                }
+                requestQuit()
             } label: {
                 Image(systemName: "power")
                     .font(.system(size: 14, weight: .semibold))

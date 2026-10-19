@@ -60,6 +60,15 @@ final class AppViewModel {
     // MARK: - 更新检查（P0）
     /// 发现的新版本（nil = 无提醒）。
     private(set) var updateInfo: UpdateInfo?
+    /// 手动检查的界面反馈（自动检查保持静默语义，只在成功发现时提示）。
+    enum UpdateCheckUIState: Equatable {
+        case idle
+        case checking
+        case failed(String)
+    }
+    private(set) var updateCheckUIState: UpdateCheckUIState = .idle
+    /// 已通知过的版本（每版本只发一次系统通知）。
+    private var updateNotifiedVersion: String?
 
     // MARK: - 动态→静态回升（P1）
     /// 升回静态的冷却记录（防抖：代理不稳时避免模式反复横跳）。
@@ -231,11 +240,16 @@ final class AppViewModel {
         proxyDetector.startObservingSystemChanges()
         proxyDetector.detect()
 
-        // 更新检查：延迟 3 秒启动，不与首连/检测抢资源（只读公开 API，无上行数据）
+        // 更新检查：延迟 3 秒启动，不与首连/检测抢资源（只读公开 API，无上行数据）。
+        // 启动时代理/网络可能尚未就绪：失败后 60 秒自动重试一次（之后靠网络恢复事件）。
         if settings.checkForUpdates {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 guard let self, self.settings.checkForUpdates else { return }
+                await self.checkForUpdates(manual: false)
+                guard self.updateInfo == nil else { return }
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+                guard self.settings.checkForUpdates, self.updateInfo == nil else { return }
                 await self.checkForUpdates(manual: false)
             }
         }
@@ -309,10 +323,14 @@ final class AppViewModel {
     }
 
     /// 网络路径恢复（Wi-Fi 重连/VPN 起来）：立即重扫本地代理 + 重建允许自动重连的隧道。
+    /// 代理常在联网后才可用——顺带补一次更新检查（此前失败是静默的）。
     private func handleNetworkRestored() {
         logStore.append(raw: "网络路径已恢复：重扫本地代理并重建允许自动重连的隧道", level: .info)
         proxyDetector.detect()
         tunnel.handleNetworkRestoration()
+        if settings.checkForUpdates, updateInfo == nil {
+            Task { @MainActor [weak self] in await self?.checkForUpdates(manual: false) }
+        }
     }
 
     /// P1 自动回升：automatic 模式回退到动态 SOCKS5 后，本地代理恢复并连续两次扫描
@@ -427,22 +445,46 @@ final class AppViewModel {
         (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
     }
 
-    /// 检查新版本。manual = true 时无论成败都给出日志反馈（设置页按钮触发）。
+    /// 检查新版本。manual = true 时无论成败都给出界面与日志反馈（设置页按钮触发）。
     func checkForUpdates(manual: Bool) async {
         guard let updateChecker else {
-            if manual { logStore.append(raw: "当前构建未装配更新检查服务", level: .warning) }
+            if manual {
+                updateCheckUIState = .failed("当前构建未装配更新检查服务")
+                logStore.append(raw: "当前构建未装配更新检查服务", level: .warning)
+            }
             return
         }
+        if manual { updateCheckUIState = .checking }
         guard let info = await updateChecker.latestRelease() else {
-            if manual { logStore.append(raw: "检查更新失败：网络不可用或 GitHub 暂时无法访问", level: .warning) }
+            if manual {
+                let reason = "网络不可用或 GitHub 无法访问（需要代理时请先连接本地代理）"
+                updateCheckUIState = .failed(reason)
+                logStore.append(raw: "检查更新失败：\(reason)", level: .warning)
+            }
             return
         }
         if Version.isNewer(candidate: info.latestVersion, current: Self.currentVersion) {
-            guard updateInfo?.latestVersion != info.latestVersion else { return }
+            let isNewVersion = updateInfo?.latestVersion != info.latestVersion
             updateInfo = info
-            logStore.append(raw: "发现新版本 v\(info.latestVersion)（当前 v\(Self.currentVersion)）：菜单栏点击「新版本」可打开下载页", level: .info)
+            updateCheckUIState = .idle
+            if isNewVersion {
+                logStore.append(raw: "发现新版本 v\(info.latestVersion)（当前 v\(Self.currentVersion)）：菜单栏面板与设置页可前往下载", level: .info)
+                notifyUpdateOnce(info)
+            }
         } else if manual {
+            updateCheckUIState = .idle
             logStore.append(raw: "已是最新版本（v\(Self.currentVersion)）", level: .success)
+        }
+    }
+
+    /// 每个版本只发一次系统通知（授权被拒/无授权时静默，界面横幅仍在）。
+    private func notifyUpdateOnce(_ info: UpdateInfo) {
+        guard updateNotifiedVersion != info.latestVersion else { return }
+        updateNotifiedVersion = info.latestVersion
+        guard settings.showNotifications, let services = systemServices else { return }
+        let version = info.latestVersion
+        Task { @MainActor in
+            try? await services.postUpdateNotification(version: version)
         }
     }
 

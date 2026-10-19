@@ -15,6 +15,8 @@ protocol AppSystemIntegrating: AnyObject {
     func setLoginEnabled(_ enabled: Bool) async throws
     func notificationPermission(request: Bool) async throws -> NotificationPermission
     func postNotification(profileID: UUID, body: String) async throws
+    /// 新版本提醒（独立标识与标题；每版本只应由调用方发一次）。
+    func postUpdateNotification(version: String) async throws
     func clearNotifications()
     func stopObserving()
 }
@@ -149,6 +151,16 @@ final class AppSystemServices: AppSystemIntegrating {
             center.removePendingNotificationRequests(withIdentifiers: [id])
             center.removeDeliveredNotifications(withIdentifiers: [id])
         }
+    }
+
+    func postUpdateNotification(version: String) async throws {
+        guard !Task.isCancelled, try await notificationPermission(request: false) == .allowed else { return }
+        let center = UNUserNotificationCenter.current()
+        let content = UNMutableNotificationContent()
+        content.title = "ProxyBridge 有新版本"
+        content.body = "v\(version) 已发布，打开菜单栏面板可前往下载。"
+        content.sound = .default
+        try await center.add(UNNotificationRequest(identifier: "update-\(version)", content: content, trigger: nil))
     }
 
     func clearNotifications() {
