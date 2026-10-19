@@ -258,6 +258,26 @@ extension SmokeMain {
         try? await Task.sleep(nanoseconds: 300_000_000)
         check("F11", "窗口过后仍冲突停止自动重试（终态指引）", spy.connects.count == before)
         runtime.terminateAllSessions()
+
+        // F15 本地 Relay 端口冲突：同一限时重试窗口
+        let relaySpy = FeatureTunnelSpy()
+        let relayRuntime = ManagedTunnelService(underlying: relaySpy)
+        relayRuntime.retryBaseSeconds = 0.03
+        relayRuntime.maximumRetrySeconds = 0.05
+        relayRuntime.monitorTickSeconds = 0.02
+        relayRuntime.remoteBindConflictWindowSeconds = 60
+        var relayProfile = ServerProfile(name: "relay", host: "10.0.0.7", sshPort: 22, username: "u", remotePort: 7890)
+        relayProfile.reconnectEnabled = true
+        relayRuntime.connect(configuration: TunnelConfiguration(profile: relayProfile, localEndpoint: nil))
+        _ = await waitSmokeUntil { relaySpy.connects.count == 1 }
+        var relayError = TunnelSnapshot.idle(relayProfile.id)
+        relayError.phase = .error
+        relayError.sshProcessRunning = false
+        relayError.humanReadableDetail = "本地 Relay 无法启动（端口可能被占用）：地址已被使用"
+        relaySpy.onEvent?(.snapshot(relayError))
+        let relayRetried = await waitSmokeUntil { relaySpy.connects.count == 2 }
+        check("F15", "本地 Relay 端口冲突限时自动重连", relayRetried)
+        relayRuntime.terminateAllSessions()
     }
 
     @MainActor

@@ -55,6 +55,12 @@ final class ManagedTunnelService: TunnelService {
         detail.contains("监听失败：端口可能被占用")
     }
 
+    /// 本地 Relay 端口冲突（固定 Relay 端口被其他进程占用）。
+    /// 与远端冲突同一窗口语义：限时重试给占用方释放的机会，窗口过后转终态。
+    static func isLocalRelayConflict(_ detail: String) -> Bool {
+        detail.contains("本地 Relay 监听失败") || detail.contains("本地 Relay 无法启动")
+    }
+
     func connect(configuration: TunnelConfiguration) {
         let id = configuration.profile.id
         guard !isActive(profileID: id) else { return }
@@ -265,11 +271,13 @@ final class ManagedTunnelService: TunnelService {
             if remoteDue[id] == nil { remoteDue[id] = Date().addingTimeInterval(remoteInterval) }
             conflictSince[id] = nil // 连接成功：端口冲突跟踪复位
         }
-        // 远端端口冲突（旧 sshd 未释放，1–3 分钟自愈）：窗口内自动重试，
-        // 窗口过后仍冲突 → 视为真实占用/禁转发，保持终态指引（不再无限重试）。
+        // 端口冲突（远端旧 sshd 未释放 / 本地 Relay 端口被占，通常 1–3 分钟内可自愈）：
+        // 窗口内自动重试，窗口过后仍冲突 → 视为真实占用/禁转发，保持终态指引（不再无限重试）。
         // 过期时间戳不清空：否则下一个冲突事件会再开新窗口、永远停不下来；
         // 复位只发生在连接成功、非冲突事件或用户重新发起连接时。
-        let bindConflict = snapshot.phase == .error && Self.isRemoteBindConflict(snapshot.humanReadableDetail)
+        let bindConflict = snapshot.phase == .error
+            && (Self.isRemoteBindConflict(snapshot.humanReadableDetail)
+                || Self.isLocalRelayConflict(snapshot.humanReadableDetail))
         if bindConflict {
             let now = Date()
             if let since = conflictSince[id] {

@@ -343,6 +343,30 @@ final class AppViewModelFeatureTests: XCTestCase {
         runtime.terminateAllSessions()
     }
 
+    /// 本地 Relay 端口冲突（固定端口被占）同样限时自动重连。
+    func testLocalRelayConflictRetriesWithinWindow() async {
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.retryBaseSeconds = 0.03
+        runtime.maximumRetrySeconds = 0.05
+        runtime.monitorTickSeconds = 0.02
+        runtime.remoteBindConflictWindowSeconds = 60 // 窗口内验证即可
+
+        var profile = ServerProfile(name: "固定Relay", host: "10.0.0.7", sshPort: 22, username: "u", remotePort: 7890)
+        profile.reconnectEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        let connectsBefore = spy.connectCalls.count
+
+        var snap = TunnelSnapshot.idle(profile.id)
+        snap.phase = .error
+        snap.sshProcessRunning = false
+        snap.humanReadableDetail = "本地 Relay 无法启动（端口可能被占用）：…（NSPOSIXErrorDomain…98）"
+        spy.emit(snap)
+        let retried = await waitUntilMain { spy.connectCalls.count == connectsBefore + 1 }
+        XCTAssertTrue(retried, "本地 Relay 端口冲突应在窗口内自动重连")
+        runtime.terminateAllSessions()
+    }
+
     func testKeepAwakeFollowsSettingAndActiveTunnel() {
         let temp = TempDirectory.make()
         defer { temp.removeAll() }
