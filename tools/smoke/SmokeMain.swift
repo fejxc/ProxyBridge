@@ -13,6 +13,8 @@ struct SmokeMain {
     @MainActor
     static func main() async {
         SSHProcessLauncher.runPTYChildIfRequested()
+        // 冒烟断言全部按中文文案：固定语言，隔离 CI runner 的系统语言（en-US）
+        L10n.apply(.chinese)
         print("== ProxyBridge 阶段 A 冒烟测试（生产代码直连断言）==")
 
         validationChecks()

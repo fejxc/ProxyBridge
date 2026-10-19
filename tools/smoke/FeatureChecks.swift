@@ -113,15 +113,14 @@ extension SmokeMain {
         // F07 动态→静态回升（连续两次验证同一端点才升级）
         await upgradeChecks()
 
-        // F08 L10n：英文模式状态标题真实切换、中文模式零改动
-        let idlePresentation = TunnelStatusPresentation.overall(for: TunnelSnapshot.idle(UUID()))
+        // F08 L10n：三态显式断言绝对值（与宿主系统语言无关）
         L10n.apply(.chinese)
         let zh = TunnelStatusPresentation.overall(for: TunnelSnapshot.idle(UUID()))
         L10n.apply(.english)
         let en = TunnelStatusPresentation.overall(for: TunnelSnapshot.idle(UUID()))
         L10n.apply(.chinese)
         check("F08", "L10n：中文原样、英文查表、回退安全",
-              zh.title == idlePresentation.title && en.title == "Not connected"
+              zh.title == "未连接" && en.title == "Not connected"
                 && L10n.t("不存在的句子") == "不存在的句子")
 
         // F09 安装指引：不含危险命令，含主流包管理器
