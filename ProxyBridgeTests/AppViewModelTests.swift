@@ -84,6 +84,7 @@ final class AppViewModelTests: XCTestCase {
         let temp = withTempDir()
         defer { temp.removeAll() }
         let (model, _, _) = makeModel(directory: temp.url)
+        pinChineseForTesting() // model 初始化会把语言切到跟随系统（CI=en）
         XCTAssertTrue(model.profiles.isEmpty)
         XCTAssertTrue(model.overallPresentation.title == "未配置")
         let gotCandidates = await waitUntilMain { !model.detection.candidates.isEmpty }

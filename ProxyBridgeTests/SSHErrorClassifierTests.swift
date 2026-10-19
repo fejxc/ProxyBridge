@@ -17,15 +17,19 @@ final class SSHErrorClassifierTests: XCTestCase {
         XCTAssertTrue(detail.contains("认证"))
     }
 
-    func testHostKeyVerificationIsAuthRequired() {
+    func testUnknownHostKeyIsTofuEligibleAuthRequired() {
         let c = SSHErrorClassifier.classify(
             exitCode: 255,
             stderr: "Host key verification failed."
         )
-        guard case .authRequired(let detail) = c else {
-            return XCTFail("应为 authRequired，实际 \(c)")
+        // P0 起未知主机细分为 hostKeyUnknown（应用内 TOFU 引导可用），
+        // 状态机相仍为 authRequired（终态，等用户动作）
+        guard case .hostKeyUnknown(let detail) = c else {
+            return XCTFail("应为 hostKeyUnknown，实际 \(c)")
         }
         XCTAssertTrue(detail.contains("known_hosts") || detail.contains("指纹"))
+        let (phase, _) = SSHErrorClassifier.phaseAndDetail(for: c)
+        XCTAssertEqual(phase, .authRequired)
     }
 
     // MARK: U10：remote port forwarding failed → error

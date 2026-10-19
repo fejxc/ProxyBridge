@@ -190,6 +190,8 @@ final class AppViewModelFeatureTests: XCTestCase {
             return true
         }
         func release() {
+            // 与真实 IOPMAssertionRelease 一致：未持有时的 release 是无害空操作
+            guard active else { return }
             releaseCalls += 1
             active = false
         }

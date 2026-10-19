@@ -26,6 +26,7 @@ final class TunnelStatusTests: XCTestCase {
     // MARK: nil ≠ true（验收红线）
 
     func testNilIsNeverTreatedAsVerified() {
+        pinChineseForTesting()
         let s = snap(phase: .connected, local: nil, sshRunning: true, remote: nil)
         XCTAssertFalse(s.isEndToEndVerified, "remoteProbeVerified == nil 绝不能算端到端已验证")
         XCTAssertTrue(snap(phase: .connected, sshRunning: true, remote: true).isEndToEndVerified)
@@ -36,6 +37,7 @@ final class TunnelStatusTests: XCTestCase {
     // MARK: 主状态文案表
 
     func testIdlePresentation() {
+        pinChineseForTesting()
         let p = TunnelStatusPresentation.overall(for: snap(phase: .idle))
         XCTAssertEqual(p.title, "未连接")
         XCTAssertEqual(p.tone, .gray)
@@ -43,6 +45,7 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testCheckingAndConnectingAreBlue() {
+        pinChineseForTesting()
         XCTAssertEqual(TunnelStatusPresentation.overall(for: snap(phase: .checking)).tone, .blue)
         XCTAssertEqual(TunnelStatusPresentation.overall(for: snap(phase: .checking)).title, "检查中")
         let connecting = TunnelStatusPresentation.overall(for: snap(phase: .connecting))
@@ -54,6 +57,7 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testConnectedRequiresRemoteVerificationForGreen() {
+        pinChineseForTesting()
         // SSH 存活 + 远端已验证 → 绿
         let green = TunnelStatusPresentation.overall(for: snap(phase: .connected, local: true, sshRunning: true, remote: true))
         XCTAssertEqual(green.title, "已连接")
@@ -71,12 +75,14 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testDegradedLocalProxyDown() {
+        pinChineseForTesting()
         let p = TunnelStatusPresentation.overall(for: snap(phase: .degraded, local: false, sshRunning: true))
         XCTAssertEqual(p.title, "代理异常")
         XCTAssertEqual(p.tone, .orange)
     }
 
     func testAuthRequiredAndErrorAreRed() {
+        pinChineseForTesting()
         let auth = TunnelStatusPresentation.overall(for: snap(phase: .authRequired))
         XCTAssertEqual(auth.tone, .red)
         XCTAssertEqual(auth.title, "需要处理")
@@ -95,12 +101,14 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testDisconnectingIsBlue() {
+        pinChineseForTesting()
         XCTAssertEqual(TunnelStatusPresentation.overall(for: snap(phase: .disconnecting)).title, "断开中")
     }
 
     // MARK: 三层健康映射
 
     func testHealthTriadForVerifiedConnection() {
+        pinChineseForTesting()
         let triad = TunnelStatusPresentation.healthTriad(
             for: snap(phase: .connected, local: true, sshRunning: true, remote: true)
         )
@@ -110,6 +118,7 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testHealthTriadForIdle() {
+        pinChineseForTesting()
         let triad = TunnelStatusPresentation.healthTriad(for: snap(phase: .idle))
         XCTAssertEqual(triad.local, .unknown, "idle 时本地未验证（nil）→ unknown，不是 failed")
         XCTAssertEqual(triad.ssh, .failed)
@@ -117,6 +126,7 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testHealthTriadSSHProcessDiedWhileConnected() {
+        pinChineseForTesting()
         let triad = TunnelStatusPresentation.healthTriad(
             for: snap(phase: .connected, local: true, sshRunning: false, remote: true)
         )
@@ -124,6 +134,7 @@ final class TunnelStatusTests: XCTestCase {
     }
 
     func testHealthTriadLocalProxyFailedIsFailed() {
+        pinChineseForTesting()
         let triad = TunnelStatusPresentation.healthTriad(
             for: snap(phase: .degraded, local: false, sshRunning: true, remote: nil)
         )
@@ -134,6 +145,7 @@ final class TunnelStatusTests: XCTestCase {
     // MARK: Idle 快照初值
 
     func testIdleSnapshotDefaults() {
+        pinChineseForTesting()
         let s = TunnelSnapshot.idle(pid)
         XCTAssertNil(s.localProxyVerified)
         XCTAssertNil(s.remoteProbeVerified)

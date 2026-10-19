@@ -547,6 +547,7 @@ struct SmokeMain {
             logStore: LogStore(),
             secrets: InMemoryPasswordStore()
         )
+        L10n.apply(.chinese) // model 初始化会按系统语言（CI=en）切换；断言固定中文
         check("S26a", "空启动 → 未配置状态", model.profiles.isEmpty && model.overallPresentation.title == "未配置")
 
         // 注入已验证候选后保存 profile 并连接

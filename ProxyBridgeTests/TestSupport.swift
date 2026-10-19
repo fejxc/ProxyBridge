@@ -2,6 +2,13 @@ import Foundation
 import XCTest
 @testable import ProxyBridge
 
+/// 固定测试语言为中文：CI runner 为 en-US，进程内任何 AppViewModel 初始化都会经
+/// resolve(.system) 把 L10n 切到英文。文案断言类测试须在方法开头调用本函数
+/// （项目惯例：setUp 重写与 @MainActor 隔离不兼容，改为测试内显式调用）。
+func pinChineseForTesting() {
+    L10n.apply(.chinese)
+}
+
 /// 线程安全的事件记录器（测试观察 Mock 服务输出用）。
 final class Recorder<T> {
     private let lock = NSLock()

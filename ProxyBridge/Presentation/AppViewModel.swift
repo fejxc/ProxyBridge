@@ -492,7 +492,7 @@ final class AppViewModel {
     /// 菜单栏面板主状态（无配置时给出引导文案）。
     var overallPresentation: StatusPresentation {
         if profiles.isEmpty {
-            return StatusPresentation(title: "未配置", detail: "打开设置添加第一台服务器", tone: .gray)
+            return StatusPresentation(title: L10n.t("未配置"), detail: L10n.t("打开设置添加第一台服务器"), tone: .gray)
         }
         return TunnelStatusPresentation.overall(for: currentSnapshot)
     }

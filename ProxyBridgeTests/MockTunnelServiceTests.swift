@@ -101,6 +101,7 @@ final class MockTunnelServiceTests: XCTestCase {
     // MARK: 本地代理缺失 → degraded（不是 connected；nil=未发现）
 
     func testMissingLocalEndpointDegrades() async {
+        pinChineseForTesting()
         makeService()
         service.connect(configuration: config(endpoint: nil))
         let rec = recorder
