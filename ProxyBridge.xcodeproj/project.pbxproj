@@ -36,6 +36,7 @@
 		51A300000000000000000107 /* EndpointResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000107 /* EndpointResolverTests.swift */; };
 		51A300000000000000000108 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000108 /* TestSupport.swift */; };
 		51A300000000000000000109 /* AppViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000109 /* AppViewModelTests.swift */; };
+		51A3000000000000000116 /* P0P1P2FeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A2000000000000000116 /* P0P1P2FeatureTests.swift */; };
 		51A30000000000000000010A /* LogStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000010A /* LogStoreTests.swift */; };
 		51A300000000000000000016 /* SystemProxyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000016 /* SystemProxyProvider.swift */; };
 		51A300000000000000000017 /* ProxyProtocolProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000017 /* ProxyProtocolProbe.swift */; };
@@ -59,6 +60,12 @@
 		51A300000000000000000023 /* TrafficStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000023 /* TrafficStatistics.swift */; };
 		51A300000000000000000024 /* TCPRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000024 /* TCPRelay.swift */; };
 		51A300000000000000000025 /* TrafficStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000025 /* TrafficStatsView.swift */; };
+		51A300000000000000000026 /* HostKeyTrustService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000026 /* HostKeyTrustService.swift */; };
+		51A300000000000000000027 /* SSHConfigParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000027 /* SSHConfigParser.swift */; };
+		51A300000000000000000028 /* UpdateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000028 /* UpdateChecker.swift */; };
+		51A300000000000000000029 /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000029 /* L10n.swift */; };
+		51A300000000000000000030 /* HostKeyTrustCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000030 /* HostKeyTrustCard.swift */; };
+		51A300000000000000000031 /* RemoteToolHintCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000031 /* RemoteToolHintCard.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -116,6 +123,7 @@
 		51A200000000000000000107 /* EndpointResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EndpointResolverTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000108 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
 		51A200000000000000000109 /* AppViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppViewModelTests.swift; sourceTree = "<group>"; };
+		51A2000000000000000116 /* P0P1P2FeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = P0P1P2FeatureTests.swift; sourceTree = "<group>"; };
 		51A20000000000000000010A /* LogStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogStoreTests.swift; sourceTree = "<group>"; };
 		51A100000000000000000041 /* ProxyBridge.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ProxyBridge.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		51A100000000000000000042 /* ProxyBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -126,6 +134,12 @@
 		51A200000000000000000023 /* TrafficStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficStatistics.swift; sourceTree = "<group>"; };
 		51A200000000000000000024 /* TCPRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TCPRelay.swift; sourceTree = "<group>"; };
 		51A200000000000000000025 /* TrafficStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficStatsView.swift; sourceTree = "<group>"; };
+		51A200000000000000000026 /* HostKeyTrustService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyTrustService.swift; sourceTree = "<group>"; };
+		51A200000000000000000027 /* SSHConfigParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHConfigParser.swift; sourceTree = "<group>"; };
+		51A200000000000000000028 /* UpdateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateChecker.swift; sourceTree = "<group>"; };
+		51A200000000000000000029 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
+		51A200000000000000000030 /* HostKeyTrustCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeyTrustCard.swift; sourceTree = "<group>"; };
+		51A200000000000000000031 /* RemoteToolHintCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteToolHintCard.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -233,6 +247,9 @@
 				51A20000000000000000001C /* RemoteProbeRunner.swift */,
 				51A20000000000000000001D /* SSHTunnelCoordinator.swift */,
 				51A20000000000000000001E /* KeychainStore.swift */,
+				51A200000000000000000026 /* HostKeyTrustService.swift */,
+				51A200000000000000000027 /* SSHConfigParser.swift */,
+				51A200000000000000000028 /* UpdateChecker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -250,6 +267,9 @@
 				51A200000000000000000012 /* ProxySettingsView.swift */,
 				51A200000000000000000013 /* ServerEditorView.swift */,
 				51A200000000000000000014 /* SettingsView.swift */,
+				51A200000000000000000029 /* L10n.swift */,
+				51A200000000000000000030 /* HostKeyTrustCard.swift */,
+				51A200000000000000000031 /* RemoteToolHintCard.swift */,
 			);
 			path = Presentation;
 			sourceTree = "<group>";
@@ -276,6 +296,7 @@
 				51A200000000000000000108 /* TestSupport.swift */,
 				51A200000000000000000115 /* MockServices.swift */,
 				51A200000000000000000109 /* AppViewModelTests.swift */,
+				51A2000000000000000116 /* P0P1P2FeatureTests.swift */,
 				51A20000000000000000010A /* LogStoreTests.swift */,
 				51A200000000000000000110 /* SystemProxyDetectionTests.swift */,
 				51A200000000000000000111 /* LocalProxyDetectorTests.swift */,
@@ -414,6 +435,12 @@
 				51A300000000000000000010 /* LogsView.swift in Sources */,
 				51A300000000000000000011 /* MenuBarView.swift in Sources */,
 				51A300000000000000000025 /* TrafficStatsView.swift in Sources */,
+				51A300000000000000000026 /* HostKeyTrustService.swift in Sources */,
+				51A300000000000000000027 /* SSHConfigParser.swift in Sources */,
+				51A300000000000000000028 /* UpdateChecker.swift in Sources */,
+				51A300000000000000000029 /* L10n.swift in Sources */,
+				51A300000000000000000030 /* HostKeyTrustCard.swift in Sources */,
+				51A300000000000000000031 /* RemoteToolHintCard.swift in Sources */,
 				51A300000000000000000012 /* ProxySettingsView.swift in Sources */,
 				51A300000000000000000013 /* ServerEditorView.swift in Sources */,
 				51A300000000000000000014 /* SettingsView.swift in Sources */,
@@ -434,6 +461,7 @@
 				51A300000000000000000108 /* TestSupport.swift in Sources */,
 				51A300000000000000000115 /* MockServices.swift in Sources */,
 				51A300000000000000000109 /* AppViewModelTests.swift in Sources */,
+				51A3000000000000000116 /* P0P1P2FeatureTests.swift in Sources */,
 				51A30000000000000000010A /* LogStoreTests.swift in Sources */,
 				51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */,
 				51A300000000000000000111 /* LocalProxyDetectorTests.swift in Sources */,
