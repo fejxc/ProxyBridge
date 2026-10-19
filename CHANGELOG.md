@@ -1,6 +1,8 @@
 # Changelog
 
-## 1.4.0 开发中（未发布）
+## 1.4.0 — 2026-10-19（已发布）
+
+首次连接指纹引导、更新检查、网络快速恢复、自动回升、防休眠、远端依赖指引、ssh config 导入与中英界面。本机 CLI typecheck 与 181 项 smoke 通过（含真实 known_hosts 写入与网络恢复语义断言）；GitHub CI 全绿（Xcode/XCTest 全量）。
 
 - 首次连接主机指纹应用内引导：ssh-keyscan 获取指纹、用户核对后写入 known_hosts 并自动重连；主机密钥变化（潜在劫持）不提供一键覆盖，必须人工核对。
 - 启动检查更新：只读 GitHub 公开 API 比对版本，发现新版本在菜单栏与通用设置提示；旧 settings.json 缺新字段不再判损坏。

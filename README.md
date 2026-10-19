@@ -6,13 +6,13 @@
 
 **macOS 14+ 菜单栏 SSH 反向代理工具。**支持把 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 代理静态转发到 Linux，也支持 OpenSSH 原生反向动态 SOCKS5，兼容 Clash Network Extension/TUN 没有本地代理端口的场景。
 
-[下载 1.3.0 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.3.0/ProxyBridge-1.3.0-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
+[下载 1.4.0 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.4.0/ProxyBridge-1.4.0-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 
-当前公开稳定版为 v1.3.0，包含下方 v2 连接模式与本地代理端点动态跟随。
+当前公开稳定版为 v1.4.0：v2 连接模式、本地代理端点动态跟随、首次连接指纹引导、更新检查、网络恢复快速重连、自动回升与中英界面。
 
 ## 安装
 
-1. 下载 `ProxyBridge-1.3.0-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
+1. 下载 `ProxyBridge-1.4.0-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
 2. 打开 DMG，将 `ProxyBridge.app` 拖到「应用程序」文件夹，再双击启动。
 3. 如果 macOS 阻止打开，确认文件来自本仓库 Release 后，按 [Apple 官方说明](https://support.apple.com/102445)在「系统设置 → 隐私与安全性」中允许打开。
 
@@ -23,6 +23,9 @@
 - 通过系统 `/usr/bin/ssh` 建立真实的 `ssh -R` 隧道；远端监听只绑定 `127.0.0.1`。
 - 支持自动选择、传统静态转发、OpenSSH 原生反向动态 SOCKS5；自动模式先实测本地入口，无可用入口时回退动态 SOCKS5。
 - 本地代理端点变化（端口漂移/代理客户端重启）动态感知：实测新端点后无缝切换转发目标，SSH 隧道不中断，并按新协议重验远端；本地验证失败会主动重扫。
+- 首次连接在应用内核对主机指纹并信任（无需先开终端）；主机密钥变化不提供一键覆盖。支持从 ~/.ssh/config 导入服务器。
+- 网络恢复（Wi-Fi 重连等）立即重建允许自动重连的隧道；自动模式回退动态 SOCKS5 后，本地代理恢复验证即自动切回静态转发。
+- 启动检查更新（只读 GitHub 公开接口）；可选「连接期间防止空闲休眠」；界面支持中文/English。
 - 动态模式使用 `ssh -R 127.0.0.1:<port>`，Mac 不需要本地 HTTP/SOCKS 监听；远端 SOCKS5 只支持 TCP。
 - 默认在 Linux `127.0.0.1:7890` 提供 Codex HTTP 兼容入口，底层 SOCKS5 使用独立端口；需要已安装的 Privoxy。App 不自动安装软件、不使用 sudo、不修改系统配置或 sshd，用户可关闭该入口。
 - 支持 HTTP、SOCKS5、Mixed 上游，密码、ssh-agent 和指定私钥。密码只经 PTY 应答；勾选「记住」时使用 macOS 钥匙串。
@@ -112,7 +115,7 @@ bash scripts/typecheck.sh       # App 与测试代码类型检查
 bash scripts/smoke_test.sh      # 当前源码可执行回归检查
 bash scripts/relay_test.sh      # 真实本地 TCP 转发、精度与清理验证
 bash scripts/install_app.sh     # 构建并安装到 /Applications
-bash scripts/build_dmg.sh 1.3.0 # 构建通用 DMG 和 SHA-256 文件
+bash scripts/build_dmg.sh 1.4.0 # 构建通用 DMG 和 SHA-256 文件
 ```
 
 推送 `vX.Y.Z` 格式的版本标签会触发 GitHub Actions：分别在 Apple Silicon 和 Intel runner 上检查，再构建和验证通用 DMG，最后发布 GitHub Release。详见[发布流程](docs/RELEASE.md)。

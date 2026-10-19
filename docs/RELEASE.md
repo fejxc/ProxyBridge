@@ -8,12 +8,13 @@
 - [v1.1.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.1.0)：加入阶段 D 功能，提供 universal DMG 和 SHA-256 校验文件。
 - [v1.2.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)：加入本地 TCP Relay 实时流量统计。
 - [v1.3.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.3.0)：v2 连接模式（自动/静态/反向动态 SOCKS5、Privoxy HTTP 入口）与本地代理端点动态跟随。
+- [v1.4.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.0)：首次连接指纹引导、更新检查、网络快速恢复、自动回升、防休眠、远端依赖指引、ssh config 导入与中英界面。
 
 后续每个 Release 都从不可变的版本标签构建。
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-当前稳定版为 `ProxyBridge-1.3.0-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器，并在终端 SSH 登录、核对主机指纹。
+当前稳定版为 `ProxyBridge-1.4.0-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。
 
 ## 后续版本
 
@@ -27,10 +28,10 @@ Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，�
 ## 本地打包
 
 ```bash
-bash scripts/build_dmg.sh 1.3.0
+bash scripts/build_dmg.sh 1.4.0
 ```
 
-候选产物：`build/dist/ProxyBridge-1.3.0-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
+候选产物：`build/dist/ProxyBridge-1.4.0-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
 
 ## 签名与权限
 

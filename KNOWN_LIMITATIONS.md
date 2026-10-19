@@ -12,7 +12,7 @@
 - **探测依赖**：本地和远端需 curl；探测 `https://api.openai.com/v1/models`，HTTP 401 视为 HTTPS 路径可达。远端缺 curl、网络超时或目标服务不可达时会如实降级。
 - **界面限制**：菜单栏固定宽度；超大字体及小屏自适应、逐页视觉验收未完成；当前只提供简体中文。
 
-1.3.0 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件为准。
+1.4.0 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件为准。
 
 ## 1.2.0 补充
 
@@ -21,7 +21,9 @@
 - 当前工程未启用 App Sandbox；尚未验证 Sandbox 下的网络权限和 SSH 子进程限制。
 - 本机完成 arm64 验证与 arm64/x86_64 通用包编译，未在 Intel 实机运行 1.2.0，1.2.0 已通过 GitHub CI（含 Xcode/XCTest）、arm64/x86_64 原生编译与 TCP 测试，并发布通用 DMG。详见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
-## 1.4.0 开发分支补充
+## 1.4.0 补充
+
+- 1.4.0 已通过 GitHub CI（含 Xcode/XCTest 全量）与本机双套件验证（typecheck、181 项冒烟含真实 known_hosts 写入/网络恢复语义、真实 socket relay 测试），发布通用 DMG 与 SHA-256。
 
 - **主机指纹引导范围**：只覆盖「首次连接（known_hosts 无记录）」；主机密钥变化（可能被劫持）不提供一键覆盖，需人工核对后 `ssh-keygen -R`。指纹经 `/usr/bin/ssh-keyscan` 获取，网络不可达时如实报错。
 - **防休眠边界**：只阻止「空闲休眠」（IOPMAssertion）；合盖睡眠、系统强制睡眠不受影响，届时隧道仍会按既有睡眠语义断开并在唤醒后恢复。
