@@ -69,6 +69,7 @@
 		51A300000000000000000031 /* RemoteToolHintCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000031 /* RemoteToolHintCard.swift */; };
 		51A300000000000000000032 /* RemoteJanitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000032 /* RemoteJanitor.swift */; };
 		51A300000000000000000033 /* RemotePortConflictCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000033 /* RemotePortConflictCard.swift */; };
+		51A300000000000000000034 /* EgressIPProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000034 /* EgressIPProbe.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -146,6 +147,7 @@
 		51A200000000000000000031 /* RemoteToolHintCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteToolHintCard.swift; sourceTree = "<group>"; };
 		51A200000000000000000032 /* RemoteJanitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteJanitor.swift; sourceTree = "<group>"; };
 		51A200000000000000000033 /* RemotePortConflictCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePortConflictCard.swift; sourceTree = "<group>"; };
+		51A200000000000000000034 /* EgressIPProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EgressIPProbe.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -257,6 +259,7 @@
 				51A200000000000000000027 /* SSHConfigParser.swift */,
 				51A200000000000000000028 /* UpdateChecker.swift */,
 				51A200000000000000000032 /* RemoteJanitor.swift */,
+				51A200000000000000000034 /* EgressIPProbe.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -452,6 +455,7 @@
 				51A300000000000000000031 /* RemoteToolHintCard.swift in Sources */,
 				51A300000000000000000032 /* RemoteJanitor.swift in Sources */,
 				51A300000000000000000033 /* RemotePortConflictCard.swift in Sources */,
+				51A300000000000000000034 /* EgressIPProbe.swift in Sources */,
 				51A300000000000000000012 /* ProxySettingsView.swift in Sources */,
 				51A300000000000000000013 /* ServerEditorView.swift in Sources */,
 				51A300000000000000000014 /* SettingsView.swift in Sources */,

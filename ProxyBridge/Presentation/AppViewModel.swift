@@ -116,6 +116,8 @@ final class AppViewModel {
     private var retargetAttempts: [UUID: (endpointID: String, at: Date)] = [:]
     /// 上次因本地验证失败触发主动重扫的时间（代理波动场景闭环）。
     private var lastFailureRescanAt: Date?
+    /// 上一次观测到的代理出口 IP（节点切换指纹比对）。
+    private var lastEgressIP: String?
     private static let retargetRetryCooldown: TimeInterval = 20
     private static let failureRescanCooldown: TimeInterval = 30
     /// App 退出清理观察者（PRD F05：退出时清理自身 SSH 子进程）。
@@ -169,7 +171,8 @@ final class AppViewModel {
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
                 prober: CurlProxyProbe(),
-                monitor: SCDynamicStoreChangeMonitor()
+                monitor: SCDynamicStoreChangeMonitor(),
+                egressProber: CurlEgressIPProbe()
             ),
             logStore: LogStore.live(),
             secrets: KeychainPasswordStore(),
@@ -303,6 +306,7 @@ final class AppViewModel {
                 for profile in self.profiles where ids.contains(profile.id) { self.connect(profile: profile) }
                 self.retargetActiveTunnelsIfEndpointChanged()
                 self.upgradeDynamicTunnelsWhenProxyRecovered()
+                self.handleEgressIPChange(state.egressIP)
             }
         }
     }
@@ -932,6 +936,26 @@ final class AppViewModel {
             try settingsStore.save(settings)
         } catch {
             logStore.append(raw: "保存设置失败：\(error.localizedDescription)", level: .error)
+        }
+    }
+
+    /// 出口 IP 指纹变化 = 用户切换了节点（或节点自身出口变化）。
+    /// 端口与系统设置不变、现有检测无感——此处主动发现并立即重验活跃隧道，
+    /// 用户无需任何手动操作即可拿到新节点下的真实结论。
+    private func handleEgressIPChange(_ egress: String?) {
+        defer { lastEgressIP = egress }
+        guard let egress else { return } // 探测失败：如实不动，不猜测
+        guard let previous = lastEgressIP else {
+            logStore.append(raw: "已观测本地代理出口 IP：\(egress)", level: .info)
+            return
+        }
+        guard previous != egress else { return }
+        logStore.append(
+            raw: "本地代理出口已变化（\(previous) → \(egress)，可能切换了节点）：立即重新验证远端代理；在途连接可能被代理内核中断，新请求将走新出口",
+            level: .info
+        )
+        for profile in profiles where tunnel.isActive(profileID: profile.id) {
+            tunnel.runHealthCheck(profileID: profile.id) // 立即远端重验（协调器 5s 冷却兜底）
         }
     }
 

@@ -83,6 +83,8 @@ final class LocalProxyDetector: ProxyDetectorService {
     private let environmentProvider: any ProxyEnvironmentProviding
     private let prober: any ProxyProbeExecuting
     private let monitor: any SystemProxyChangeMonitoring
+    /// 出口 IP 指纹探测（节点切换检测）；nil = 不探测（测试装配）。
+    private let egressProber: (any EgressIPProbing)?
 
     /// 变化防抖间隔。默认 800ms；测试注入更短值。
     var debounceSeconds: TimeInterval = 0.8
@@ -99,12 +101,14 @@ final class LocalProxyDetector: ProxyDetectorService {
         provider: any SystemProxyProviding,
         prober: any ProxyProbeExecuting,
         monitor: any SystemProxyChangeMonitoring,
-        environmentProvider: any ProxyEnvironmentProviding = ProcessProxyEnvironmentProvider()
+        environmentProvider: any ProxyEnvironmentProviding = ProcessProxyEnvironmentProvider(),
+        egressProber: (any EgressIPProbing)? = nil
     ) {
         self.provider = provider
         self.environmentProvider = environmentProvider
         self.prober = prober
         self.monitor = monitor
+        self.egressProber = egressProber
         self.state.isLive = true
     }
 
@@ -188,6 +192,18 @@ final class LocalProxyDetector: ProxyDetectorService {
             }
             self.state.limitations = limitations
             self.state.systemProxyActiveButUnresolved = snapshot.pacEnabled && built.candidates.isEmpty
+
+            // 出口 IP 指纹：对最佳已验证端点探测（节点切换检测用；失败如实 nil）
+            if let egressProber,
+               let best = self.state.bestVerifiedEndpoint() {
+                self.state.egressIP = await egressProber.probe(
+                    host: best.host, port: best.port, protocol: best.protocol
+                )
+                guard generation == self.scanGeneration, !Task.isCancelled else { return }
+            } else {
+                self.state.egressIP = nil
+            }
+
             self.state.lastScanAt = Date()
             self.state.isScanning = false
             self.emit()

@@ -391,6 +391,58 @@ final class AppViewModelFeatureTests: XCTestCase {
         XCTAssertEqual(spyPower?.releaseCalls, 1, "断开后释放")
     }
 
+    /// 出口 IP 指纹（节点切换检测）：解析合法 IP、变化触发活跃隧道立即重验。
+    func testEgressIPParsing() {
+        XCTAssertEqual(CurlEgressIPProbe.parseIP("103.152.32.11\n"), "103.152.32.11")
+        XCTAssertEqual(CurlEgressIPProbe.parseIP("2606:4700::6810:85e5"), "2606:4700::6810:85e5")
+        XCTAssertNil(CurlEgressIPProbe.parseIP("<html>hello</html>"), "HTML 垃圾不误判")
+        XCTAssertNil(CurlEgressIPProbe.parseIP("999.1.1.1"), "非法 IPv4 拒绝")
+        XCTAssertNil(CurlEgressIPProbe.parseIP(""))
+    }
+
+    func testEgressChangeTriggersImmediateRecheck() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        final class ScriptedDetector: ProxyDetectorService {
+            var onStateChange: (@MainActor (ProxyDetectionState) -> Void)?
+            func startObservingSystemChanges() -> Bool { true }
+            func detect() {}
+        }
+        let spy = TunnelSpy()
+        let detector = ScriptedDetector()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: temp.url),
+            settingsStore: AppSettingsStore(directoryURL: temp.url),
+            tunnel: spy, proxyDetector: detector,
+            logStore: LogStore(), secrets: InMemoryPasswordStore()
+        )
+        let profile = ServerProfile(name: "节点机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 7890)
+        model.saveDraftProfile(profile)
+        let current = model.profiles[0]
+        spy.activeIDs.insert(current.id)
+
+        func push(egress: String?) {
+            var state = ProxyDetectionState()
+            state.candidates = [ProxyCandidate(
+                endpoint: LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP, verifiedAt: Date()),
+                capability: .verified
+            )]
+            state.egressIP = egress
+            detector.onStateChange?(state)
+        }
+        push(egress: "103.1.1.1") // 首次观测：只记录
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(spy.healthCheckCalls.count, 0, "首次观测不触发重验")
+
+        push(egress: "45.2.2.2") // 节点切换：立即重验活跃隧道
+        let rechecked = await waitUntilMain { spy.healthCheckCalls.contains(current.id) }
+        XCTAssertTrue(rechecked, "出口变化应立即触发活跃隧道远端重验")
+
+        push(egress: "45.2.2.2") // 未变化：不重复
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(spy.healthCheckCalls.count, 1, "出口未变化不得重复重验")
+    }
+
     func testLegacySettingsDecodeKeepsNewFieldDefaults() throws {
         // 旧版 settings.json（无新字段）不得判损坏，新字段取默认值
         let temp = TempDirectory.make()

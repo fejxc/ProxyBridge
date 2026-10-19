@@ -284,6 +284,10 @@ struct MenuBarView: View {
                         MonoText(text: localEndpointDisplay)
                         MiniBadge(text: L10n.t("模式 · ") + connectionModeLabel, tone: .blue)
                         MiniBadge(text: localRouteBadge, tone: isDynamicMode ? .orange : .blue)
+                        if let egress = model.detection.egressIP {
+                            MiniBadge(text: L10n.t("出口 ") + egress, tone: .blue)
+                                .help(L10n.t("经本地代理观测到的出口 IP；变化即代表节点切换，应用会自动重新验证"))
+                        }
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "arrow.right")

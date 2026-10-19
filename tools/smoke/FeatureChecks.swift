@@ -163,6 +163,79 @@ extension SmokeMain {
                 && FileManager.default.fileExists(atPath: logDir.appendingPathComponent("app.log.1").path)
                 && rotatedText.contains("rotate-trigger")
                 && memoryStore.fileURL == nil)
+
+        // F17 出口 IP 指纹：解析 + 真实 curl（无代理端口 → 如实 nil，不猜测）
+        check("F17", "出口 IP 解析：IPv4/IPv6 合法、HTML/非法值拒绝",
+              CurlEgressIPProbe.parseIP("103.152.32.11\n") == "103.152.32.11"
+                && CurlEgressIPProbe.parseIP("2606:4700::6810:85e5") == "2606:4700::6810:85e5"
+                && CurlEgressIPProbe.parseIP("<html>x</html>") == nil
+                && CurlEgressIPProbe.parseIP("999.1.1.1") == nil)
+        let egressProbe = CurlEgressIPProbe(connectTimeoutSeconds: 1, maxTimeSeconds: 3)
+        let refused = await egressProbe.probe(host: "127.0.0.1", port: 1, protocol: .http)
+        check("F17b", "真实 curl：出口探测失败返回 nil（如实不猜测）", refused == nil)
+
+        // F18 出口变化 → 活跃隧道立即重验（节点切换全自动闭环）
+        await egressChangeChecks()
+    }
+
+    @MainActor
+    private static func egressChangeChecks() async {
+        final class ScriptedDetector: ProxyDetectorService {
+            var onStateChange: (@MainActor (ProxyDetectionState) -> Void)?
+            func startObservingSystemChanges() -> Bool { true }
+            func detect() {}
+        }
+        final class CountingTunnel: TunnelService {
+            var onEvent: (@MainActor (TunnelEvent) -> Void)?
+            private let lock = NSLock()
+            private var checks: [UUID] = []
+            var active: Set<UUID> = []
+            func connect(configuration: TunnelConfiguration) { active.insert(configuration.profile.id) }
+            func disconnect(profileID: UUID) { active.remove(profileID) }
+            func runHealthCheck(profileID: UUID) {
+                lock.lock(); checks.append(profileID); lock.unlock()
+            }
+            func isActive(profileID: UUID) -> Bool { active.contains(profileID) }
+            func terminateAllSessions() { active.removeAll() }
+            func submitPassword(profileID: UUID, password: String, remember: Bool) {}
+            func cancelPasswordPrompt(profileID: UUID) {}
+            var healthChecks: [UUID] { lock.lock(); defer { lock.unlock() }; return checks }
+        }
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ProxyBridgeSmokeEg-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let spy = CountingTunnel()
+        let detector = ScriptedDetector()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: dir),
+            settingsStore: AppSettingsStore(directoryURL: dir),
+            tunnel: spy, proxyDetector: detector,
+            logStore: LogStore(), secrets: InMemoryPasswordStore()
+        )
+        let profile = ServerProfile(name: "节点机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 7890)
+        model.saveDraftProfile(profile)
+        let current = model.profiles[0]
+        spy.active.insert(current.id)
+
+        func push(egress: String?) {
+            var state = ProxyDetectionState()
+            state.candidates = [ProxyCandidate(
+                endpoint: LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP, verifiedAt: Date()),
+                capability: .verified
+            )]
+            state.egressIP = egress
+            detector.onStateChange?(state)
+        }
+        push(egress: "103.1.1.1")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        let firstQuiet = spy.healthChecks.isEmpty
+        push(egress: "45.2.2.2")
+        let rechecked = await waitSmokeUntil { spy.healthChecks.contains(current.id) }
+        push(egress: "45.2.2.2")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        check("F18", "出口 IP 变化（节点切换）→ 活跃隧道立即重验；首次与未变化不触发",
+              firstQuiet && rechecked && spy.healthChecks.count == 1)
     }
 
     @MainActor
