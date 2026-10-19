@@ -543,13 +543,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_TESTABILITY = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
 				INFOPLIST_KEY_CFBundleIconFile = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 1.4.2;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.4.3;
 				INFOPLIST_KEY_CFBundleVersion = 3;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -558,7 +558,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -571,13 +571,13 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				ENABLE_PREVIEWS = NO;
 				ENABLE_TESTABILITY = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
 				INFOPLIST_KEY_CFBundleIconFile = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 1.4.2;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.4.3;
 				INFOPLIST_KEY_CFBundleVersion = 3;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -586,7 +586,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridge";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -599,14 +599,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -619,14 +619,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 9;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 					"@loader_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.4.2;
+				MARKETING_VERSION = 1.4.3;
 				PRODUCT_BUNDLE_IDENTIFIER = "dev.sunyun.ProxyBridgeTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
