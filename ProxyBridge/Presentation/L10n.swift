@@ -1,5 +1,21 @@
 import Foundation
 
+/// 界面语言（P2 i18n）：跟随系统 / 简体中文 / English。
+/// 与 L10n 同文件定义：TunnelStatus 等部分编译链路（relay_test）只引入本文件。
+enum AppLanguage: String, Codable, CaseIterable, Sendable {
+    case system
+    case chinese
+    case english
+
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .chinese: return "简体中文"
+        case .english: return "English"
+        }
+    }
+}
+
 /// 轻量界面语言层（P2 i18n）。
 ///
 /// 机制：中文文案本身作为 key —— 中文模式下返回原文（零行为差异）；

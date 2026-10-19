@@ -1,21 +1,7 @@
 import Foundation
 
-/// 界面语言（P2 i18n）：跟随系统 / 简体中文 / English。
-enum AppLanguage: String, Codable, CaseIterable, Sendable {
-    case system
-    case chinese
-    case english
-
-    var displayName: String {
-        switch self {
-        case .system: return "跟随系统"
-        case .chinese: return "简体中文"
-        case .english: return "English"
-        }
-    }
-}
-
 /// 通用设置（通用设置 Tab 持久化的全部字段）。
+/// （界面语言枚举 AppLanguage 定义在 Presentation/L10n.swift。）
 struct AppSettings: Codable, Equatable {
     /// 用户请求的登录启动偏好；界面以 SMAppService 实际状态为准。
     var launchAtLoginRequested: Bool
