@@ -12,7 +12,7 @@
 - **探测依赖**：本地和远端需 curl；探测 `https://api.openai.com/v1/models`，HTTP 401 视为 HTTPS 路径可达。远端缺 curl、网络超时或目标服务不可达时会如实降级。
 - **界面限制**：菜单栏固定宽度；超大字体及小屏自适应、逐页视觉验收未完成；当前只提供简体中文。
 
-1.1.0 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件和 1.1.0 阶段报告为准。
+1.3.0 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件为准。
 
 ## 1.2.0 补充
 
@@ -21,8 +21,9 @@
 - 当前工程未启用 App Sandbox；尚未验证 Sandbox 下的网络权限和 SSH 子进程限制。
 - 本机完成 arm64 验证与 arm64/x86_64 通用包编译，未在 Intel 实机运行 1.2.0，1.2.0 已通过 GitHub CI（含 Xcode/XCTest）、arm64/x86_64 原生编译与 TCP 测试，并发布通用 DMG。详见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
-## v2 开发分支补充
+## 1.3.0（v2）补充
 
+- 1.3.0 已通过 GitHub CI（含 Xcode/XCTest）与 arm64/x86_64 双架构原生验证（typecheck、167 项冒烟检查含真实 socket 级 Relay 动态切换、relay 测试），并发布通用 DMG 与 SHA-256。
 - **真实远端待验收**：本次没有执行真实 Linux SSH/Clash Network Extension 连接。`ssh -R 127.0.0.1:<port>`、远端 curl、Linux Codex smoke test、Privoxy 实际启动/清理均未声称实测通过；手工流程见[升级验收报告](docs/PROXYBRIDGE_V2_ACCEPTANCE.md)。
 - **动态 SOCKS5 范围**：OpenSSH 反向动态代理只保证 TCP。Linux 应用需支持 SOCKS5；Codex HTTP 兼容性依赖用户已安装的 Privoxy 且 HTTP CONNECT 实测通过。
 - **Clash 出站确认**：远端 SOCKS/HTTP 请求成功可以证明 Mac 当前网络出口能到达验证目标，但不能确认 Clash 实际命中的规则或代理节点；界面会提示用户在 Clash「活动」中核对。
