@@ -698,7 +698,7 @@ final class SSHTunnelCoordinator: TunnelService {
         var (phase, detail) = SSHErrorClassifier.phaseAndDetail(for: classification)
         if stderr.lowercased().contains("remote port forwarding failed"), let profile = session.profile {
             let port = session.effectiveMode == .reverseDynamic ? profile.remoteSocksPort : profile.remotePort
-            detail = "远端 127.0.0.1:\(port) 监听失败：端口可能被占用或服务器禁止转发。请在服务器配置中选择其他端口或联系管理员。"
+            detail = "远端 127.0.0.1:\(port) 监听失败：端口可能被占用或服务器禁止转发。最常见原因是上一次连接的 sshd 尚未释放端口（通常 1–3 分钟内自行恢复）；开启自动重连后应用会在几分钟内自动重试。持续失败请在服务器配置中更换端口，或联系管理员检查 sshd 的 AllowTcpForwarding/PermitListen。"
         }
 
         // 密码模式认证失败：给出密码语向的具体原因（而非泛化的密钥/agent 提示）

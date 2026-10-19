@@ -308,6 +308,41 @@ final class AppViewModelFeatureTests: XCTestCase {
         XCTAssertNotNil(model.updateInfo, "界面横幅持续保留")
     }
 
+    /// 远端端口冲突（旧 sshd 未释放）：窗口内自动重试，窗口过后停止并保持终态指引。
+    func testRemoteBindConflictRetriesWithinWindowOnly() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.retryBaseSeconds = 0.03
+        runtime.maximumRetrySeconds = 0.05
+        runtime.monitorTickSeconds = 0.02
+        runtime.remoteBindConflictWindowSeconds = 0.3 // 极短窗口便于测试
+
+        var profile = ServerProfile(name: "192服务器", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        profile.reconnectEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+
+        func emitConflict() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .error
+            snap.sshProcessRunning = false
+            snap.humanReadableDetail = "远端 127.0.0.1:17890 监听失败：端口可能被占用或服务器禁止转发。"
+            spy.emit(snap)
+        }
+
+        emitConflict() // 第一次：进入重试
+        let firstRetry = await waitUntilMain { spy.connectCalls.count >= 2 }
+        XCTAssertTrue(firstRetry, "端口冲突在窗口内应自动重试，实际连接次数 \(spy.connectCalls.count)")
+
+        try? await Task.sleep(nanoseconds: 400_000_000) // 超过 0.3s 窗口
+        let countBefore = spy.connectCalls.count
+        emitConflict() // 窗口已过：不再重试
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(spy.connectCalls.count, countBefore, "窗口过后仍冲突应停止自动重试（终态指引）")
+        runtime.terminateAllSessions()
+    }
+
     func testKeepAwakeFollowsSettingAndActiveTunnel() {
         let temp = TempDirectory.make()
         defer { temp.removeAll() }

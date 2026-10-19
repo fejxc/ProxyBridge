@@ -27,6 +27,11 @@ final class ManagedTunnelService: TunnelService {
     var localIntervalOverride: Double?
     var remoteIntervalOverride: Double?
     var wakeDelaySeconds: Double = 2
+    /// 远端端口冲突的自动重试窗口（秒）：旧 sshd 释放端口通常需要 1–3 分钟；
+    /// 窗口过后仍冲突视为真实占用/禁转发，停止重试转为终态指引。测试注入更短值。
+    var remoteBindConflictWindowSeconds: Double = 180
+    /// 各 profile 首次检测到端口冲突的时间。
+    private var conflictSince: [UUID: Date] = [:]
 
     init(underlying: any TunnelService) {
         self.underlying = underlying
@@ -44,6 +49,12 @@ final class ManagedTunnelService: TunnelService {
         return ["无法解析 SSH 主机名", "网络不可达", "连接 SSH 主机超时", "SSH 端口拒绝连接", "SSH 进程异常退出"].contains { detail.contains($0) }
     }
 
+    /// 远端转发端口绑定冲突（常见：上次连接的 sshd 未释放端口，1–3 分钟自愈）。
+    /// 与 shouldRetry 的永久配置错误不同：这类冲突限时自动重试（见 conflictWindow）。
+    static func isRemoteBindConflict(_ detail: String) -> Bool {
+        detail.contains("监听失败：端口可能被占用")
+    }
+
     func connect(configuration: TunnelConfiguration) {
         let id = configuration.profile.id
         guard !isActive(profileID: id) else { return }
@@ -53,6 +64,7 @@ final class ManagedTunnelService: TunnelService {
         connectedAt[id] = nil
         localDue[id] = nil
         remoteDue[id] = nil
+        conflictSince[id] = nil // 新的连接意图：端口冲突窗口重新计时
         resumeIDs.remove(id)
         if sleeping {
             if configuration.profile.reconnectEnabled { resumeIDs.insert(id) }
@@ -80,6 +92,7 @@ final class ManagedTunnelService: TunnelService {
         remoteDue[profileID] = nil
         connectedAt[profileID] = nil
         attempts[profileID] = nil
+        conflictSince[profileID] = nil
         if let reason = systemReason {
             underlying.disconnectForSystemReason(profileID: profileID, reason: reason)
         } else {
@@ -229,7 +242,7 @@ final class ManagedTunnelService: TunnelService {
         retries.values.forEach { $0.cancel() }
         retries.removeAll(); desired.removeAll(); generations.removeAll(); resumeIDs.removeAll()
         snapshots.removeAll(); attempts.removeAll(); connectedAt.removeAll()
-        localDue.removeAll(); remoteDue.removeAll()
+        localDue.removeAll(); remoteDue.removeAll(); conflictSince.removeAll()
         suppressEvents = true
         underlying.terminateAllSessions()
         suppressEvents = false
@@ -250,9 +263,27 @@ final class ManagedTunnelService: TunnelService {
             if connectedAt[id] == nil { connectedAt[id] = Date() }
             if localDue[id] == nil { localDue[id] = Date().addingTimeInterval(localInterval) }
             if remoteDue[id] == nil { remoteDue[id] = Date().addingTimeInterval(remoteInterval) }
+            conflictSince[id] = nil // 连接成功：端口冲突跟踪复位
+        }
+        // 远端端口冲突（旧 sshd 未释放，1–3 分钟自愈）：窗口内自动重试，
+        // 窗口过后仍冲突 → 视为真实占用/禁转发，保持终态指引（不再无限重试）。
+        // 过期时间戳不清空：否则下一个冲突事件会再开新窗口、永远停不下来；
+        // 复位只发生在连接成功、非冲突事件或用户重新发起连接时。
+        let bindConflict = snapshot.phase == .error && Self.isRemoteBindConflict(snapshot.humanReadableDetail)
+        if bindConflict {
+            let now = Date()
+            if let since = conflictSince[id] {
+                if now.timeIntervalSince(since) >= remoteBindConflictWindowSeconds {
+                    return
+                }
+            } else {
+                conflictSince[id] = now
+            }
+        } else if snapshot.phase != .error {
+            conflictSince[id] = nil
         }
         let unavailableLocal = snapshot.phase == .degraded && !snapshot.sshProcessRunning
-        guard configuration.profile.reconnectEnabled, Self.shouldRetry(snapshot) || unavailableLocal else { return }
+        guard configuration.profile.reconnectEnabled, Self.shouldRetry(snapshot) || unavailableLocal || bindConflict else { return }
         if let connected = connectedAt[id], Date().timeIntervalSince(connected) >= 60 { attempts[id] = 0 }
         connectedAt[id] = nil
         let attempt = attempts[id] ?? 0

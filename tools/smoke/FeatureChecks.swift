@@ -5,14 +5,20 @@ import Foundation
 extension SmokeMain {
 
     /// 自包含隧道替身：记录系统断开/重连语义（网络恢复与模式升级用）。
+    /// connectOutcome：注入 connect 的即时结局快照（如端口冲突 error）；nil = 默认 connected。
     final class FeatureTunnelSpy: TunnelService {
         var onEvent: (@MainActor (TunnelEvent) -> Void)?
+        var connectOutcome: TunnelSnapshot?
         private let lock = NSLock()
         private var connectLog: [TunnelConfiguration] = []
         private var systemDisconnects: [String] = []
         private var activeIDs: Set<UUID> = []
         func connect(configuration: TunnelConfiguration) {
             lock.lock(); connectLog.append(configuration); activeIDs.insert(configuration.profile.id); lock.unlock()
+            if let outcome = connectOutcome {
+                onEvent?(.snapshot(outcome))
+                return
+            }
             var snap = TunnelSnapshot.idle(configuration.profile.id)
             snap.phase = .connected
             snap.sshProcessRunning = true
@@ -131,6 +137,43 @@ extension SmokeMain {
               curlHint.contains("apt-get install -y curl") && curlHint.contains("dnf install -y curl")
                 && privoxyHint.contains("privoxy")
                 && !dangerous.contains { curlHint.contains($0) || privoxyHint.contains($0) })
+
+        // F10/F11 远端端口冲突：窗口内自动重试，窗口后停止
+        await bindConflictChecks()
+    }
+
+    @MainActor
+    private static func bindConflictChecks() async {
+        let spy = FeatureTunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.retryBaseSeconds = 0.03
+        runtime.maximumRetrySeconds = 0.05
+        runtime.monitorTickSeconds = 0.02
+        runtime.remoteBindConflictWindowSeconds = 0.3
+
+        var profile = ServerProfile(name: "192", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        profile.reconnectEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+
+        func conflictSnapshot() -> TunnelSnapshot {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .error
+            snap.sshProcessRunning = false
+            snap.humanReadableDetail = "远端 127.0.0.1:17890 监听失败：端口可能被占用或服务器禁止转发。"
+            return snap
+        }
+        // 重连结局 = 立即再报冲突（真实协调器在 -R 绑定失败时同样直接退出为 error，不会先报 connected）
+        spy.connectOutcome = conflictSnapshot()
+        spy.onEvent?(.snapshot(conflictSnapshot()))
+        let retried = await waitSmokeUntil { spy.connects.count >= 2 }
+        check("F10", "端口冲突（旧 sshd 未释放）窗口内自动重试", retried)
+
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        let before = spy.connects.count
+        spy.onEvent?(.snapshot(conflictSnapshot()))
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        check("F11", "窗口过后仍冲突停止自动重试（终态指引）", spy.connects.count == before)
+        runtime.terminateAllSessions()
     }
 
     @MainActor
