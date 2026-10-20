@@ -74,6 +74,7 @@
 		51A300000000000000000036 /* UpdateInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000036 /* UpdateInstaller.swift */; };
 		51A300000000000000000037 /* UpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000037 /* UpdateCoordinator.swift */; };
 		51A300000000000000000038 /* ProfileManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000038 /* ProfileManager.swift */; };
+		51A300000000000000000039 /* ConflictRemediationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000039 /* ConflictRemediationCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +91,7 @@
 		51A200000000000000000001 /* ProxyBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyBridgeApp.swift; sourceTree = "<group>"; };
 		51A200000000000000000037 /* UpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCoordinator.swift; sourceTree = "<group>"; };
 		51A200000000000000000038 /* ProfileManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileManager.swift; sourceTree = "<group>"; };
+		51A200000000000000000039 /* ConflictRemediationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictRemediationCoordinator.swift; sourceTree = "<group>"; };
 		51A200000000000000000002 /* LocalProxyEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyEndpoint.swift; sourceTree = "<group>"; };
 		51A200000000000000000003 /* ServerProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProfile.swift; sourceTree = "<group>"; };
 		51A200000000000000000004 /* TunnelStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatus.swift; sourceTree = "<group>"; };
@@ -272,6 +274,7 @@
 				51A200000000000000000036 /* UpdateInstaller.swift */,
 				51A200000000000000000037 /* UpdateCoordinator.swift */,
 				51A200000000000000000038 /* ProfileManager.swift */,
+				51A200000000000000000039 /* ConflictRemediationCoordinator.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -472,6 +475,7 @@
 				51A300000000000000000036 /* UpdateInstaller.swift in Sources */,
 				51A300000000000000000037 /* UpdateCoordinator.swift in Sources */,
 				51A300000000000000000038 /* ProfileManager.swift in Sources */,
+				51A300000000000000000039 /* ConflictRemediationCoordinator.swift in Sources */,
 				51A300000000000000000012 /* ProxySettingsView.swift in Sources */,
 				51A300000000000000000013 /* ServerEditorView.swift in Sources */,
 				51A300000000000000000014 /* SettingsView.swift in Sources */,
