@@ -98,6 +98,9 @@ final class AppViewModel {
     private var keepAwakeFailureLogged = false
     /// 已提示过「未开自动重连」的失败 profile（成功后复位，可再次提示）。
     private var reconnectHintShown: Set<UUID> = []
+    /// 各 profile 上次记录「成功健康检查」日志的时间（节流用）。
+    private var lastHealthyCheckLogAt: [UUID: Date] = [:]
+    private static let healthyCheckLogInterval: TimeInterval = 300
 
     // MARK: - 远端残留诊断清理（端口冲突自愈闭环）
     /// 端口冲突卡状态（nil = 无卡）。
@@ -330,12 +333,18 @@ final class AppViewModel {
     /// U15 动态感知：本地代理端点变化时，活跃静态转发隧道无缝切换到新端点。
     /// 只对「使用中的端点 ≠ 最新解析端点」的 profile 下发；相同端点的重复扫描不触发，
     /// 冷却窗口内的重复尝试被忽略（实测失败的场景由下次检测重试）。
+    /// 物理端点 = host + port：混合端口上 HTTP/SOCKS5 探测结论的翻转不构成
+    /// 真实端点变化（Relay 是透明字节管道，转发目标没变），不触发切换——
+    /// 消除真实日志中观察到的 7897 HTTP↔SOCKS5 反复横跳噪声。
     private func retargetActiveTunnelsIfEndpointChanged() {
         for profile in profiles {
             guard tunnel.isActive(profileID: profile.id),
                   resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .staticForward else { continue }
-            guard let endpoint = endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection)),
-                  endpoint.id != connectionEndpoints[profile.id]?.id else { continue }
+            guard let endpoint = endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection)) else { continue }
+            if let current = connectionEndpoints[profile.id],
+               current.host == endpoint.host, current.port == endpoint.port {
+                continue // 物理端点未变：仅协议结论翻转，无需切换
+            }
             let now = Date()
             if let last = retargetAttempts[profile.id], last.endpointID == endpoint.id,
                now.timeIntervalSince(last.at) < Self.retargetRetryCooldown { continue }
@@ -1354,6 +1363,21 @@ final class AppViewModel {
         }
         updateKeepAwakeAssertion()
         guard previous?.phase != snap.phase || previous?.humanReadableDetail != snap.humanReadableDetail else { return }
+        // 节流：connected 稳定期间的周期性「检查成功」快照（本地/远端检查交替使 detail
+        // 反复变化，曾占日志九成体量）——5 分钟内不重复记录；异常快照不受限。
+        let isHealthyCheck = snap.phase == .connected
+            && snap.humanReadableDetail.contains("完成")
+            && !snap.humanReadableDetail.contains("未通过")
+        if isHealthyCheck {
+            if let last = lastHealthyCheckLogAt[snap.profileId],
+               Date().timeIntervalSince(last) < Self.healthyCheckLogInterval {
+                lastHealthyCheckLogAt[snap.profileId] = Date() // 顺延窗口，稳定期保持静默
+                return
+            }
+            lastHealthyCheckLogAt[snap.profileId] = Date()
+        } else {
+            lastHealthyCheckLogAt[snap.profileId] = nil
+        }
         let name = profiles.first { $0.id == snap.profileId }?.name ?? "?"
         let level: LogLevel
         switch snap.phase {

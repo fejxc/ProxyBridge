@@ -459,7 +459,7 @@ final class SSHTunnelCoordinator: TunnelService {
         verifying.humanReadableDetail = "隧道已建立，正在验证远端代理…"
         onEvent?(.snapshot(verifying))
 
-        let remoteOutcome = await remoteVerify(session: session, profile: profile)
+        let remoteOutcome = await remoteVerifyWithReadinessRetry(session: session, profile: profile)
         guard !session.userStopped, !Task.isCancelled else { return }
 
         session.lastRemoteProbeAt = Date()
@@ -783,6 +783,26 @@ final class SSHTunnelCoordinator: TunnelService {
             password: session.password,
             urlString: profile.probeTargetURL // 用户配置的业务目标；nil 回落固定目标
         )
+    }
+
+    /// 动态 SOCKS5 的「监听就绪」竞态消化：ssh 认证完成 ≠ 远端转发端口已开始
+    /// 监听（真实日志：首次验证恒 curl exit 7，约 30 秒后即通过）。对连接类失败
+    /// （exit 7 拒绝）做短退避重试，最多 2 次，避免把建立期竞态误报为「部分可用」。
+    /// 只消化 connectionFailure；超时/TLS 等其他失败如实立即呈现。
+    private func remoteVerifyWithReadinessRetry(session: Session, profile: ServerProfile) async -> RemoteProbeOutcome {
+        var delay: UInt64 = 1_500_000_000
+        for attempt in 0...2 {
+            let outcome = await remoteVerify(session: session, profile: profile)
+            guard !session.userStopped, !Task.isCancelled,
+                  session.handle?.isRunning == true else { return outcome }
+            if case .connectionFailure = outcome, attempt < 2 {
+                try? await Task.sleep(nanoseconds: delay)
+                delay *= 2
+                continue
+            }
+            return outcome
+        }
+        return .unknown(reason: "unreachable")
     }
 
     /// Mixed means both protocols are promised to Linux clients, so verify

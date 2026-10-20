@@ -450,6 +450,46 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertEqual(remoteProber.lastProtocol, .mixed)
     }
 
+    /// 动态 SOCKS5 首次远端验证的「监听就绪」竞态：连接拒绝类失败应短退避重试，
+    /// 而不是把建立期窗口误报为 degraded（真实日志：首验恒 exit 7，稍后即通过）。
+    func testDynamicModeRetriesRefusedRemoteVerifyBeforeDegrading() async {
+        final class SequencedRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
+            private let lock = NSLock()
+            private var outcomes: [RemoteProbeOutcome]
+            private(set) var calls = 0
+            init(outcomes: [RemoteProbeOutcome]) { self.outcomes = outcomes }
+            func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome {
+                lock.lock(); defer { lock.unlock() }
+                calls += 1
+                return outcomes.isEmpty ? .unknown(reason: "exhausted") : outcomes.removeFirst()
+            }
+        }
+        let sequenced = SequencedRemoteProber(outcomes: [
+            .connectionFailure(reason: "curl exit 7"),
+            .connectionFailure(reason: "curl exit 7"),
+            .verified(statusCode: 401),
+        ])
+        makeCoordinator(remote: .verified(statusCode: 200))
+        coordinator = SSHTunnelCoordinator(
+            processFactory: factory,
+            localProber: localProber,
+            remoteProber: sequenced,
+            secrets: secretStore
+        )
+        coordinator.graceSeconds = 0.2
+        recorder = Recorder<TunnelSnapshot>()
+        let box = recorder
+        coordinator.onEvent = { if case .snapshot(let s) = $0 { box.append(s) } }
+
+        var profile = configuration(endpoint: nil).profile
+        profile.connectionMode = .reverseDynamic
+        profile.httpAdapterEnabled = false
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected, "前两次拒绝应被就绪重试消化，第三次验证通过 → connected：\(recorder.snapshot.map(\.phase))")
+        XCTAssertEqual(sequenced.calls, 3, "恰好重试两次，不做无限探测")
+    }
+
     // MARK: 本地端点动态跟随（U15：代理变化无缝切换，SSH 不重启）
 
     func testLocalEndpointRetargetSwitchesRelayWithoutRestartingSSH() async {

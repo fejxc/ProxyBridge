@@ -574,6 +574,55 @@ final class AppViewModelFeatureTests: XCTestCase {
         XCTAssertTrue(args.last?.contains("api.anthropic.com") == true, "探测脚本应使用业务目标")
     }
 
+    /// 物理端点未变（混合端口上 HTTP/SOCKS5 结论翻转）不得触发无缝切换——
+    /// 真实日志中 7897 HTTP↔SOCKS5 反复横跳即此类噪声。
+    func testProtocolFlipOnSameHostPortDoesNotRetarget() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        final class FlipDetector: ProxyDetectorService {
+            var onStateChange: (@MainActor (ProxyDetectionState) -> Void)?
+            func startObservingSystemChanges() -> Bool { true }
+            func detect() {}
+        }
+        let spy = TunnelSpy()
+        let detector = FlipDetector()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: temp.url),
+            settingsStore: AppSettingsStore(directoryURL: temp.url),
+            tunnel: spy, proxyDetector: detector,
+            logStore: LogStore(), secrets: InMemoryPasswordStore()
+        )
+        var profile = ServerProfile(name: "混合端口", host: "10.0.0.4", sshPort: 22, username: "u", remotePort: 7890)
+        profile.connectionMode = .staticForward
+        model.saveDraftProfile(profile)
+        profile = model.profiles[0]
+
+        var snap = TunnelSnapshot.idle(profile.id)
+        snap.phase = .connected
+        snap.sshProcessRunning = true
+        snap.effectiveMode = .staticForward
+        snap.activeLocalEndpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
+        spy.activeIDs.insert(profile.id)
+        spy.emit(snap)
+
+        func push(port: Int, proto: ProxyProtocol) {
+            var state = ProxyDetectionState()
+            state.candidates = [ProxyCandidate(
+                endpoint: LocalProxyEndpoint(host: "127.0.0.1", port: port, protocol: proto, origin: .systemHTTP, verifiedAt: Date()),
+                capability: .verified
+            )]
+            detector.onStateChange?(state)
+        }
+        push(port: 7897, proto: .socks5) // 仅协议翻转：不切换
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertTrue(spy.retargetCalls.isEmpty, "同 host:port 的协议结论翻转不构成端点变化")
+
+        push(port: 7898, proto: .http) // 真实端口变化：切换
+        let switched = await waitUntilMain { spy.retargetCalls.count == 1 }
+        XCTAssertTrue(switched, "host/port 变化仍应触发无缝切换")
+        XCTAssertEqual(spy.retargetCalls.first?.endpoint.port, 7898)
+    }
+
     func testLegacySettingsDecodeKeepsNewFieldDefaults() throws {
         // 旧版 settings.json（无新字段）不得判损坏，新字段取默认值
         let temp = TempDirectory.make()
