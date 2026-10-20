@@ -53,14 +53,17 @@ ListenAddress 127.0.0.1
 HostKey $WORK/hostkey
 PidFile $WORK/sshd.pid
 AuthorizedKeysFile $WORK/authorized_keys
-PasswordAuthentication no
+# PasswordAuthentication=yes + VERBOSE：为 askpass 取证场景服务——
+# 任何密码都会被 PAM 拒绝（本机口令未知也不需要知道），VERBOSE 日志的
+# 「Failed password」即「密码确实经 askpass → ssh → sshd」全链路送达的证据
+PasswordAuthentication yes
 PubkeyAuthentication yes
-KbdInteractiveAuthentication no
+KbdInteractiveAuthentication yes
 UsePAM no
 AllowTcpForwarding yes
 PermitListen 127.0.0.1:*
 StrictModes no
-LogLevel QUIET
+LogLevel VERBOSE
 EOF
 
 "$SSHD_BIN" -f "$WORK/sshd_config" -E "$WORK/sshd.log"
@@ -100,8 +103,16 @@ PB_SSH_KNOWN_HOSTS="$WORK/.ssh/known_hosts" \
 PB_SSH_PORT="$SSHD_PORT" \
 PB_SSH_USER="$(whoami)" \
 PB_SSH_KEY="$WORK/userkey" \
+PB_ASKPASS_PROOF=1 \
 "$OUT"
 STATUS=$?
+
+# askpass 全链路取证：sshd 收到并拒绝了密码 = helper → ssh → sshd 链路打通
+if grep -q "Failed password" "$WORK/sshd.log" 2>/dev/null; then
+  echo "askpass 取证：sshd 日志确认收到密码尝试（Failed password）——投递链路完整"
+else
+  echo "askpass 取证：sshd 日志未见 Failed password"
+fi
 
 # 进程卫生：场景结束后不允许残留本测试拉起的 ssh 子进程。
 # 只匹配「-p 本测试端口」——绝不触碰用户自己的其他 ssh 隧道。

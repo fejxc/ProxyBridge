@@ -262,18 +262,22 @@ final class Scenario {
         mode: ConnectionMode,
         upstreamProtocol: ProxyProtocol,
         fakeUpstreamPort: UInt16?,
-        webPort: UInt16
+        webPort: UInt16,
+        host: String = "127.0.0.1",
+        probeTargetOverride: String? = nil
     ) async -> Bool {
         // 远端转发端口（本机 sshd）：随机段选取（21000–25003，均在合法端口范围内），
         // 冲突导致失败时由整体退出码暴露
         let base = Int.random(in: 2_100...2_500) * 10
         var profile = ServerProfile(
-            name: name, host: "127.0.0.1", sshPort: sshPort,
+            name: name, host: host, sshPort: sshPort,
             username: user, authMode: .identityFile, identityFilePath: keyPath,
             remotePort: base + 1, remoteSocksPort: base + 2, remoteHTTPPort: base + 3
         )
         profile.connectionMode = mode
-        profile.probeTargetURL = "http://127.0.0.1:\(webPort)/probe"
+        // 业务验证目标：动态/直连场景可用 PB_PROBE_TARGET 指向真实互联网目标
+        // （fake 上游场景的链路终点是本地源站，不能用外部目标）
+        profile.probeTargetURL = probeTargetOverride ?? "http://127.0.0.1:\(webPort)/probe"
         profile.httpAdapterEnabled = true
 
         var localEndpoint: LocalProxyEndpoint?
@@ -341,6 +345,66 @@ final class Scenario {
     }
 
     private func lastSnapshot() -> TunnelSnapshot? { snapshots.last }
+
+    /// askpass 取证：密码模式连接（真实 ssh + 开启 PasswordAuthentication 的测试 sshd），
+    /// UI 输入路径注入一个必然错误的密码。通过标准：
+    /// 1) 快速进入 authRequired（不是 90 秒超时、不是 /dev/tty 类错误——那意味着 helper 未被调用）；
+    /// 2) 终态文案为「密码认证被拒绝」（密码送达 sshd 并被 PAM 拒绝）。
+    func runAskpassRejection(sshPort: Int, user: String, host: String) async -> Bool {
+        let base = Int.random(in: 2_600...2_900) * 10
+        var profile = ServerProfile(
+            name: name, host: host, sshPort: sshPort,
+            username: user, authMode: .password,
+            remotePort: base + 1, remoteSocksPort: base + 2, remoteHTTPPort: base + 3
+        )
+        profile.connectionMode = .reverseDynamic
+        profile.httpAdapterEnabled = false
+
+        let factory = FoundationSSHProcessFactory()
+        let coordinator = SSHTunnelCoordinator(
+            processFactory: factory,
+            localProber: AlwaysVerifiedLocalProber(),
+            remoteProber: SSHRemoteProbe(factory: factory),
+            secrets: MemoryPasswordStore()
+        )
+        coordinator.graceSeconds = 8
+
+        let box = self
+        var prompts: [UUID] = []
+        coordinator.onEvent = { event in
+            switch event {
+            case .snapshot(let snap): box.record(snap)
+            case .passwordPromptRequested(let id): prompts.append(id)
+            case .traffic: break
+            }
+        }
+
+        let started = Date()
+        coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        // 密码必须发生在 ssh 启动之前：等 UI 输入请求
+        let promptDeadline = Date().addingTimeInterval(10)
+        while prompts.isEmpty && Date() < promptDeadline {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard !prompts.isEmpty else {
+            print("FAIL  \(name)  未在 ssh 启动前请求密码输入")
+            coordinator.disconnect(profileID: profile.id)
+            return false
+        }
+        coordinator.submitPassword(profileID: profile.id, password: "definitely-wrong-\(Int.random(in: 1000...9999))", remember: false)
+
+        let authRequired = await waitFor(phase: .authRequired, timeout: 20)
+        let elapsed = Date().timeIntervalSince(started)
+        let detail = lastSnapshot()?.humanReadableDetail ?? ""
+        coordinator.disconnect(profileID: profile.id)
+        coordinator.terminateAllSessions()
+        guard authRequired, elapsed < 30, detail.contains("密码认证被拒绝") else {
+            print("FAIL  \(name)  耗时 \(Int(elapsed))s 终态：\(lastPhase.map(\.rawValue) ?? "?") / \(detail.prefix(120))")
+            return false
+        }
+        print("PASS  \(name)  错密码 \(Int(elapsed))s 被快速拒绝（helper 已被真实 ssh 调用，密码已送达 sshd）")
+        return true
+    }
 
     private func waitFor(phase: TunnelPhase, timeout: TimeInterval) async -> Bool {
         if lastPhase == phase { return true }
@@ -440,8 +504,11 @@ struct IntegrationEntry {
             print("integration: 缺少 PB_SSH_PORT / PB_SSH_USER / PB_SSH_KEY 环境变量")
             exit(2)
         }
+        let sshHost = ProcessInfo.processInfo.environment["PB_SSH_HOST"] ?? "127.0.0.1"
+        let probeTarget = ProcessInfo.processInfo.environment["PB_PROBE_TARGET"]
+        let askpassProof = ProcessInfo.processInfo.environment["PB_ASKPASS_PROOF"] == "1"
 
-        print("== ProxyBridge 集成测试（真实 ssh + 用户态 sshd）==")
+        print("== ProxyBridge 集成测试（真实 ssh，目标 \(sshHost):\(sshPort)）==")
         var passed = 0
         var failed = 0
 
@@ -457,30 +524,45 @@ struct IntegrationEntry {
         relay0.stop(); socks0.stop(); web0.stop()
 
         // 场景 1：静态转发 + SOCKS5 上游（HTTP 入口走 SOCKS5 翻译模式）
-            let web1 = try WebOrigin()
-            let socks = try FakeSocksUpstream(webPort: web1.port)
-            let s1 = Scenario(name: "I1 静态转发·SOCKS5 上游")
-            if await s1.run(sshPort: sshPort, user: user, keyPath: keyPath,
-                            mode: .staticForward, upstreamProtocol: .socks5,
-                            fakeUpstreamPort: socks.port, webPort: web1.port) { passed += 1 } else { failed += 1 }
-            socks.stop(); web1.stop()
+        let web1 = try WebOrigin()
+        let socks = try FakeSocksUpstream(webPort: web1.port)
+        let s1 = Scenario(name: "I1 静态转发·SOCKS5 上游")
+        if await s1.run(sshPort: sshPort, user: user, keyPath: keyPath,
+                        mode: .staticForward, upstreamProtocol: .socks5,
+                        fakeUpstreamPort: socks.port, webPort: web1.port,
+                        host: sshHost) { passed += 1 } else { failed += 1 }
+        socks.stop(); web1.stop()
 
-            // 场景 2：静态转发 + HTTP/Mixed 上游（HTTP 入口 pipe 模式）
-            let web2 = try WebOrigin()
-            let http = try FakeHTTPUpstream(webPort: web2.port)
-            let s2 = Scenario(name: "I2 静态转发·HTTP 上游·入口 pipe")
-            if await s2.run(sshPort: sshPort, user: user, keyPath: keyPath,
-                            mode: .staticForward, upstreamProtocol: .mixed,
-                            fakeUpstreamPort: http.port, webPort: web2.port) { passed += 1 } else { failed += 1 }
-            http.stop(); web2.stop()
+        // 场景 2：静态转发 + HTTP/Mixed 上游（HTTP 入口 pipe 模式）
+        let web2 = try WebOrigin()
+        let http = try FakeHTTPUpstream(webPort: web2.port)
+        let s2 = Scenario(name: "I2 静态转发·HTTP 上游·入口 pipe")
+        if await s2.run(sshPort: sshPort, user: user, keyPath: keyPath,
+                        mode: .staticForward, upstreamProtocol: .mixed,
+                        fakeUpstreamPort: http.port, webPort: web2.port,
+                        host: sshHost) { passed += 1 } else { failed += 1 }
+        http.stop(); web2.stop()
 
-            // 场景 3：动态 SOCKS5 + HTTP 入口直连模式（无本地代理）
-            let web3 = try WebOrigin()
-            let s3 = Scenario(name: "I3 动态 SOCKS5·入口直连")
-            if await s3.run(sshPort: sshPort, user: user, keyPath: keyPath,
-                            mode: .reverseDynamic, upstreamProtocol: .http,
-                            fakeUpstreamPort: nil, webPort: web3.port) { passed += 1 } else { failed += 1 }
-            web3.stop()
+        // 场景 3：动态 SOCKS5 + HTTP 入口直连模式（无本地代理；
+        // PB_PROBE_TARGET 可把业务目标指向真实互联网地址）
+        let web3 = try WebOrigin()
+        let s3 = Scenario(name: "I3 动态 SOCKS5·入口直连")
+        if await s3.run(sshPort: sshPort, user: user, keyPath: keyPath,
+                        mode: .reverseDynamic, upstreamProtocol: .http,
+                        fakeUpstreamPort: nil, webPort: web3.port,
+                        host: sshHost,
+                        probeTargetOverride: probeTarget) { passed += 1 } else { failed += 1 }
+        web3.stop()
+
+        // 场景 4：askpass 密码投递取证（PB_ASKPASS_PROOF=1，仅本地测试 sshd）：
+        // 真实 coordinator 全流程 + 故意错密码 → 期待快速 authRequired（密码认证被拒绝），
+        // sshd VERBOSE 日志的 Failed password 由脚本侧 grep 作为「密码确实送达 sshd」的证据
+        if askpassProof {
+            let s4 = Scenario(name: "I4 askpass·错密码快速拒绝")
+            if await s4.runAskpassRejection(sshPort: sshPort, user: user, host: "127.0.0.1") {
+                passed += 1
+            } else { failed += 1 }
+        }
         } catch {
             print("FAIL  测试服务启动失败：\(error)")
             failed += 1
