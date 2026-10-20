@@ -29,6 +29,11 @@ jobs:
 
       # 每个验证步骤都把完整输出落到日志文件；失败时由「报告错误」步骤
       # 把首个 error 行转成 ::error:: annotation（公开仓库可匿名读取）
+      - name: 构建系统清单一致性（pbxproj ↔ swiftc 脚本）
+        run: |
+          set -o pipefail
+          bash scripts/check_build_sync.sh 2>&1 | tee build-ci-sync.log
+
       - name: 编译检查
         run: |
           set -o pipefail
@@ -64,7 +69,7 @@ jobs:
       - name: 报告错误（失败日志 → annotation）
         if: failure()
         run: |
-          for f in build-ci-typecheck.log build-ci-smoke.log build-ci-relay.log build-ci-xcodebuild-build.log build-ci-xcodebuild-test.log; do
+          for f in build-ci-sync.log build-ci-typecheck.log build-ci-smoke.log build-ci-relay.log build-ci-xcodebuild-build.log build-ci-xcodebuild-test.log; do
             [ -f "$f" ] || continue
             grep -E "error:|FAIL |failing" "$f" | sort -u | head -20 | while IFS= read -r line; do
               echo "::error::$f :: ${line:0:300}"

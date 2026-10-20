@@ -23,6 +23,9 @@ else
   echo "== 环境检测：仅 Command Line Tools =="
 fi
 
+echo "== [0/4] 构建系统清单一致性（pbxproj ↔ swiftc 脚本）=="
+bash "$(dirname "$0")/check_build_sync.sh" || exit 1
+
 echo "== [1/4] App 模块编译检查（-emit-module，等价完整编译前端）=="
 swiftc -emit-module \
   ProxyBridge/App/*.swift ProxyBridge/Models/*.swift ProxyBridge/Persistence/*.swift \
