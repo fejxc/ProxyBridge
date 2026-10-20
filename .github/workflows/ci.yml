@@ -49,6 +49,11 @@ jobs:
           set -o pipefail
           bash scripts/relay_test.sh 2>&1 | tee build-ci-relay.log | tail -5
 
+      - name: 集成测试（真实 ssh + 用户态 sshd）
+        run: |
+          set -o pipefail
+          bash scripts/integration_test.sh 2>&1 | tee build-ci-integration.log | tail -8
+
       - name: xcodebuild build（Debug）
         run: |
           set -o pipefail
@@ -69,7 +74,7 @@ jobs:
       - name: 报告错误（失败日志 → annotation）
         if: failure()
         run: |
-          for f in build-ci-sync.log build-ci-typecheck.log build-ci-smoke.log build-ci-relay.log build-ci-xcodebuild-build.log build-ci-xcodebuild-test.log; do
+          for f in build-ci-sync.log build-ci-typecheck.log build-ci-smoke.log build-ci-relay.log build-ci-integration.log build-ci-xcodebuild-build.log build-ci-xcodebuild-test.log; do
             [ -f "$f" ] || continue
             grep -E "error:|FAIL |failing" "$f" | sort -u | head -20 | while IFS= read -r line; do
               echo "::error::$f :: ${line:0:300}"

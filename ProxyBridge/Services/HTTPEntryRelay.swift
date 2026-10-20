@@ -163,6 +163,11 @@ private final class EntryConnection: @unchecked Sendable {
     /// CONNECT 解析出的目标（socks5/direct 模式）。
     private var authority: (host: String, port: UInt16)?
     private var headerBuffer = Data()
+    /// 头部之后的余量字节（明文请求的 body 等），随翻译后的头部一起转发。
+    private var remainderAfterHead = Data()
+    /// 明文请求：翻译后的请求行 + 头（CONNECT 请求为 nil）。
+    private var plainRequestHead: String?
+    private var isConnect = false
     private var handshakeStarted = false
     private var deadline: DispatchWorkItem?
     private let headerLimit = 16 * 1024
@@ -256,6 +261,8 @@ private final class EntryConnection: @unchecked Sendable {
             if let range = self.headerBuffer.range(of: Data("\r\n\r\n".utf8)) {
                 self.phase = .connecting
                 let head = String(decoding: self.headerBuffer[..<range.lowerBound], as: UTF8.self)
+                self.remainderAfterHead = Data(self.headerBuffer[range.upperBound...])
+                self.headerBuffer.removeAll()
                 self.handleRequestHead(head)
                 return
             }
@@ -267,21 +274,35 @@ private final class EntryConnection: @unchecked Sendable {
     }
 
     private func handleRequestHead(_ head: String) {
-        let requestLine = head.components(separatedBy: "\r\n").first ?? ""
-        let parts = requestLine.split(separator: " ").map(String.init)
-        guard parts.count >= 3, parts[0].uppercased() == "CONNECT" else {
-            // 仅实现 CONNECT（https_proxy 用法）；其他方法明确拒绝，不做半吊子翻译
-            reject("501 Not Implemented")
-            return
-        }
-        let hostPort = parts[1].split(separator: ":").map(String.init)
-        guard hostPort.count == 2, let port = UInt16(hostPort[1]), !hostPort[0].isEmpty else {
+        let lines = head.components(separatedBy: "\r\n")
+        let parts = (lines.first ?? "").split(separator: " ").map(String.init)
+        guard parts.count >= 3 else {
             reject("400 Bad Request"); return
         }
-        authority = (hostPort[0], port)
+        if parts[0].uppercased() == "CONNECT" {
+            // CONNECT（https_proxy 用法）：解析 authority，握手后回 200 并透传
+            let hostPort = parts[1].split(separator: ":").map(String.init)
+            guard hostPort.count == 2, let port = UInt16(hostPort[1]), !hostPort[0].isEmpty else {
+                reject("400 Bad Request"); return
+            }
+            authority = (hostPort[0], port)
+            isConnect = true
+        } else {
+            // 绝对格式明文请求（http_proxy 用法，如健康检查 GET）：翻译为源站请求——
+            // 请求行改写为源站形式，其余头与头部之后的余量字节原样跟随
+            guard let url = URL(string: parts[1]), let host = url.host, !host.isEmpty else {
+                reject("400 Bad Request"); return
+            }
+            let port = UInt16(url.port ?? 80)
+            let originTarget = url.path.isEmpty ? "/" : url.path + (url.query.map { "?\($0)" } ?? "")
+            let headerTail = lines.dropFirst().joined(separator: "\r\n")
+            plainRequestHead = "\(parts[0]) \(originTarget) \(parts[2])\r\n\(headerTail)\r\n\r\n"
+            authority = (host, port)
+            isConnect = false
+        }
         switch mode {
         case .direct:
-            openUpstream(toHost: hostPort[0], port: port)
+            openUpstream(toHost: authority!.host, port: authority!.port)
         case .socks5:
             startHandshakeIfPossible()
         case .pipe:
@@ -360,15 +381,27 @@ private final class EntryConnection: @unchecked Sendable {
         maybeStartTunnel()
     }
 
-    /// SOCKS5/直连路径：先向客户端回 200，再进入透传。
+    /// SOCKS5/直连路径上游就绪：CONNECT 向客户端回 200；明文请求把翻译后的
+    /// 头部与余量字节发给上游，然后双向透传。
     private func completeTunnel() {
         guard phase != .closed, !tunnelEstablished, let upstream = outgoing else { return }
-        incoming.send(content: Data("HTTP/1.1 200 Connection established\r\n\r\n".utf8), completion: .contentProcessed { [weak self] _ in
-            // 应答完成后可能两端已就绪，再补一次泵启动
-            self?.maybeStartTunnel()
-        })
+        if isConnect {
+            incoming.send(content: Data("HTTP/1.1 200 Connection established\r\n\r\n".utf8), completion: .contentProcessed { [weak self] _ in
+                // 应答完成后可能两端已就绪，再补一次泵启动
+                self?.maybeStartTunnel()
+            })
+        } else {
+            var request = Data((plainRequestHead ?? "").utf8)
+            request.append(remainderAfterHead)
+            remainderAfterHead = Data()
+            plainRequestHead = nil
+            upstream.send(content: request, completion: .contentProcessed { [weak self] error in
+                guard let self else { return }
+                guard error == nil else { self.reject("502 Bad Gateway"); return }
+                self.maybeStartTunnel()
+            })
+        }
         establishTunnel()
-        _ = upstream
     }
 
     private func maybeStartTunnel() {

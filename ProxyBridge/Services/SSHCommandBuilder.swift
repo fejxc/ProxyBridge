@@ -12,6 +12,19 @@ enum SSHCommandBuilder {
 
     static let executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
 
+    /// 集成测试注入点：PB_SSH_KNOWN_HOSTS 指定替代 known_hosts 并跳过用户 ssh config。
+    /// ssh 的 `~` 展开走 passwd 数据库而非 HOME 环境变量，测试无法用 HOME 隔离，
+    /// 因此经显式参数 `-o UserKnownHostsFile=` / `-F` 定位。生产进程环境不会出现
+    /// 该变量，此分支恒不触发（安全语义：StrictHostKeyChecking=yes 不变，仅换文件）。
+    private static let testKnownHostsFile = ProcessInfo.processInfo.environment["PB_SSH_KNOWN_HOSTS"]
+        .flatMap { $0.isEmpty ? nil : $0 }
+
+    static func applyTestIsolation(to args: inout [String]) {
+        guard let path = testKnownHostsFile else { return }
+        args += ["-o", "UserKnownHostsFile=\(path)"]
+        args += ["-F", "/dev/null"]
+    }
+
     /// 隧道保活用的 ssh 参数数组（不含可执行文件路径）。
     static func arguments(profile: ServerProfile, localEndpoint: LocalProxyEndpoint) -> [String] {
         precondition(LocalProxyEndpointRule.isValid(host: localEndpoint.host, port: localEndpoint.port),
@@ -83,6 +96,7 @@ enum SSHCommandBuilder {
            !path.isEmpty {
             args += ["-i", path] // 路径逐字保真（U07：含空格也不拆词、不转义）
         }
+        applyTestIsolation(to: &args)
         args.append(destination(profile: profile))
         return args
     }
@@ -122,6 +136,7 @@ enum SSHCommandBuilder {
            !path.isEmpty {
             args += ["-i", path]
         }
+        applyTestIsolation(to: &args)
         args.append(destination(profile: profile))
         args.append(command)
         return args
@@ -175,6 +190,7 @@ enum RemoteProbeCommand {
            !path.isEmpty {
             args += ["-i", path]
         }
+        SSHCommandBuilder.applyTestIsolation(to: &args)
         args.append(SSHCommandBuilder.destination(profile: profile))
         args.append(script(remotePort: remotePort, protocol: `protocol`, urlString: urlString))
         return args

@@ -23,12 +23,15 @@ enum RemoteProbeOutcome: Equatable, Sendable {
 
 /// 远端探测执行抽象（测试注入 / 生产 SSH 实现）。
 protocol RemoteProbeExecuting: AnyObject, Sendable {
-    /// `password` 非空时经 PTY 应答远端 ssh 的密码提示（内存中临时使用，不落盘）。
     func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome
+    /// 带业务验证目标：必须是协议要求——曾经只是扩展重载，经 existential
+    /// （`any RemoteProbeExecuting`）调用时静态派发到扩展默认实现，
+    /// 导致业务探测目标在真实链路上被静默丢弃（集成测试抓到的生产 bug）。
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?, urlString: String?) async -> RemoteProbeOutcome
 }
 
 extension RemoteProbeExecuting {
-    /// 带业务验证目标的重载：nil / 非法目标回落固定验证目标（替身无需实现）。
+    /// 默认实现：nil / 非法目标回落固定验证目标（替身无需单独实现）。
     func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?, urlString: String?) async -> RemoteProbeOutcome {
         await probe(profile: profile, remotePort: remotePort, protocol: `protocol`, password: password)
     }
@@ -114,7 +117,13 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
             }
         }
         guard exitCode == 0 else {
-            return .connectionFailure(reason: "远端代理请求失败（curl exit \(exitCode)）")
+            // curl 自身的失败（超时/重置/TLS 等）：带上 stderr 首行让报障可定位
+            let curlLine = stderr
+                .components(separatedBy: .newlines)
+                .first { $0.contains("curl:") }?
+                .trimmingCharacters(in: .whitespaces) ?? ""
+            let suffix = curlLine.isEmpty ? "" : "：\(curlLine.prefix(120))"
+            return .connectionFailure(reason: "远端代理请求失败（curl exit \(exitCode)）\(suffix)")
         }
         guard let code = Int(trimmed), (100...599).contains(code) else {
             return .unknown(reason: trimmed.isEmpty ? "远端无有效输出" : "远端输出无法解析：\(trimmed.prefix(80))")

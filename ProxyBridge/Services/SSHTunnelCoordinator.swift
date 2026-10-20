@@ -872,7 +872,8 @@ final class SSHTunnelCoordinator: TunnelService {
             profile: profile,
             remotePort: profile.remoteHTTPPort,
             protocol: .http,
-            password: session.password
+            password: session.password,
+            urlString: profile.probeTargetURL
         )
         guard !session.userStopped, !Task.isCancelled else { return false }
         if case .verified(let code) = outcome {
