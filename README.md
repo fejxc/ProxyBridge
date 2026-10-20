@@ -53,7 +53,7 @@
 ### 安全与隐私
 
 - SSH 强制 `StrictHostKeyChecking=yes`；首次连接在应用内核对主机指纹并信任（无需先开终端），主机密钥变化不提供一键覆盖；支持从 `~/.ssh/config` 导入服务器。
-- 支持 HTTP、SOCKS5、Mixed 上游，密码、ssh-agent 与指定私钥。密码只经 PTY 应答；勾选「记住」时存入 macOS 钥匙串；认证成功后密码在会话内记忆，自动重连不再重复询问。
+- 支持 HTTP、SOCKS5、Mixed 上游，密码、ssh-agent 与指定私钥。密码经 OpenSSH 原生 SSH_ASKPASS 机制交付（不经命令行参数、环境变量或日志）；勾选「记住」时存入 macOS 钥匙串；认证成功后密码在会话内记忆，自动重连不再重复询问。
 - 日志脱敏，不记录密码、密钥内容或完整认证信息。
 
 ### 状态可观测
@@ -67,7 +67,7 @@
 
 - 应用内自动更新：流式下载 + 独立签名完整性校验 + 原子替换，任一校验不过绝不安装，失败自动回滚。
 - 启动检查更新（只读 GitHub 公开接口）、系统登录项、启动时连接选定服务器、连接异常通知、可选「连接期间防止空闲休眠」。
-- 默认在 Linux `127.0.0.1:7890` 提供 Codex HTTP 兼容入口，需要已安装的 Privoxy。App 不自动安装软件、不使用 sudo、不修改系统配置或 sshd，用户可关闭该入口。
+- 默认在 Linux `127.0.0.1:7890` 提供 Codex HTTP 兼容入口，由 App 在 Mac 侧实现（远端零依赖，无需安装任何软件）。App 不使用 sudo、不修改系统配置或 sshd，用户可关闭该入口。
 - 界面支持中文 / English。
 
 ## 📦 系统要求
@@ -76,7 +76,7 @@
 |---|---|
 | Mac | macOS 14 及以上，Apple Silicon 或 Intel |
 | Mac 侧代理 | 已在本地验证可用的 HTTP / SOCKS5 / Mixed 回环入口；Clash 使用 Network Extension / TUN 无本地端口时，使用动态 SOCKS5 |
-| Linux 服务器 | 可 SSH 登录的普通用户账号；`curl`（用于真实探测）；需要 HTTP 兼容入口时安装 `privoxy`（App 不代装） |
+| Linux 服务器 | 可 SSH 登录的普通用户账号；`curl`（用于真实探测）。HTTP 兼容入口由 App 内实现，服务器零依赖 |
 | 仅构建需要 | 完整 Xcode 15+，或仅 Command Line Tools（Swift 6.0 编译器），见[从源码构建](#-从源码构建) |
 
 ## 🚀 安装
@@ -129,13 +129,7 @@ curl -I --proxy http://127.0.0.1:7890 \
 
 未认证 API 通常返回 HTTP 401；这表示请求已经到达 API，不代表账号已认证。ProxyBridge 会单独验证 HTTP CONNECT。
 
-HTTP 入口依赖 Linux 已安装 `privoxy`。如果没有，ProxyBridge 会提示但不会安装；反向 SOCKS5 仍可独立使用。Debian/Ubuntu 示例（需由有权限的用户自行执行，ProxyBridge 不会代为运行）：
-
-```bash
-sudo apt install privoxy
-```
-
-应用只创建当前 SSH 用户的 `~/.cache/proxybridge/` 会话配置，Privoxy 与远端 SSH 转发都只绑定 `127.0.0.1`。端口冲突时请在服务器配置页改端口，应用不会终止未知进程；HTTP 入口可在服务器配置中关闭。
+HTTP 入口由 ProxyBridge 在 Mac 侧实现（经 SSH 反向隧道承载），服务器无需安装 Privoxy 或任何其他软件；远端 SSH 转发只绑定 `127.0.0.1`。端口冲突时请在服务器配置页改端口，应用不会终止未知进程；HTTP 入口可在服务器配置中关闭。
 
 仅用 SOCKS5 时（curl 示例）：
 
@@ -165,7 +159,7 @@ ProxyBridge 不内置代理协议实现：它启动一个真实的 `/usr/bin/ssh
 ```mermaid
 flowchart LR
     tools["Linux 开发工具<br/>codex / curl / pip / git"]
-    entry["服务器回环代理入口<br/>SOCKS5 127.0.0.1:17890<br/>HTTP 127.0.0.1:7890（Privoxy 可选）"]
+    entry["服务器回环代理入口<br/>SOCKS5 127.0.0.1:17890<br/>HTTP 127.0.0.1:7890（App 内实现）"]
     pb["ProxyBridge<br/>（Mac 菜单栏）"]
     relay["本地 TCP Relay<br/>（静态转发）"]
     stack["Mac 网络栈<br/>（动态 SOCKS5）"]
@@ -180,7 +174,8 @@ flowchart LR
 
 - **静态转发**：App 在 Mac 本地启动 TCP Relay，把隧道流量原样送入已验证的本地代理入口，因此可以统计业务字节。
 - **动态 SOCKS5**：使用 OpenSSH 原生「反向动态转发」，由 Mac 网络栈发起 TCP 出站，不依赖本地代理端口（因此兼容 Clash TUN / Network Extension 场景）；该路径不经过本地 Relay，不计业务流量统计。
-- 全链路只绑定回环地址：远端监听只在服务器本机 `127.0.0.1`，本地 Relay 也只监听 Mac 回环。
+- **HTTP 兼容入口**：由 App 内置的 HTTP 入口中继实现（服务器零依赖）——按实测上游协议自动选择透明管道、CONNECT 翻译或 Mac 直连三种模式。
+- 全链路只绑定回环地址：远端监听只在服务器本机 `127.0.0.1`，本地 Relay 与 HTTP 入口也只监听 Mac 回环。
 
 ## 🛠 从源码构建
 
@@ -197,6 +192,7 @@ bash scripts/xcode_test.sh
 bash scripts/typecheck.sh       # App 与测试代码类型检查
 bash scripts/smoke_test.sh      # 当前源码可执行回归检查
 bash scripts/relay_test.sh      # 真实本地 TCP 转发、精度与清理验证
+bash scripts/integration_test.sh # 集成测试：用户态 sshd 真隧道 4 场景（无需管理员）
 bash scripts/install_app.sh     # 构建并安装到 /Applications
 bash scripts/build_dmg.sh 1.4.7 # 构建通用 DMG 和 SHA-256 文件（参数为版本号）
 ```

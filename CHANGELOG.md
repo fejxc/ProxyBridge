@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0（开发中）
+
+架构改造专项（五项，全部保持行为等价或增强，本机 typecheck + 197 项 smoke + relay 测试 + 4 项集成测试全绿）：
+
+- **AppViewModel 拆分（上帝对象治理）**：更新流、Profile 存储与 CRUD、远端端口冲突自愈三个自治组件拆出（`UpdateCoordinator` / `ProfileManager` / `ConflictRemediationCoordinator`，均 @Observable + 协议注入 + 两段式 attach 装配），AppViewModel 保留同名 facade，视图与测试访问路径零变化。SSHTunnelCoordinator 从 1060 行降至 970 行，连接序列中「启动 ssh 进程 → 等密码提示 → 超时杀进程」整段状态机分支被结构性删除（见下条）。
+- **密码认证迁移 SSH_ASKPASS**：密码不再经 PTY 应答提示（删除 posix_spawn SETSID/TIOCSCTTY 重执行、提示词刮取、writePTY 全套机制，约 230 行）。OpenSSH 8.4+ force 模式调用 helper（0700 常量脚本）读取 0600 会话凭据文件，密码不经 argv/环境变量/日志；密码输入发生在 ssh 进程启动之前，「重连卡密码提示 90 秒超时」一类问题从机制上消除。凭据文件在认证完成后立即销毁，崩溃残留由 >1 小时清扫兜底。
+- **去除 Privoxy 远端依赖**：Linux HTTP 兼容入口（Codex 7890）改由 App 内 `HTTPEntryRelay` 实现——Mac 侧监听 + 附加 `ssh -R` 转发，三种上游模式覆盖全部连接方式：HTTP/Mixed 上游透明管道（绝对格式请求全兼容）、SOCKS5 上游 CONNECT/绝对格式翻译、动态回退 Mac 直连。删除远端 Privoxy 生命周期管理整套机制（prepare/launch/cleanup 脚本与管理器，约 280 行）；远端需求收敛为「仅 sshd」。无缝端点切换现同步重定向入口上游。
+- **集成测试层**：`scripts/integration_test.sh` 拉起用户态 sshd（仅绑 127.0.0.1 高位端口、临时密钥、无需管理员），对真实生产源码跑 4 条端到端场景（裸 Relay 字节链路、静态+SOCKS5、静态+HTTP 入口 pipe、动态+入口直连），CI 新增对应步骤。**该层立即抓到一个生产 bug**：业务验证目标（1.4.6 引入）经 existential 派发被静默丢弃、从未生效——已将 `urlString` 探测重载升级为协议要求修复。附带改进：curl 失败报障携带 stderr 首行；HTTP 入口支持绝对格式明文请求翻译。
+- **构建系统同步税**：`scripts/check_build_sync.sh` 双向 diff pbxproj 文件清单与 swiftc 脚本 glob（外加冒烟显式点名的文件），漂移即失败；已挂入 CI 与 typecheck 第 0 步。
+
 ## 1.4.7 — 2026-10-20（已发布）
 
 - 修复动态 SOCKS5「监听就绪」竞态（真实日志定位）：ssh 认证完成 ≠ 远端转发端口已开始监听，首次远端验证曾恒遭连接拒绝（curl exit 7）并把建立期窗口误报为「部分可用」。现对连接拒绝类失败做短退避重试（1.5s/3s 各一次），超时等其他失败仍如实立即呈现。Clash 等 Network Extension 客户端（自动回退动态 SOCKS5）下首次连接不再假警报。
