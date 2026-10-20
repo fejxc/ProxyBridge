@@ -96,16 +96,6 @@ final class FakeSSHHandle: SSHProcessHandle, @unchecked Sendable {
     }
 
     var stdoutTail: String { "" }
-
-    var onPTYOutput: (@Sendable (String) -> Void)?
-
-    /// 记录写入 PTY 的内容（密码流私密性测试用）。
-    private(set) var ptyWrites: [String] = []
-    func writePTY(_ text: String) {
-        lock.lock()
-        ptyWrites.append(text)
-        lock.unlock()
-    }
 }
 
 /// 可编排的工厂：记录 make 调用，按队列出句柄（空则自动新建）。
@@ -950,7 +940,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertFalse(last?.isEndToEndVerified == true, "ssh 已死时不得呈端到端已验证")
     }
 
-    // MARK: 密码模式（PTY 握手）
+    // MARK: 密码模式（SSH_ASKPASS：连接前取密码，凭据经环境交付 helper）
 
     private func passwordProfile() -> ServerProfile {
         var p = ServerProfile(
@@ -968,38 +958,41 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let cfg = TunnelConfiguration(profile: passwordProfile(), localEndpoint: endpoint)
 
         coordinator.connect(configuration: cfg)
-        // ssh 启动后出现密码提示
-        _ = await waitUntil { handle.startWasCalled }
-        handle.setStderr("root@10.11.154.192's password:")
+        // 无可用密码：连接序列在启动 ssh 前即请求 UI 输入
         let prompts = passwordPrompts
         let prompted = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
-        XCTAssertTrue(prompted, "检测到提示后必须请求 UI 输入密码")
+        XCTAssertTrue(prompted, "启动 ssh 前必须请求 UI 输入密码")
 
         coordinator.submitPassword(profileID: cfg.profile.id, password: "s3cret-value", remember: false)
         let connected = await waitLastPhase(.connected)
         XCTAssertTrue(connected)
 
-        // 密码经 PTY 交给 ssh（含换行）
-        XCTAssertEqual(handle.ptyWrites.last, "s3cret-value\n")
+        // ssh 进程环境携带 askpass 三件套（密码本身只在 0600 凭据文件里，不在环境）
+        let env = factory.lastEnvironment
+        XCTAssertEqual(env["SSH_ASKPASS_REQUIRE"], "force")
+        XCTAssertNotNil(env["SSH_ASKPASS"])
+        XCTAssertNotNil(env[SSHAskpassCredential.credentialFileEnvKey])
         // 远端探测复用会话密码
         let prober = remoteProber
         let remotePass = await waitUntilMain { prober.lastPassword != nil }
         XCTAssertTrue(remotePass)
         XCTAssertEqual(prober.lastPassword, "s3cret-value")
 
-        // 私密性：所有快照/日志 detail 绝不包含密码
+        // 私密性：所有快照/日志 detail 与进程环境绝不包含密码
         let leaked = recorder.snapshot.contains { $0.humanReadableDetail.contains("s3cret-value") }
         XCTAssertFalse(leaked, "密码不得出现在任何状态文案中")
+        let envLeak = env.values.contains { $0.contains("s3cret-value") }
+        XCTAssertFalse(envLeak, "密码不得出现在 ssh 进程环境变量中")
+        // 认证完成后凭据文件已销毁
+        let credentialPath = env[SSHAskpassCredential.credentialFileEnvKey] ?? ""
+        let destroyed = await waitUntilMain { !FileManager.default.fileExists(atPath: (credentialPath as NSString).deletingLastPathComponent) }
+        XCTAssertTrue(destroyed, "认证完成后凭据目录必须销毁")
     }
 
     func testCancelPasswordPromptEndsInIdleWithNoGhostEvents() async {
         makeCoordinator(grace: 0.1)
-        let handle = FakeSSHHandle()
-        factory.enqueue(handle)
         let cfg = TunnelConfiguration(profile: passwordProfile(), localEndpoint: endpoint)
         coordinator.connect(configuration: cfg)
-        _ = await waitUntil { handle.startWasCalled }
-        handle.setStderr("root@10.11.154.192's password:")
         let prompts = passwordPrompts
         let prompted = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
         XCTAssertTrue(prompted)
@@ -1009,7 +1002,7 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertTrue(idle)
         let quiet = await awaitQuiet(countAtStart: recorder.count, stableMilliseconds: 300)
         XCTAssertTrue(quiet, "取消后不得再有事件")
-        XCTAssertTrue(handle.wasTerminated, "取消必须终止本次 ssh 尝试")
+        XCTAssertTrue(factory.madeHandles.isEmpty, "取消发生在启动 ssh 之前：不得创建任何进程")
     }
 
     // MARK: 记住密码（钥匙串）
@@ -1022,8 +1015,6 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let cfg = TunnelConfiguration(profile: passwordProfile(), localEndpoint: endpoint)
 
         coordinator.connect(configuration: cfg)
-        _ = await waitUntil { handle1.startWasCalled }
-        handle1.setStderr("root@10.11.154.192's password:")
         let prompts = passwordPrompts
         _ = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
         coordinator.submitPassword(profileID: cfg.profile.id, password: "s3cret-value", remember: false)
@@ -1034,15 +1025,13 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         handle1.simulateExit(255)
         _ = await waitLastPhase(.error)
 
-        // 重连：新 ssh 再要密码——会话内记忆直接应答，不再请求 UI
+        // 重连：会话内记忆直接可用，不再请求 UI
         let handle2 = FakeSSHHandle()
         factory.enqueue(handle2)
         coordinator.connect(configuration: cfg)
-        _ = await waitUntil { handle2.startWasCalled }
-        handle2.setStderr("root@10.11.154.192's password:")
         let connectedAgain = await waitLastPhase(.connected)
         XCTAssertTrue(connectedAgain)
-        XCTAssertEqual(handle2.ptyWrites.last, "s3cret-value\n", "重连应复用会话内密码")
+        XCTAssertEqual(factory.lastEnvironment["SSH_ASKPASS_REQUIRE"], "force", "重连应复用会话内密码（经 askpass 凭据交付）")
         XCTAssertEqual(prompts.snapshot.filter { $0 == cfg.profile.id }.count, 1, "第二次连接不得再请求 UI 输入")
 
         // 用户主动断开 → 会话内密码作废，再连必须重新询问
@@ -1051,8 +1040,6 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let handle3 = FakeSSHHandle()
         factory.enqueue(handle3)
         coordinator.connect(configuration: cfg)
-        _ = await waitUntil { handle3.startWasCalled }
-        handle3.setStderr("root@10.11.154.192's password:")
         let promptedAgain = await waitUntilMain { prompts.snapshot.filter { $0 == cfg.profile.id }.count == 2 }
         XCTAssertTrue(promptedAgain, "用户断开后必须重新询问密码")
         coordinator.disconnect(profileID: cfg.profile.id)
@@ -1070,14 +1057,12 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let handle = FakeSSHHandle()
         factory.enqueue(handle)
         coordinator.connect(configuration: remembered)
-        _ = await waitUntil { handle.startWasCalled }
-        handle.setStderr("root@10.11.154.192's password:")
         let connected = await waitLastPhase(.connected)
         XCTAssertTrue(connected)
 
         let prompts = passwordPrompts
-        XCTAssertNil(prompts.snapshot.last, "已记住密码必须自动应答，不请求 UI 输入")
-        XCTAssertEqual(handle.ptyWrites.last, "stored-pass\n")
+        XCTAssertNil(prompts.snapshot.last, "已记住密码必须自动取用，不请求 UI 输入")
+        XCTAssertEqual(factory.lastEnvironment["SSH_ASKPASS_REQUIRE"], "force")
         let prober = remoteProber
         XCTAssertEqual(prober.lastPassword, "stored-pass")
     }
@@ -1094,11 +1079,9 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         let handle = FakeSSHHandle()
         factory.enqueue(handle)
         coordinator.connect(configuration: remembered)
-        _ = await waitUntil { handle.startWasCalled }
-        handle.setStderr("root@10.11.154.192's password:")
-        // 自动应答后认证失败
-        let autoAnswered = await waitUntil { !handle.ptyWrites.isEmpty }
-        XCTAssertTrue(autoAnswered)
+        // 自动取用记住的密码后认证失败（askpass 交付错密码 → ssh 立即退出）
+        let started = await waitUntil { handle.startWasCalled }
+        XCTAssertTrue(started)
         handle.setStderr("Permission denied (publickey).")
         handle.simulateExit(255)
 

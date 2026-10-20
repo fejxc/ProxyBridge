@@ -12,7 +12,6 @@ struct SmokeMain {
 
     @MainActor
     static func main() async {
-        SSHProcessLauncher.runPTYChildIfRequested()
         // 冒烟断言全部按中文文案：固定语言，隔离 CI runner 的系统语言（en-US）
         L10n.apply(.chinese)
         print("== ProxyBridge 阶段 A 冒烟测试（生产代码直连断言）==")
@@ -29,7 +28,7 @@ struct SmokeMain {
         logStoreChecks()
         await liveProxyChecks()
         sshChecks()
-        await ptyChecks()
+        await askpassChecks()
         await probeRegressionChecks()
         await runtimeChecks()
         await relayLifecycleChecks()
@@ -59,41 +58,69 @@ struct SmokeMain {
         }
     }
 
-    // Exercise the production spawn/ctty/read/write/exit path without a server.
-    static func ptyChecks() async {
-        check("PTY01", "完整密码提示", SSHProcessLauncher.hasPasswordPrompt("\rroot@host's password: "))
-        check("PTY02", "部分提示不应答", !SSHProcessLauncher.hasPasswordPrompt("root@host's password"))
-        check("PTY03", "认证方法列表不应答", !SSHProcessLauncher.hasPasswordPrompt("publickey,password"))
-        check("PTY04", "拒绝认证文本不应答", !SSHProcessLauncher.hasPasswordPrompt("Permission denied (password)."))
-        let script = "stty -echo; printf 'password' >/dev/tty; sleep 0.1; "
-            + "printf ': ' >/dev/tty; IFS= read -r value </dev/tty; "
-            + "printf 204; printf 'final diagnostic' >&2; exit 0"
-        let handle = FoundationSSHProcessHandle(arguments: ["-c", script],
-            environment: SSHProcessLauncher.sshEnvironment(),
-            executableURL: URL(fileURLWithPath: "/bin/sh"), usesPTY: true)
-        do { try handle.start() } catch {
-            check("PTY05", "PTY 启动", false)
+    // 密码认证改走 SSH_ASKPASS（OpenSSH ≥ 8.4 force 模式）：真实执行 helper
+    // 脚本验证交付语义，并核对凭据文件的权限与生命周期。
+    static func askpassChecks() async {
+        let secret = "s3cret-\(UUID().uuidString)"
+        guard let credential = SSHAskpassCredential(password: secret) else {
+            check("ASK01", "创建凭据装置", false)
             return
         }
-        let deadline = Date().addingTimeInterval(5)
-        while !SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail),
-              handle.isRunning, Date() < deadline {
-            try? await Task.sleep(nanoseconds: 10_000_000)
+        let env = credential.environmentAdditions
+        check("ASK01", "环境注入三件套（force + helper 路径 + 凭据路径）",
+              env["SSH_ASKPASS_REQUIRE"] == "force"
+                  && env["SSH_ASKPASS"]?.hasSuffix("askpass-helper.sh") == true
+                  && env[SSHAskpassCredential.credentialFileEnvKey]?.hasSuffix("credential") == true)
+        let helperPath = env["SSH_ASKPASS"] ?? ""
+        let credentialPath = env[SSHAskpassCredential.credentialFileEnvKey] ?? ""
+        check("ASK02", "helper 可执行且凭据文件 0600",
+              FileManager.default.isExecutableFile(atPath: helperPath)
+                  && (try? FileManager.default.attributesOfItem(atPath: credentialPath)[.posixPermissions] as? Int) == 0o600)
+        check("ASK03", "凭据目录 0700 且不含密码内容本身",
+              (try? FileManager.default.attributesOfItem(
+                  atPath: (credentialPath as NSString).deletingLastPathComponent
+              )[.posixPermissions] as? Int) == 0o700
+              && !helperPath.contains(secret) && !credentialPath.contains(secret))
+
+        // 真实执行 helper：语义即 OpenSSH 调用 askpass（stdout 取密码，行尾换行被剥离）
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/bin/sh")
+        task.arguments = [helperPath]
+        task.environment = env
+        let stdout = Pipe()
+        task.standardOutput = stdout
+        task.standardError = Pipe()
+        do {
+            try task.run()
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            let delivered = String(decoding: data, as: UTF8.self)
+            // 凭据文件即密码原文（无行尾换行）；OpenSSH 对 askpass 输出按
+            // 「剥离一个行尾换行（若存在）」处理，两种形态语义一致
+            check("ASK04", "helper 真实交付密码（stdout）", delivered == secret)
+            check("ASK05", "交付路径不含机密（argv/env 只有路径）",
+                  task.arguments?.contains(secret) != true)
+        } catch {
+            check("ASK04", "helper 真实交付密码（stdout）", false)
+            check("ASK05", "交付路径不含机密（argv/env 只有路径）", false)
         }
-        check("PTY05", "子进程可打开控制终端 /dev/tty", SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail))
-        let secret = UUID().uuidString
-        handle.writePTY(secret + "\n")
-        while handle.isRunning, Date() < deadline {
-            try? await Task.sleep(nanoseconds: 10_000_000)
+
+        credential.destroy()
+        check("ASK06", "destroy 幂等且删除整个凭据目录",
+              !FileManager.default.fileExists(atPath: credentialPath)
+                  && !FileManager.default.fileExists(atPath: (credentialPath as NSString).deletingLastPathComponent))
+        credential.destroy() // 第二次调用不得抛错/崩溃
+        check("ASK07", "destroy 幂等（二次调用安全）", true)
+
+        // 残留清扫不得误删活跃（新建）凭据目录
+        guard let active = SSHAskpassCredential(password: "active") else {
+            check("ASK08", "清扫保留活跃凭据", false)
+            return
         }
-        if handle.isRunning { handle.forceTerminate() }
-        check("PTY06", "PTY 应答与退出", handle.exitCode == 0)
-        check("PTY07", "stdout 独立收集", handle.stdoutTail == "204")
-        check("PTY08", "退出前排空诊断", handle.stderrTail.contains("final diagnostic"))
-        check("PTY09", "密码不回显", !handle.stderrTail.contains(secret) && !handle.stdoutTail.contains(secret))
-        check("PTY10", "真实 PTY 输出可解析远端状态码",
-              SSHRemoteProbe.parse(exitCode: handle.exitCode ?? 255,
-                  stdout: handle.stdoutTail, stderr: handle.stderrTail) == .verified(statusCode: 204))
+        SSHAskpassCredential.sweepStaleDirectories()
+        let activePath = active.environmentAdditions[SSHAskpassCredential.credentialFileEnvKey] ?? ""
+        check("ASK08", "清扫保留活跃凭据", FileManager.default.fileExists(atPath: activePath))
+        active.destroy()
     }
 
     @MainActor

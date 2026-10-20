@@ -59,8 +59,9 @@ enum SSHCommandBuilder {
             "-o", "ConnectTimeout=10",
         ]
         if profile.authMode == .password {
-            // 密码模式：经 PTY 应答提示（App 内输入，不落盘）；禁用公钥路径、
-            // 只允许一次密码尝试（错密码立即失败，行为可预期）
+            // 密码模式：密码经 SSH_ASKPASS helper（force 模式，无 TTY）交付，
+            // 见 SSHAskpassCredential——不经 argv、不经环境变量、不经日志；
+            // 禁用公钥路径、只允许一次密码尝试（错密码立即失败，行为可预期）
             args += [
                 "-o", "PubkeyAuthentication=no",
                 "-o", "PreferredAuthentications=keyboard-interactive,password",

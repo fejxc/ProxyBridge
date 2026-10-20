@@ -47,8 +47,10 @@ final class SSHTunnelCoordinator: TunnelService {
         var relay: (any TCPRelaying)?
         var trafficID: UUID?
         /// 密码模式：本次连接的密码（仅内存；断开/退出即丢弃，不落盘不进日志）。
-        /// UI 经 submitPassword 写入；setup 任务轮询此字段（不再用 continuation 挂起）。
+        /// UI 经 submitPassword 写入。
         var password: String?
+        /// 密码模式：本次连接的 askpass 凭据装置（认证后销毁，见 SSHAskpassCredential）。
+        var askpass: SSHAskpassCredential?
     }
 
     private var sessions: [UUID: Session] = [:]
@@ -120,6 +122,8 @@ final class SSHTunnelCoordinator: TunnelService {
             scheduleForceKill(handle)
         }
         session.handle = nil
+        session.askpass?.destroy()
+        session.askpass = nil
         session.password = nil // 断开即丢弃
         session.phase = .idle
         session.localVerified = nil
@@ -193,6 +197,8 @@ final class SSHTunnelCoordinator: TunnelService {
                 scheduleForceKill(handle)
             }
             session.handle = nil
+            session.askpass?.destroy()
+            session.askpass = nil
             session.phase = .idle
             sessions[id] = nil
         }
@@ -316,7 +322,59 @@ final class SSHTunnelCoordinator: TunnelService {
             }
         }
 
-        // 3) connecting：启动 ssh 进程
+        // 3) connecting：密码模式先取得密码（钥匙串 → 会话内记忆 → 请求 UI 输入），
+        //    再启动 ssh——密码经 SSH_ASKPASS helper 交付（force 模式，无 PTY、
+        //    无提示词刮取；等待输入发生在进程启动前，不再有 ssh 挂在提示上空转）。
+        var askpass: SSHAskpassCredential?
+        if profile.authMode == .password {
+            var password = session.password // 会话内记忆（自动重连预填）
+            if password == nil || password!.isEmpty, profile.rememberPassword {
+                password = secrets.load(for: id) // 已记住的密码（钥匙串）：不打扰用户
+            }
+            if password == nil || password!.isEmpty {
+                var prompting = baseSnapshot(profileID: id, phase: .connecting)
+                prompting.localProxyVerified = session.localVerified
+                prompting.humanReadableDetail = profile.rememberPassword
+                    ? "等待输入 SSH 密码…（已记住的密码不可用，将重新询问）"
+                    : "等待输入 SSH 密码…（勾选「记住」可存入本机钥匙串）"
+                session.phase = .connecting
+                onEvent?(.snapshot(prompting))
+                onEvent?(.passwordPromptRequested(profileID: id))
+
+                // 轮询等待 UI 输入（90 秒超时，绝不无限挂起）
+                let waitDeadline = Date().addingTimeInterval(90)
+                while (session.password == nil || session.password!.isEmpty) && Date() < waitDeadline {
+                    if session.userStopped || Task.isCancelled { return }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                }
+                guard !session.userStopped, !Task.isCancelled,
+                      let entered = session.password, !entered.isEmpty else {
+                    session.password = nil
+                    finishSetup(session: session, profileID: id) {
+                        session.phase = .error
+                        var errorState = self.baseSnapshot(profileID: id, phase: .error)
+                        errorState.humanReadableDetail = "等待密码输入超时（90 秒）：已取消本次连接，请重新点「连接」"
+                        return errorState
+                    }
+                    return
+                }
+                password = entered
+            }
+            session.password = password
+            sessionPasswords[id] = password // 会话内记忆：后续自动重连复用
+            guard let entered = password, let credential = SSHAskpassCredential(password: entered) else {
+                finishSetup(session: session, profileID: id) {
+                    session.phase = .error
+                    var errorState = self.baseSnapshot(profileID: id, phase: .error)
+                    errorState.humanReadableDetail = "无法准备 SSH 密码凭据（临时目录不可写）"
+                    return errorState
+                }
+                return
+            }
+            askpass = credential
+            session.askpass = credential
+        }
+
         var connecting = baseSnapshot(profileID: id, phase: .connecting)
         connecting.localProxyVerified = session.localVerified
         connecting.selectionReason = selectionReason
@@ -331,10 +389,10 @@ final class SSHTunnelCoordinator: TunnelService {
             mode: effectiveMode,
             localEndpoint: sshEndpoint
         )
-        let usePTY = profile.authMode == .password
-        let handle = usePTY
-            ? processFactory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
-            : processFactory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+        let handle = processFactory.make(
+            arguments: args,
+            environment: SSHProcessLauncher.sshEnvironment(credential: askpass)
+        )
         session.handle = handle
         let sessionID = id
         handle.onExit = { [weak self, weak handle] code in
@@ -357,90 +415,8 @@ final class SSHTunnelCoordinator: TunnelService {
             return
         }
 
-        // 4a) 密码模式：等待 ssh 的密码提示 → 请 UI 输入 → 经 PTY 应答
-        if usePTY {
-            var prompting = baseSnapshot(profileID: id, phase: .connecting)
-            prompting.localProxyVerified = session.localVerified
-            prompting.humanReadableDetail = "等待输入 SSH 密码…"
-            onEvent?(.snapshot(prompting))
-
-            // 等密码提示出现（或进程退出）
-            let promptDeadline = Date().addingTimeInterval(30)
-            var sawPrompt = false
-            while Date() < promptDeadline {
-                if session.userStopped || Task.isCancelled { return }
-                if handle.exitCode != nil { return } // 已退出 → handleProcessExit 分类
-                if SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail) {
-                    sawPrompt = true
-                    break
-                }
-                try? await Task.sleep(nanoseconds: 50_000_000)
-            }
-            guard !session.userStopped, !Task.isCancelled else { return }
-            guard sawPrompt else {
-                session.relay?.stop()
-                handle.terminate()
-                scheduleForceKill(handle)
-                finishSetup(session: session, profileID: id) {
-                    session.phase = .error
-                    var error = self.baseSnapshot(profileID: id, phase: .error)
-                    error.humanReadableDetail = "等待 SSH 密码提示超时：已取消本次连接"
-                    return error
-                }
-                return
-            }
-
-            // 已记住的密码（钥匙串）：自动应答，不打扰用户
-            var autoPassword: String?
-            if profile.rememberPassword {
-                autoPassword = secrets.load(for: id)
-            }
-
-            if let saved = autoPassword {
-                handle.writePTY(saved + "\n")
-                session.password = saved
-            } else if let primed = session.password, !primed.isEmpty {
-                // 会话内记忆（自动重连预填）：直接应答，不打扰用户输入
-                handle.writePTY(primed + "\n")
-            } else {
-                // 请求 UI 输入，轮询等待（90 秒超时，绝不无限挂起）
-                var connecting = baseSnapshot(profileID: id, phase: .connecting)
-                connecting.localProxyVerified = session.localVerified
-                connecting.humanReadableDetail = profile.rememberPassword
-                    ? "等待输入 SSH 密码…（已记住的密码不可用，将重新询问）"
-                    : "等待输入 SSH 密码…（勾选「记住」可存入本机钥匙串）"
-                onEvent?(.snapshot(connecting))
-                onEvent?(.passwordPromptRequested(profileID: id))
-
-                let waitDeadline = Date().addingTimeInterval(90)
-                while session.password == nil && Date() < waitDeadline {
-                    if session.userStopped || Task.isCancelled { return }
-                    try? await Task.sleep(nanoseconds: 200_000_000)
-                }
-                guard !session.userStopped, !Task.isCancelled else { return }
-                guard let password = session.password, !password.isEmpty else {
-                    session.password = nil
-                    session.relay?.stop()
-                    handle.terminate()
-                    scheduleForceKill(handle)
-                    finishSetup(session: session, profileID: id) {
-                        var errorState = self.baseSnapshot(profileID: id, phase: .error)
-                        errorState.humanReadableDetail = "等待密码输入超时（90 秒）：已取消本次连接，请重新点「连接」"
-                        session.phase = .error
-                        return errorState
-                    }
-                    return
-                }
-                handle.writePTY(password + "\n")
-                sessionPasswords[id] = password // 会话内记忆：后续自动重连复用
-            }
-            var connecting2 = baseSnapshot(profileID: id, phase: .connecting)
-            connecting2.localProxyVerified = session.localVerified
-            connecting2.humanReadableDetail = "已提交密码，正在建立 SSH 隧道…"
-            onEvent?(.snapshot(connecting2))
-        }
-
-        // 4) 宽限期：进程在此窗口内退出 → 分类（转发失败/认证/网络；密码错误也在此被 NumberOfPasswordPrompts=1 快速失败）
+        // 4) 宽限期：认证与转发在此窗口内完成；进程退出 → 分类
+        //（转发失败/认证/网络；错密码经 NumberOfPasswordPrompts=1 快速失败）
         var waited = 0.0
         while waited < graceSeconds {
             if session.userStopped || Task.isCancelled { return }
@@ -451,6 +427,9 @@ final class SSHTunnelCoordinator: TunnelService {
             waited += 0.1
         }
         guard !session.userStopped, !Task.isCancelled, handle.isRunning else { return }
+        // 认证已通过：凭据文件即刻销毁（此后连接生命周期内不再需要）
+        session.askpass?.destroy()
+        session.askpass = nil
 
         // 5) 转发已建立（ExitOnForwardFailure 保证），进行远端端到端验证
         var verifying = baseSnapshot(profileID: id, phase: .connecting)
@@ -494,6 +473,8 @@ final class SSHTunnelCoordinator: TunnelService {
         case .authRequired(let detail):
             scheduleAdapterCleanup(session: session, profile: profile, emitStatus: false)
             session.password = nil
+            session.askpass?.destroy()
+            session.askpass = nil
             session.relay?.stop()
             handle.terminate()
             scheduleForceKill(handle)
@@ -577,6 +558,8 @@ final class SSHTunnelCoordinator: TunnelService {
                 session.remoteVerified = nil
                 session.phase = .authRequired
                 session.password = nil
+                session.askpass?.destroy()
+                session.askpass = nil
                 session.relay?.stop()
                 handle.terminate()
                 scheduleForceKill(handle)
@@ -731,6 +714,8 @@ final class SSHTunnelCoordinator: TunnelService {
         }
         session.phase = phase
         session.handle = nil
+        session.askpass?.destroy()
+        session.askpass = nil
         session.task?.cancel()
         session.task = nil
         session.localVerified = nil
@@ -756,6 +741,8 @@ final class SSHTunnelCoordinator: TunnelService {
         session.task?.cancel(); session.task = nil
         session.phase = .error
         session.password = nil
+        session.askpass?.destroy()
+        session.askpass = nil
         session.localVerified = nil; session.remoteVerified = nil
         if let handle = session.handle { handle.terminate(); scheduleForceKill(handle) }
         session.handle = nil

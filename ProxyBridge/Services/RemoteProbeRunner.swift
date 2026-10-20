@@ -56,38 +56,19 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
             protocol: `protocol`,
             urlString: target
         )
-        let usePTY = password != nil
-        let handle = usePTY
-            ? factory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
-            : factory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+        let credential = password.flatMap { SSHAskpassCredential(password: $0) }
+        let handle = factory.make(
+            arguments: args,
+            environment: SSHProcessLauncher.sshEnvironment(credential: credential)
+        )
         do {
             try handle.start()
         } catch {
+            credential?.destroy()
             return .unknown(reason: "无法启动远端探测 ssh：\(error.localizedDescription)")
         }
         return await withTaskCancellationHandler {
-            // 密码模式：等待密码提示并应答（NumberOfPasswordPrompts=1，错密码立即失败）
-            if usePTY {
-                let promptDeadline = Date().addingTimeInterval(15)
-                var sawPrompt = false
-                while handle.isRunning && Date() < promptDeadline {
-                    if SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail) {
-                        sawPrompt = true
-                        break
-                    }
-                    do { try await Task.sleep(nanoseconds: 50_000_000) }
-                    catch { handle.terminate(); return .unknown(reason: "远端探测已取消") }
-                }
-                guard sawPrompt else {
-                    handle.terminate()
-                    return .unknown(reason: handle.isRunning ? "远端探测超时（未见密码提示）" : "远端 ssh 未进入密码提示（主机密钥/网络问题？）")
-                }
-                guard let password, !password.isEmpty else {
-                    handle.terminate()
-                    return .unknown(reason: "密码模式缺少会话密码")
-                }
-                handle.writePTY(password + "\n")
-            }
+            defer { credential?.destroy() }
             // 脚本内部 --max-time 8 + ssh ConnectTimeout 10 → 上限 ~20s，轮询等待
             let deadline = Date().addingTimeInterval(20)
             while handle.isRunning && Date() < deadline {
@@ -330,33 +311,28 @@ final class SSHRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging {
 
         let command = RemoteHTTPAdapterCommands.launch(token: token)
         let args = SSHCommandBuilder.remoteCommandArguments(profile: profile, command: command)
-        let usePTY = profile.authMode == .password
-        let handle = usePTY
-            ? factory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
-            : factory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+        let credential = password.flatMap { SSHAskpassCredential(password: $0) }
+        let handle = factory.make(
+            arguments: args,
+            environment: SSHProcessLauncher.sshEnvironment(credential: credential)
+        )
         do {
             try handle.start()
         } catch {
+            credential?.destroy()
             _ = await runOneShot(profile: profile, command: RemoteHTTPAdapterCommands.cleanup(token: token), password: password, timeout: preparationTimeout)
             return .unavailable("无法启动 Privoxy 管理 SSH：\(LogRedaction.sanitize(error.localizedDescription))")
         }
-        guard await answerPasswordIfNeeded(
-            handle,
-            password: password,
-            required: profile.authMode == .password,
-            timeout: launchTimeout
-        ) else {
-            handle.terminate()
-            _ = await runOneShot(profile: profile, command: RemoteHTTPAdapterCommands.cleanup(token: token), password: password, timeout: preparationTimeout)
-            return classifyFailure(exitCode: handle.exitCode ?? 255, stderr: handle.stderrTail)
-        }
 
+        // 启动确认窗口（认证 + 远端命令 + Privoxy 启动都发生在此期间）。
+        // 凭据文件在每条出口路径上销毁：进程退出 / 启动确认 / 超时终止后均不再需要。
         let deadline = Date().addingTimeInterval(launchTimeout)
         while Date() < deadline {
             if handle.stdoutTail.contains(RemoteHTTPAdapterCommands.startedMarker) {
                 // Give Privoxy a brief startup window; the coordinator still
                 // performs a real HTTP CONNECT request before reporting ready.
                 try? await Task.sleep(nanoseconds: 150_000_000)
+                credential?.destroy() // 远端命令已执行：认证完成，凭据即刻销毁
                 guard handle.isRunning else {
                     let detail = "Privoxy 启动后立即退出：\(LogRedaction.sanitize(handle.stderrTail))"
                     _ = await runOneShot(profile: profile, command: RemoteHTTPAdapterCommands.cleanup(token: token), password: password, timeout: preparationTimeout)
@@ -365,6 +341,7 @@ final class SSHRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging {
                 return .started(RemoteHTTPAdapterSession(token: token, handle: handle))
             }
             guard handle.isRunning else {
+                credential?.destroy()
                 let failure = classifyFailure(exitCode: handle.exitCode ?? 255, stderr: handle.stderrTail)
                 _ = await runOneShot(profile: profile, command: RemoteHTTPAdapterCommands.cleanup(token: token), password: password, timeout: preparationTimeout)
                 return failure
@@ -372,6 +349,7 @@ final class SSHRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging {
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
         handle.terminate()
+        credential?.destroy()
         _ = await runOneShot(profile: profile, command: RemoteHTTPAdapterCommands.cleanup(token: token), password: password, timeout: preparationTimeout)
         return .unavailable("未收到 Privoxy 启动确认，已停止本次管理连接")
     }
@@ -400,21 +378,17 @@ final class SSHRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging {
 
     private func runOneShot(profile: ServerProfile, command: String, password: String?, timeout: TimeInterval) async -> CommandResult? {
         let args = SSHCommandBuilder.remoteCommandArguments(profile: profile, command: command)
-        let usePTY = profile.authMode == .password
-        let handle = usePTY
-            ? factory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
-            : factory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
-        do { try handle.start() } catch { return nil }
+        let credential = password.flatMap { SSHAskpassCredential(password: $0) }
+        let handle = factory.make(
+            arguments: args,
+            environment: SSHProcessLauncher.sshEnvironment(credential: credential)
+        )
+        do { try handle.start() } catch {
+            credential?.destroy()
+            return nil
+        }
         return await withTaskCancellationHandler {
-            guard await answerPasswordIfNeeded(
-                handle,
-                password: password,
-                required: profile.authMode == .password,
-                timeout: min(timeout, 20)
-            ) else {
-                handle.terminate()
-                return CommandResult(exitCode: handle.exitCode ?? 255, stdout: handle.stdoutTail, stderr: handle.stderrTail)
-            }
+            defer { credential?.destroy() }
             let deadline = Date().addingTimeInterval(timeout)
             while handle.isRunning && Date() < deadline {
                 if Task.isCancelled { handle.terminate(); return nil }
@@ -426,26 +400,6 @@ final class SSHRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging {
         } onCancel: {
             handle.terminate()
         }
-    }
-
-    private func answerPasswordIfNeeded(
-        _ handle: any SSHProcessHandle,
-        password: String?,
-        required: Bool,
-        timeout: TimeInterval
-    ) async -> Bool {
-        guard required else { return true }
-        guard let password, !password.isEmpty else { return false }
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail) {
-                handle.writePTY(password + "\n")
-                return true
-            }
-            if !handle.isRunning { return false }
-            try? await Task.sleep(nanoseconds: 50_000_000)
-        }
-        return false
     }
 
     private func classifyFailure(exitCode: Int32, stderr: String) -> RemoteHTTPAdapterStartResult {

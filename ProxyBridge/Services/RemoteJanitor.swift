@@ -105,37 +105,19 @@ final class SSHRemoteJanitor: RemoteJanitorProviding {
 
     private func run(profile: ServerProfile, password: String?, script: String, timeout: TimeInterval) async -> RunResult? {
         let args = RemoteJanitorScript.arguments(profile: profile, script: script)
-        let usePTY = password != nil
-        let handle = usePTY
-            ? factory.makePTY(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
-            : factory.make(arguments: args, environment: SSHProcessLauncher.sshEnvironment())
+        let credential = password.flatMap { SSHAskpassCredential(password: $0) }
+        let handle = factory.make(
+            arguments: args,
+            environment: SSHProcessLauncher.sshEnvironment(credential: credential)
+        )
         do {
             try handle.start()
         } catch {
+            credential?.destroy()
             return nil
         }
         return await withTaskCancellationHandler {
-            if usePTY {
-                let promptDeadline = Date().addingTimeInterval(15)
-                var sawPrompt = false
-                while handle.isRunning && Date() < promptDeadline {
-                    if SSHProcessLauncher.hasPasswordPrompt(handle.stderrTail) {
-                        sawPrompt = true
-                        break
-                    }
-                    do { try await Task.sleep(nanoseconds: 50_000_000) }
-                    catch { handle.terminate(); return nil }
-                }
-                guard sawPrompt else {
-                    handle.terminate()
-                    return nil
-                }
-                guard let password, !password.isEmpty else {
-                    handle.terminate()
-                    return nil
-                }
-                handle.writePTY(password + "\n")
-            }
+            defer { credential?.destroy() }
             let deadline = Date().addingTimeInterval(timeout)
             while handle.isRunning && Date() < deadline {
                 if Task.isCancelled {

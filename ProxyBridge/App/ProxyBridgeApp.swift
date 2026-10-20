@@ -6,7 +6,6 @@ import Carbon
 @MainActor
 struct ProxyBridgeEntry {
     static func main() {
-        SSHProcessLauncher.runPTYChildIfRequested()
         ProxyBridgeApp.main()
     }
 }

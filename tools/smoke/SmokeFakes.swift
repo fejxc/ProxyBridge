@@ -56,8 +56,6 @@ final class SmokeSSHHandle: SSHProcessHandle, @unchecked Sendable {
     var exitCode: Int32? { lock.lock(); defer { lock.unlock() }; return code }
     var stderrTail: String { lock.lock(); defer { lock.unlock() }; return stderrText }
     var stdoutTail: String { "" }
-    var onPTYOutput: (@Sendable (String) -> Void)?
-    func writePTY(_ text: String) {}
 }
 
 final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
@@ -65,6 +63,7 @@ final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
     private var pending: [SmokeSSHHandle] = []
     private(set) var handles: [SmokeSSHHandle] = []
     private(set) var lastArguments: [String] = []
+    private(set) var lastEnvironment: [String: String] = [:]
 
     func enqueue(_ h: SmokeSSHHandle) {
         lock.lock(); pending.append(h); lock.unlock()
@@ -73,6 +72,7 @@ final class SmokeSSHFactory: SSHProcessFactory, @unchecked Sendable {
     func make(arguments: [String], environment: [String: String]) -> SSHProcessHandle {
         lock.lock()
         lastArguments = arguments
+        lastEnvironment = environment
         let h = pending.isEmpty ? SmokeSSHHandle() : pending.removeFirst()
         handles.append(h)
         lock.unlock()
