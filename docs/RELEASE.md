@@ -14,12 +14,13 @@
 - [v1.4.3](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.3)：端口冲突经 SSH 只读诊断占用者（零依赖 /proc 解析），确认后一键清理自家残留（僵尸 sshd / 孤儿 Privoxy）并自动重连。
 - [v1.4.4](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.4)：节点切换自动感知（出口 IP 指纹 + 立即重验）、本地 Relay 冲突限时重试、日志落盘、README 定稿与 MIT 协议。
 - [v1.4.5](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.5)：单实例保护、崩溃孤儿 ssh 清扫、密码会话内记忆（自动重连免重复询问）、应用内自动更新（下载 · SHA-256 校验 · 原子替换 · 重启）。
+- [v1.4.6](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.6)：更新链路加固（流式下载、codesign 完整性与身份核对、同卷原子替换）；发布流程钉死与被测代码一致（CI 绿门槛、标签内构建、资产不可覆盖）；真实验收清单成为发布门槛；「已连接」明确标注探测目标并支持每服务器业务验证目标。
 
 后续每个 Release 都从不可变的版本标签构建。
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-当前稳定版为 `ProxyBridge-1.4.5-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载并校验官方资产后自动替换重启）。
+当前稳定版为 `ProxyBridge-1.4.6-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
 
 ## 后续版本
 
@@ -34,10 +35,10 @@ Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，�
 ## 本地打包
 
 ```bash
-bash scripts/build_dmg.sh 1.4.5
+bash scripts/build_dmg.sh 1.4.6
 ```
 
-候选产物：`build/dist/ProxyBridge-1.4.5-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
+候选产物：`build/dist/ProxyBridge-1.4.6-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
 
 ## 签名与权限
 
