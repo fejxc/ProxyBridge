@@ -72,6 +72,7 @@
 		51A300000000000000000034 /* EgressIPProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000034 /* EgressIPProbe.swift */; };
 		51A300000000000000000035 /* InstanceGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000035 /* InstanceGuard.swift */; };
 		51A300000000000000000036 /* UpdateInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000036 /* UpdateInstaller.swift */; };
+		51A300000000000000000037 /* UpdateCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000037 /* UpdateCoordinator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -86,6 +87,7 @@
 
 /* Begin PBXFileReference section */
 		51A200000000000000000001 /* ProxyBridgeApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyBridgeApp.swift; sourceTree = "<group>"; };
+		51A200000000000000000037 /* UpdateCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCoordinator.swift; sourceTree = "<group>"; };
 		51A200000000000000000002 /* LocalProxyEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyEndpoint.swift; sourceTree = "<group>"; };
 		51A200000000000000000003 /* ServerProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProfile.swift; sourceTree = "<group>"; };
 		51A200000000000000000004 /* TunnelStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatus.swift; sourceTree = "<group>"; };
@@ -266,6 +268,7 @@
 				51A200000000000000000034 /* EgressIPProbe.swift */,
 				51A200000000000000000035 /* InstanceGuard.swift */,
 				51A200000000000000000036 /* UpdateInstaller.swift */,
+				51A200000000000000000037 /* UpdateCoordinator.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -464,6 +467,7 @@
 				51A300000000000000000034 /* EgressIPProbe.swift in Sources */,
 				51A300000000000000000035 /* InstanceGuard.swift in Sources */,
 				51A300000000000000000036 /* UpdateInstaller.swift in Sources */,
+				51A300000000000000000037 /* UpdateCoordinator.swift in Sources */,
 				51A300000000000000000012 /* ProxySettingsView.swift in Sources */,
 				51A300000000000000000013 /* ServerEditorView.swift in Sources */,
 				51A300000000000000000014 /* SettingsView.swift in Sources */,

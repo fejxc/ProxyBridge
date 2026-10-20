@@ -25,14 +25,12 @@ final class AppViewModel {
     let secrets: any PasswordStoring
     /// 主机指纹信任（TOFU）：nil = 功能不可用（测试环境）。
     private let hostKeyTrust: (any HostKeyTrustProviding)?
-    /// 更新检查：nil = 功能不可用。
-    private let updateChecker: (any UpdateChecking)?
+    /// 更新流（检查 + 提醒 + 应用内安装）：逻辑自治，见 UpdateCoordinator。
+    let updates: UpdateCoordinator
     /// 防「空闲休眠」电源断言：nil = 功能不可用。
     private let powerAssertion: (any PowerAssertionControlling)?
     /// 远端端口残留诊断清理：nil = 功能不可用。
     private let remoteJanitor: (any RemoteJanitorProviding)?
-    /// 应用内更新安装器：nil = 只保留浏览器下载路径。
-    private let updateInstaller: (any UpdateInstalling)?
 
     // MARK: - 状态
 
@@ -61,29 +59,28 @@ final class AppViewModel {
     }
     private(set) var hostKeyScan: HostKeyScanState = .idle
 
-    // MARK: - 更新检查（P0）
-    /// 发现的新版本（nil = 无提醒）。
-    private(set) var updateInfo: UpdateInfo?
-    /// 手动检查的界面反馈（自动检查保持静默语义，只在成功发现时提示）。
-    enum UpdateCheckUIState: Equatable {
-        case idle
-        case checking
-        case failed(String)
+    // MARK: - 更新流 facade（实现在 UpdateCoordinator；同名转发保持视图/测试访问路径不变）
+
+    var updateInfo: UpdateInfo? { updates.info }
+    var updateCheckUIState: UpdateCoordinator.CheckUIState { updates.checkUIState }
+    var updateInstallState: UpdateCoordinator.InstallUIState { updates.installState }
+    var relaunchAfterUpdate: (() -> Void)? {
+        get { updates.relaunchAfterUpdate }
+        set { updates.relaunchAfterUpdate = newValue }
     }
-    private(set) var updateCheckUIState: UpdateCheckUIState = .idle
-    /// 已通知过的版本（每版本只发一次系统通知）。
-    private var updateNotifiedVersion: String?
-    /// 应用内安装状态（下载 → 校验 → 安装；校验不可用绝不自动安装）。
-    enum UpdateInstallUIState: Equatable {
-        case idle
-        case downloading(Double)
-        case verifying
-        case installing
-        case failed(String)
+    static var currentVersion: String { UpdateCoordinator.currentVersion }
+
+    func checkForUpdates(manual: Bool) async {
+        await updates.checkForUpdates(manual: manual)
     }
-    private(set) var updateInstallState: UpdateInstallUIState = .idle
-    /// 更新安装完成后的重启入口（由 AppDelegate 注入，经 terminate 流程避免单实例锁竞态）。
-    var relaunchAfterUpdate: (() -> Void)?
+
+    func openReleasePage() {
+        updates.openReleasePage()
+    }
+
+    func downloadAndInstallUpdate() {
+        updates.downloadAndInstallUpdate()
+    }
 
     // MARK: - 动态→静态回升（P1）
     /// 升回静态的冷却记录（防抖：代理不稳时避免模式反复横跳）。
@@ -163,11 +160,19 @@ final class AppViewModel {
         self.secrets = secrets
         self.systemServices = systemServices
         self.hostKeyTrust = hostKeyTrust
-        self.updateChecker = updateChecker
+        self.updates = UpdateCoordinator(
+            updateChecker: updateChecker,
+            updateInstaller: updateInstaller,
+            logStore: logStore
+        )
         self.powerAssertion = powerAssertion
         self.remoteJanitor = remoteJanitor
-        self.updateInstaller = updateInstaller
 
+        // 装配需要引用 self 的闭包（全部存储属性已初始化之后才可捕获 self）。
+        updates.attach(
+            settings: { [weak self] in self?.settings ?? .defaults() },
+            postNewVersionNotice: { [weak self] info in self?.postUpdateNotice(info) }
+        )
         bootstrap()
     }
 
@@ -284,15 +289,7 @@ final class AppViewModel {
         // 更新检查：延迟 3 秒启动，不与首连/检测抢资源（只读公开 API，无上行数据）。
         // 启动时代理/网络可能尚未就绪：失败后 60 秒自动重试一次（之后靠网络恢复事件）。
         if settings.checkForUpdates {
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                guard let self, self.settings.checkForUpdates else { return }
-                await self.checkForUpdates(manual: false)
-                guard self.updateInfo == nil else { return }
-                try? await Task.sleep(nanoseconds: 60_000_000_000)
-                guard self.settings.checkForUpdates, self.updateInfo == nil else { return }
-                await self.checkForUpdates(manual: false)
-            }
+            updates.startAutomaticChecks()
         }
     }
 
@@ -376,9 +373,7 @@ final class AppViewModel {
         logStore.append(raw: "网络路径已恢复：重扫本地代理并重建允许自动重连的隧道", level: .info)
         proxyDetector.detect()
         tunnel.handleNetworkRestoration()
-        if settings.checkForUpdates, updateInfo == nil {
-            Task { @MainActor [weak self] in await self?.checkForUpdates(manual: false) }
-        }
+        updates.checkAfterNetworkRestored()
     }
 
     /// P1 自动回升：automatic 模式回退到动态 SOCKS5 后，本地代理恢复并连续两次扫描
@@ -487,126 +482,14 @@ final class AppViewModel {
         }
     }
 
-    // MARK: - 更新检查（P0）
+    // MARK: - 更新流（实现见 UpdateCoordinator）
 
-    static var currentVersion: String {
-        (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "0"
-    }
-
-    /// 检查新版本。manual = true 时无论成败都给出界面与日志反馈（设置页按钮触发）。
-    func checkForUpdates(manual: Bool) async {
-        guard let updateChecker else {
-            if manual {
-                updateCheckUIState = .failed("当前构建未装配更新检查服务")
-                logStore.append(raw: "当前构建未装配更新检查服务", level: .warning)
-            }
-            return
-        }
-        if manual { updateCheckUIState = .checking }
-        guard let info = await updateChecker.latestRelease() else {
-            if manual {
-                let reason = "网络不可用或 GitHub 无法访问（需要代理时请先连接本地代理）"
-                updateCheckUIState = .failed(reason)
-                logStore.append(raw: "检查更新失败：\(reason)", level: .warning)
-            }
-            return
-        }
-        if Version.isNewer(candidate: info.latestVersion, current: Self.currentVersion) {
-            let isNewVersion = updateInfo?.latestVersion != info.latestVersion
-            updateInfo = info
-            updateCheckUIState = .idle
-            if isNewVersion {
-                logStore.append(raw: "发现新版本 v\(info.latestVersion)（当前 v\(Self.currentVersion)）：菜单栏面板与设置页可前往下载", level: .info)
-                notifyUpdateOnce(info)
-            }
-        } else if manual {
-            updateCheckUIState = .idle
-            logStore.append(raw: "已是最新版本（v\(Self.currentVersion)）", level: .success)
-        }
-    }
-
-    /// 每个版本只发一次系统通知（授权被拒/无授权时静默，界面横幅仍在）。
-    private func notifyUpdateOnce(_ info: UpdateInfo) {
-        guard updateNotifiedVersion != info.latestVersion else { return }
-        updateNotifiedVersion = info.latestVersion
+    /// 新版本的系统通知动作：开关与授权由系统服务处理，每版本一次的去重已由协调器完成。
+    private func postUpdateNotice(_ info: UpdateInfo) {
         guard settings.showNotifications, let services = systemServices else { return }
         let version = info.latestVersion
         Task { @MainActor in
             try? await services.postUpdateNotification(version: version)
-        }
-    }
-
-    /// 打开发布页（有新版本时直达该版本页面）。
-    func openReleasePage() {
-        let url = updateInfo?.releaseURL ?? URL(string: "https://github.com/fejxc/ProxyBridge/releases")
-        guard let url else { return }
-        NSWorkspace.shared.open(url)
-        logStore.append(raw: "已打开发布页\(updateInfo.map { "（v\($0.latestVersion)）" } ?? "")", level: .info)
-    }
-
-    // MARK: - 应用内更新安装（下载 → 校验 → 替换 → 重启）
-
-    /// 下载并安装新版本。校验链不可用（无 DMG 资产 / 拿不到官方校验值 / 校验不通过）
-    /// 时绝不自动安装——如实报告并保留浏览器下载路径。
-    func downloadAndInstallUpdate() {
-        guard let info = updateInfo else { return }
-        switch updateInstallState {
-        case .downloading, .verifying, .installing:
-            return // 进行中：幂等忽略
-        case .idle, .failed:
-            break
-        }
-        guard let installer = updateInstaller else {
-            logStore.append(raw: "当前构建未装配应用内安装器，已打开发布页", level: .info)
-            openReleasePage()
-            return
-        }
-        guard let dmgURL = info.dmgURL, let shaURL = info.sha256URL else {
-            logStore.append(raw: "本版本发布页缺少 DMG 或校验资产，自动安装不可用；已打开发布页", level: .warning)
-            openReleasePage()
-            return
-        }
-        updateInstallState = .downloading(0)
-        logStore.append(raw: "开始下载 v\(info.latestVersion) 更新包（官方通用 DMG）", level: .info)
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            let local = await installer.download(url: dmgURL) { [weak self] value in
-                Task { @MainActor [weak self] in self?.updateInstallState = .downloading(value) }
-            }
-            guard let local else {
-                self.finishUpdateInstall(.failed("下载失败：网络不可用或 GitHub 无法访问（需要代理时请先连接本地代理）"))
-                return
-            }
-            guard let expected = await installer.fetchExpectedSHA256(url: shaURL) else {
-                self.finishUpdateInstall(.failed("无法获取官方 SHA-256 校验值，已取消自动安装（安全优先）"))
-                return
-            }
-            self.updateInstallState = .verifying
-            guard installer.verify(file: local, expectedHex: expected) else {
-                try? FileManager.default.removeItem(at: local)
-                self.finishUpdateInstall(.failed("SHA-256 校验不通过，已取消安装；请从发布页手动下载"))
-                return
-            }
-            self.updateInstallState = .installing
-            if installer.installAndRelaunch(dmg: local, expectedVersion: info.latestVersion) {
-                try? FileManager.default.removeItem(at: local)
-                if Bundle.main.bundleURL.path.hasPrefix("/Applications/") {
-                    self.logStore.append(raw: "v\(info.latestVersion) 安装完成，正在重启应用", level: .success)
-                    self.relaunchAfterUpdate?()
-                } else {
-                    self.logStore.append(raw: "v\(info.latestVersion) 已挂载安装卷（当前非 /Applications 运行，请手动拖入）", level: .info)
-                    self.updateInstallState = .idle
-                }
-            } else {
-                self.finishUpdateInstall(.failed("安装失败：无法挂载 DMG 或替换 /Applications 中的应用（应用可能正被占用）"))
-            }
-        }
-    }
-
-    private func finishUpdateInstall(_ state: UpdateInstallUIState) {
-        updateInstallState = state
-        if case .failed(let reason) = state {
-            logStore.append(raw: "更新安装未完成：\(reason)", level: .warning)
         }
     }
 
