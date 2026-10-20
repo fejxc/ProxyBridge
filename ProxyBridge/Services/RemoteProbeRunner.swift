@@ -27,6 +27,13 @@ protocol RemoteProbeExecuting: AnyObject, Sendable {
     func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?) async -> RemoteProbeOutcome
 }
 
+extension RemoteProbeExecuting {
+    /// 带业务验证目标的重载：nil / 非法目标回落固定验证目标（替身无需实现）。
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?, urlString: String?) async -> RemoteProbeOutcome {
+        await probe(profile: profile, remotePort: remotePort, protocol: `protocol`, password: password)
+    }
+}
+
 /// 生产实现：一次性 `ssh` 执行受控远端脚本，收集 stdout/exit 后解析。
 /// 与隧道进程完全独立（不写 -N 隧道的 stdin），并发由协调器加锁。
 final class SSHRemoteProbe: RemoteProbeExecuting {
@@ -37,11 +44,17 @@ final class SSHRemoteProbe: RemoteProbeExecuting {
     }
 
     func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String? = nil) async -> RemoteProbeOutcome {
+        await probe(profile: profile, remotePort: remotePort, protocol: `protocol`, password: password, urlString: nil)
+    }
+
+    /// 生产实现：业务目标经 ServerProfile.sanitizedProbeTarget 清洗，非法回落固定目标。
+    func probe(profile: ServerProfile, remotePort: Int, protocol: ProxyProtocol, password: String?, urlString: String?) async -> RemoteProbeOutcome {
+        let target = ServerProfile.sanitizedProbeTarget(urlString) ?? CurlProxyProbe.verificationURL
         let args = RemoteProbeCommand.arguments(
             profile: profile,
             remotePort: remotePort,
             protocol: `protocol`,
-            urlString: CurlProxyProbe.verificationURL
+            urlString: target
         )
         let usePTY = password != nil
         let handle = usePTY

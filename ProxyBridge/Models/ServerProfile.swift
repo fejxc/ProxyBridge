@@ -75,6 +75,9 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     var proxySelectionMode: ProxySelectionMode
     var manualEndpoint: LocalProxyEndpoint?
     var preferredProtocol: ProxyProtocol
+    /// 远端验证使用的业务目标 URL（如 https://api.anthropic.com）。nil = 默认目标
+    /// （api.openai.com/v1/models）。仅影响验证目标，不改变转发本身。
+    var probeTargetURL: String?
     var reconnectEnabled: Bool
     var connectAtLaunch: Bool
     /// 密码模式：是否记住密码（密码本体存 macOS 钥匙串，绝不进本文件）。
@@ -95,6 +98,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         proxySelectionMode: ProxySelectionMode = .automatic,
         manualEndpoint: LocalProxyEndpoint? = nil,
         preferredProtocol: ProxyProtocol = .http,
+        probeTargetURL: String? = nil,
         reconnectEnabled: Bool = true,
         connectAtLaunch: Bool = false,
         rememberPassword: Bool = false,
@@ -120,6 +124,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.proxySelectionMode = proxySelectionMode
         self.manualEndpoint = manualEndpoint
         self.preferredProtocol = preferredProtocol
+        self.probeTargetURL = Self.sanitizedProbeTarget(probeTargetURL)
         self.reconnectEnabled = reconnectEnabled
         self.connectAtLaunch = connectAtLaunch
         self.rememberPassword = rememberPassword
@@ -133,8 +138,21 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case id, name, host, sshPort, username, authMode, identityFilePath
         case relayPort, remotePort, remoteSocksPort, remoteHTTPPort, connectionMode, httpAdapterEnabled
-        case proxySelectionMode, manualEndpoint, preferredProtocol
+        case proxySelectionMode, manualEndpoint, preferredProtocol, probeTargetURL
         case reconnectEnabled, connectAtLaunch, rememberPassword
+    }
+
+    /// 业务探测目标的严格清洗：https?:// 开头、无空白与控制字符、长度受限。
+    /// 返回 nil = 非法输入回落默认目标（绝不把可疑 URL 交给远端 curl）。
+    static func sanitizedProbeTarget(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        guard value.lowercased().hasPrefix("https://") || value.lowercased().hasPrefix("http://") else { return nil }
+        guard value.count <= 200 else { return nil }
+        guard !value.contains(where: { $0.isWhitespace || $0.isNewline || $0.asciiValue.map { $0 < 0x21 || $0 == 0x7f } == true }) else { return nil }
+        guard value.allSatisfy({ char in
+            char.isASCII && (char.isLetter || char.isNumber || ".:/?&=%-#~_".contains(char))
+        }) else { return nil }
+        return value
     }
 
     /// 兼容旧文件：`rememberPassword` 缺失时按 false 处理（不破坏既有 profiles.json）。
@@ -160,6 +178,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         proxySelectionMode = try c.decode(ProxySelectionMode.self, forKey: .proxySelectionMode)
         manualEndpoint = try c.decodeIfPresent(LocalProxyEndpoint.self, forKey: .manualEndpoint)
         preferredProtocol = try c.decode(ProxyProtocol.self, forKey: .preferredProtocol)
+        probeTargetURL = Self.sanitizedProbeTarget(try c.decodeIfPresent(String.self, forKey: .probeTargetURL))
         reconnectEnabled = try c.decode(Bool.self, forKey: .reconnectEnabled)
         connectAtLaunch = try c.decode(Bool.self, forKey: .connectAtLaunch)
         rememberPassword = try c.decodeIfPresent(Bool.self, forKey: .rememberPassword) ?? false

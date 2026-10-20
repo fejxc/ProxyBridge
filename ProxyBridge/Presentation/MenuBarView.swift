@@ -476,9 +476,22 @@ struct MenuBarView: View {
         }
     }
 
+    /// 当前远端验证实际使用的目标 host（业务目标或默认 api.openai.com）。
+    private var probeTargetHost: String {
+        if let raw = model.currentProfile?.probeTargetURL,
+           let url = URL(string: raw), let host = url.host {
+            return host
+        }
+        return "api.openai.com"
+    }
+
     private func remoteDetail(for display: HealthCheckDisplay) -> String {
         switch display {
-        case .ok: return isDynamicMode ? L10n.t("Linux SOCKS5 已通过远端 HTTPS 请求验证") : L10n.t("远端代理端到端验证通过")
+        case .ok:
+            let suffix = L10n.t("（仅代表该目标可达）")
+            return isDynamicMode
+                ? L10n.t("Linux SOCKS5 已通过远端 HTTPS 请求验证") + " → \(probeTargetHost)" + suffix
+                : L10n.t("远端代理端到端验证通过") + " → \(probeTargetHost)" + suffix
         case .unknown: return isDynamicMode ? L10n.t("Linux SOCKS5 尚未验证") : L10n.t("远端代理未验证（未验证 ≠ 可用）")
         case .failed: return L10n.t("远端验证失败，请查看日志定位原因")
         }

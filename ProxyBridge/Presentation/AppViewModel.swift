@@ -579,7 +579,7 @@ final class AppViewModel {
                 return
             }
             self.updateInstallState = .installing
-            if installer.installAndRelaunch(dmg: local) {
+            if installer.installAndRelaunch(dmg: local, expectedVersion: info.latestVersion) {
                 try? FileManager.default.removeItem(at: local)
                 if Bundle.main.bundleURL.path.hasPrefix("/Applications/") {
                     self.logStore.append(raw: "v\(info.latestVersion) 安装完成，正在重启应用", level: .success)

@@ -780,7 +780,8 @@ final class SSHTunnelCoordinator: TunnelService {
             profile: profile,
             remotePort: port,
             protocol: proxyProtocol,
-            password: session.password
+            password: session.password,
+            urlString: profile.probeTargetURL // 用户配置的业务目标；nil 回落固定目标
         )
     }
 

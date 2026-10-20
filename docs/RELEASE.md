@@ -25,10 +25,11 @@ Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，�
 
 1. 更新 Xcode 工程中的 MARKETING_VERSION、CFBundleShortVersionString 和构建号，并更新 README 与 CHANGELOG。
 2. 推送 master，确认 CI 和两架构检查通过。
-3. 获准发布后创建对应版本标签，例如 `git tag -a v1.3.0 -m 'ProxyBridge 1.3.0'`，然后 `git push origin v1.3.0`。
-4. 标签推送自动触发工作流。版本不一致、任一架构测试失败、DMG 验证失败时不会公开新的下载文件。
+3. **完成[真实验收清单](ACCEPTANCE-CHECKLIST.md)并在其结果表中记录**——未验收的版本不发布（发布工作流同时要求标签指向的提交 CI 全绿，否则拒绝构建）。
+4. 获准发布后创建对应版本标签，例如 `git tag -a v1.4.6 -m 'ProxyBridge 1.4.6'`，然后 `git push origin v1.4.6`。
+5. 标签推送自动触发工作流。以下任一情况不会公开新的下载文件：版本不一致、标签提交的 CI 非全绿、任一架构测试失败、DMG 验证失败。
 
-工作流仅发布 `vX.Y.Z` 格式的现有标签。也可以手动重新运行同一版本；重新生成的附件会覆盖该 Release 中的同名附件。
+工作流仅发布 `vX.Y.Z` 格式的现有标签；构建与验证全部使用**标签内的脚本与源码**（不从当前分支复制）。已公开版本的附件不可被后续运行覆盖（上传不带 `--clobber`）。
 
 ## 本地打包
 

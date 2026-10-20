@@ -207,6 +207,7 @@ enum L10n {
         "正在校验 SHA-256…": "Verifying SHA-256…",
         "正在安装并重启…": "Installing and relaunching…",
         "重试下载": "Retry download",
+        "（仅代表该目标可达）": " (only proves this target is reachable)",
         "仅清理同用户的僵尸 sshd 与本 App 的孤儿 Privoxy；其他进程不会被触碰。": "Only same-user stale sshd sessions and this app's orphaned Privoxy are cleaned; other processes are never touched.",
         "僵尸 sshd · 可清理": "stale sshd · cleanable",
         "孤儿 Privoxy · 可清理": "orphan Privoxy · cleanable",

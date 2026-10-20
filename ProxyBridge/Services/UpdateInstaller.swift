@@ -12,15 +12,17 @@ import CryptoKit
 /// 更新安装抽象（测试注入）。
 @MainActor
 protocol UpdateInstalling: AnyObject {
-    /// 下载 DMG 到临时目录，返回本地路径（失败 nil）。
+    /// 下载 DMG 到临时文件（流式落盘，不整读内存），返回本地路径（失败 nil）。
     func download(url: URL, progress: @escaping (Double) -> Void) async -> URL?
-    /// 拉取官方 .sha256 文本中的大写/小写十六进制摘要（失败 nil）。
+    /// 拉取官方 .sha256 文本中的十六进制摘要（失败 nil）。
     func fetchExpectedSHA256(url: URL) async -> String?
-    /// 本地文件摘要是否匹配（nil expected 视为不通过——绝不跳过校验）。
+    /// 本地文件流式摘要是否匹配。
     func verify(file: URL, expectedHex: String) -> Bool
-    /// 挂载并替换 /Applications 中的应用，成功返回 true。
+    /// 校验挂载卷内 App 的身份与完整性（bundle id + 版本 + codesign）。
+    func validateMountedApp(_ appURL: URL, expectedVersion: String) -> Bool
+    /// 挂载 → 校验 → 同卷原子替换 /Applications 中的应用，成功返回 true。
     /// App 不在 /Applications 时仅挂载并打开卷（用户手动拖入），同样返回 true。
-    func installAndRelaunch(dmg: URL) -> Bool
+    func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool
 }
 
 @MainActor
@@ -33,36 +35,50 @@ final class DMGUpdateInstaller: UpdateInstalling {
         session = URLSession(configuration: configuration)
     }
 
-    func download(url: URL, progress: @escaping (Double) -> Void) async -> URL? {
-        guard let (bytes, response) = try? await session.bytes(for: URLRequest(url: url)),
-              let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-        let expected = http.expectedContentLength
-        var data = Data()
-        data.reserveCapacity(expected > 0 ? Int(expected) : 0)
-        do {
-            for try await byte in bytes {
-                data.append(byte)
-                if expected > 0, data.count % (512 * 1024) == 0 { // 节流回报进度
-                    progress(Double(data.count) / Double(expected))
-                }
-            }
-        } catch {
-            return nil
+    // MARK: - 下载（流式落盘 + delegate 进度）
+
+    /// downloadTask delegate：把系统下载进度桥接为回调（下载到系统临时文件再移动）。
+    private final class ProgressDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+        let handler: @Sendable (Double) -> Void
+        init(handler: @escaping @Sendable (Double) -> Void) { self.handler = handler }
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                        didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
+                        totalBytesExpectedToWrite: Int64) {
+            guard totalBytesExpectedToWrite > 0 else { return }
+            handler(Double(totalBytesWritten) / Double(totalBytesExpectedToWrite))
         }
-        guard expected <= 0 || data.count == expected else { return nil } // 不完整下载拒绝安装
-        progress(1)
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ProxyBridge-update-\(Int(Date().timeIntervalSince1970)).dmg")
+        func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
+                        didFinishDownloadingTo location: URL) {}
+    }
+
+    func download(url: URL, progress: @escaping (Double) -> Void) async -> URL? {
+        let box = ProgressBox()
+        box.progress = { value in progress(value) }
+        let delegate = ProgressDelegate { value in box.progress?(value) }
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+        defer { session.finishTasksAndInvalidate() }
         do {
-            try data.write(to: destination, options: [.atomic])
+            let (tempURL, response) = try await session.download(for: URLRequest(url: url))
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            let destination = FileManager.default.temporaryDirectory
+                .appendingPathComponent("ProxyBridge-update-\(Int(Date().timeIntervalSince1970)).dmg")
+            try? FileManager.default.removeItem(at: destination)
+            try FileManager.default.moveItem(at: tempURL, to: destination)
+            progress(1)
             return destination
         } catch {
             return nil
         }
     }
 
+    private final class ProgressBox: @unchecked Sendable {
+        var progress: (@Sendable (Double) -> Void)?
+    }
+
+    // MARK: - 校验
+
     func fetchExpectedSHA256(url: URL) async -> String? {
-        guard let (data, response) = try? await session.data(for: URLRequest(url: url)),
+        guard let (data, response) = try? await self.session.data(for: URLRequest(url: url)),
               let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
         return Self.parseSHA256Hex(String(decoding: data, as: UTF8.self))
     }
@@ -74,61 +90,112 @@ final class DMGUpdateInstaller: UpdateInstalling {
         return hex.lowercased()
     }
 
+    /// 文件流式摘要（分块读取，内存占用恒定，不整读大文件）。
     func verify(file: URL, expectedHex: String) -> Bool {
-        guard let data = try? Data(contentsOf: file) else { return false }
-        let digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        let chunkSize = 4 * 1024 * 1024
+        while true {
+            guard let chunk = try? handle.read(upToCount: chunkSize), !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         return digest == expectedHex.lowercased()
     }
 
-    func installAndRelaunch(dmg: URL) -> Bool {
-        // 挂载（-nobrowse 不在 Finder 侧栏显示）
-        let mount = Process()
-        mount.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-        mount.arguments = ["attach", "-nobrowse", "-readonly", dmg.path]
-        let pipe = Pipe()
-        mount.standardOutput = pipe
-        mount.standardError = Pipe()
-        do { try mount.run() } catch { return false }
-        mount.waitUntilExit()
-        guard mount.terminationStatus == 0 else { return false }
-        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard let volumePath = output.split(separator: "\n").compactMap({ line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            return trimmed.hasPrefix("/Volumes/") ? trimmed : nil
-        }).last else { return false }
+    // MARK: - 身份与完整性（独立于 Release 哈希的第二道验证）
+
+    /// 挂载卷内 App 必须同时满足：bundle id 是本应用、版本等于声称版本、codesign 校验通过。
+    /// 说明：ad-hoc 签名不含可独立验证的 Developer ID 身份（公证前的现实边界，见 KNOWN_LIMITATIONS），
+    /// 但 codesign --verify 能证明 bundle 自发布以来未被篡改/损坏，版本与 id 核对能防张冠李戴。
+    func validateMountedApp(_ appURL: URL, expectedVersion: String) -> Bool {
+        guard let info = Bundle(url: appURL),
+              let identifier = info.bundleIdentifier,
+              identifier == "dev.sunyun.ProxyBridge" else { return false }
+        guard let version = info.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              version == expectedVersion else { return false }
+        let codesign = Process()
+        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+        codesign.arguments = ["--verify", "--deep", "--strict", appURL.path]
+        codesign.standardOutput = Pipe()
+        codesign.standardError = Pipe()
+        do { try codesign.run() } catch { return false }
+        codesign.waitUntilExit()
+        return codesign.terminationStatus == 0
+    }
+
+    // MARK: - 安装（先完整复制并验证，再原子切换）
+
+    func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool {
+        guard let volumePath = mount(dmg) else { return false }
         let mountedApp = URL(fileURLWithPath: volumePath).appendingPathComponent("ProxyBridge.app")
-        guard FileManager.default.fileExists(atPath: mountedApp.path) else { return false }
+        guard FileManager.default.fileExists(atPath: mountedApp.path),
+              validateMountedApp(mountedApp, expectedVersion: expectedVersion) else {
+            detach(volumePath)
+            return false
+        }
+        defer { detach(volumePath) }
 
         let installedURL = URL(fileURLWithPath: "/Applications/ProxyBridge.app")
-        let runningFromApplications = Bundle.main.bundleURL.path.hasPrefix("/Applications/")
-        defer {
-            // 无论替换与否都弹出挂载（延迟执行让 cp 完成）
-            let detach = Process()
-            detach.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
-            detach.arguments = ["detach", volumePath, "-force"]
-            try? detach.run()
-        }
-
-        if runningFromApplications {
-            // 原子替换：旧版本先改名，失败可回滚；绝不留下半写状态
-            let backup = installedURL.appendingPathExtension("old")
-            try? FileManager.default.removeItem(at: backup)
-            let hadOld = FileManager.default.fileExists(atPath: installedURL.path)
-            if hadOld {
-                do { try FileManager.default.moveItem(at: installedURL, to: backup) }
-                catch { return false }
-            }
-            do { try FileManager.default.copyItem(at: mountedApp, to: installedURL) }
-            catch {
-                if hadOld { try? FileManager.default.moveItem(at: backup, to: installedURL) } // 回滚
-                return false
-            }
-            try? FileManager.default.removeItem(at: backup)
-            // 重启由调用方经 AppDelegate（terminate 流程内 spawn，避免单实例锁竞态）
+        guard Bundle.main.bundleURL.path.hasPrefix("/Applications/") else {
+            // 开发/便携位置运行：打开挂载卷让用户手动拖入，不自动替换
+            NSWorkspace.shared.open(URL(fileURLWithPath: volumePath))
             return true
         }
-        // 开发/便携位置运行：打开挂载卷让用户手动拖入，不自动替换
-        NSWorkspace.shared.open(URL(fileURLWithPath: volumePath))
+
+        // 第一步：完整复制到同卷暂存名（跨设备复制不可原子，但先复制可保证切换窗口最小化）
+        let stagingURL = URL(fileURLWithPath: "/Applications/.ProxyBridge.app.new")
+        try? FileManager.default.removeItem(at: stagingURL)
+        do { try FileManager.default.copyItem(at: mountedApp, to: stagingURL) }
+        catch { return false }
+        // 第二步：暂存副本再次验证（复制过程中的损坏在此拦截，绝不半写上线）
+        guard validateMountedApp(stagingURL, expectedVersion: expectedVersion) else {
+            try? FileManager.default.removeItem(at: stagingURL)
+            return false
+        }
+        // 第三步：同卷 rename 原子切换（旧版让位 → 新版上位，任一失败立即回滚）
+        let backupURL = URL(fileURLWithPath: "/Applications/.ProxyBridge.app.old")
+        try? FileManager.default.removeItem(at: backupURL)
+        let hadOld = FileManager.default.fileExists(atPath: installedURL.path)
+        if hadOld {
+            do { try FileManager.default.moveItem(at: installedURL, to: backupURL) }
+            catch {
+                try? FileManager.default.removeItem(at: stagingURL)
+                return false
+            }
+        }
+        do { try FileManager.default.moveItem(at: stagingURL, to: installedURL) }
+        catch {
+            if hadOld { try? FileManager.default.moveItem(at: backupURL, to: installedURL) } // 回滚
+            try? FileManager.default.removeItem(at: stagingURL)
+            return false
+        }
+        try? FileManager.default.removeItem(at: backupURL)
         return true
+    }
+
+    private func mount(_ dmg: URL) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = ["attach", "-nobrowse", "-readonly", dmg.path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = Pipe()
+        do { try process.run() } catch { return nil }
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else { return nil }
+        let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        return output.split(separator: "\n").compactMap { line -> String? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return trimmed.hasPrefix("/Volumes/") ? trimmed : nil
+        }.last
+    }
+
+    private func detach(_ volumePath: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
+        process.arguments = ["detach", volumePath, "-force"]
+        try? process.run()
     }
 }

@@ -137,7 +137,10 @@ enum RemoteProbeCommand {
     ) -> [String] {
         precondition((1...65_535).contains(profile.sshPort), "sshPort 必须在 1–65535")
         precondition((1...65_535).contains(remotePort), "remotePort 必须在 1–65535")
-        precondition(CurlProxyProbe.urlWhitelist.contains(urlString), "验证 URL 必须来自白名单")
+        // 固定白名单，或经 ServerProfile.sanitizedProbeTarget 清洗的用户业务目标
+        precondition(CurlProxyProbe.urlWhitelist.contains(urlString)
+                     || ServerProfile.sanitizedProbeTarget(urlString) != nil,
+                     "验证 URL 必须来自白名单或通过清洗")
         var args = [
             "-p", String(profile.sshPort),
             "-o", "StrictHostKeyChecking=yes",

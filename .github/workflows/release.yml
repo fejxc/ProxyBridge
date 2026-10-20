@@ -31,6 +31,7 @@ jobs:
       - id: resolve
         env:
           REQUESTED_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -38,6 +39,13 @@ jobs:
           commit=$(git rev-parse --verify "refs/tags/${REQUESTED_TAG}^{commit}")
           echo "tag=$REQUESTED_TAG" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          # 发布门槛：标签指向的提交必须有全绿的 CI（构建与测试的就是被发布的代码）
+          conclusion=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${commit}/check-runs" \
+            --jq '.check_runs | map(select(.name == "Build & Test (macOS 15, target 14)")) | .[0].conclusion // "missing"')
+          [[ "$conclusion" == "success" ]] || {
+            echo "::error::Refusing to release: CI for ${commit} is '${conclusion}' (must be success)."
+            exit 1
+          }
 
   verify:
     needs: source
@@ -57,8 +65,6 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.commit }}
           path: source
-      - name: Use current build tools with tagged application source
-        run: cp scripts/{typecheck,smoke_test}.sh source/scripts/
       - name: Native compile and smoke checks
         working-directory: source
         env:
@@ -80,8 +86,6 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.commit }}
           path: source
-      - name: Use current packaging tools with tagged application source
-        run: cp scripts/{build_app,build_dmg}.sh source/scripts/
       - name: Build and verify universal DMG
         working-directory: source
         env:
@@ -122,5 +126,5 @@ jobs:
           if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "ProxyBridge ${RELEASE_TAG#v}" --notes-file release-notes.md
           fi
-          gh release upload "$RELEASE_TAG" dist/* --clobber
+          gh release upload "$RELEASE_TAG" dist/*
           gh release edit "$RELEASE_TAG" --draft=false

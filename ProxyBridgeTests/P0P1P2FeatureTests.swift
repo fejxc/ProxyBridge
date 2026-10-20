@@ -498,7 +498,8 @@ final class AppViewModelFeatureTests: XCTestCase {
             }
             func fetchExpectedSHA256(url: URL) async -> String? { failSHA ? nil : expected }
             func verify(file: URL, expectedHex: String) -> Bool { !failVerify }
-            func installAndRelaunch(dmg: URL) -> Bool { installed.append(dmg); return true }
+            func validateMountedApp(_ appURL: URL, expectedVersion: String) -> Bool { true }
+            func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool { installed.append(dmg); return true }
         }
         let temp = TempDirectory.make()
         defer { temp.removeAll() }
@@ -551,6 +552,26 @@ final class AppViewModelFeatureTests: XCTestCase {
         let done = await waitUntilMain { !good.installed.isEmpty && model3.updateInstallState == .idle }
         XCTAssertTrue(done, "成功链应完成安装")
         XCTAssertEqual(relaunched, Bundle.main.bundleURL.path.hasPrefix("/Applications/"))
+    }
+
+    /// 业务探测目标清洗：只放行干净 http(s) URL，杜绝注入面。
+    func testProbeTargetSanitization() {
+        XCTAssertEqual(ServerProfile.sanitizedProbeTarget(" https://api.anthropic.com "), "https://api.anthropic.com")
+        XCTAssertEqual(ServerProfile.sanitizedProbeTarget("http://internal.svc:8080/health"), "http://internal.svc:8080/health")
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget(nil))
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget(""))
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget("https://x.com/a b"), "空白拒绝")
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget("https://x.com/a;rm -rf /"), "元字符拒绝")
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget("https://x.com/$(id)"), "命令替换拒绝")
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget("ftp://x.com"), "非 http(s) 拒绝")
+        XCTAssertNil(ServerProfile.sanitizedProbeTarget("https://" + String(repeating: "a", count: 250)), "超长拒绝")
+        // 清洗后的目标可进入远端探测命令（白名单外的合法自定义 URL）
+        let profile = ServerProfile(name: "t", host: "h.example.com", sshPort: 22, username: "u", remotePort: 7890,
+                                    probeTargetURL: "https://api.anthropic.com")
+        XCTAssertEqual(profile.probeTargetURL, "https://api.anthropic.com")
+        let args = RemoteProbeCommand.arguments(profile: profile, remotePort: 7890, protocol: .http,
+                                                urlString: profile.probeTargetURL ?? CurlProxyProbe.verificationURL)
+        XCTAssertTrue(args.last?.contains("api.anthropic.com") == true, "探测脚本应使用业务目标")
     }
 
     func testLegacySettingsDecodeKeepsNewFieldDefaults() throws {

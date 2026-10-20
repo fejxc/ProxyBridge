@@ -363,6 +363,15 @@ struct ServerEditorForm: View {
                         .pickerStyle(.segmented)
                         .frame(width: 180)
                     }
+                    FormRow(label: "业务验证目标",
+                            help: "远端「已连接」结论基于对该目标的真实请求。留空使用默认目标 api.openai.com；填写你实际要用的服务地址（如 https://api.anthropic.com），验证通过才代表该业务可达。") {
+                        TextField("https://（可选）", text: Binding(
+                            get: { profile.probeTargetURL ?? "" },
+                            set: { profile.probeTargetURL = $0.isEmpty ? nil : $0 }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 300)
+                    }
                     FormRow(label: "自动重连") {
                         Toggle(L10n.t("网络波动时自动恢复 SSH 连接"), isOn: $profile.reconnectEnabled)
                             .controlSize(.small)

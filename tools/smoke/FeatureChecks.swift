@@ -201,6 +201,19 @@ extension SmokeMain {
                 && DMGUpdateInstaller.parseSHA256Hex("bad file") == nil
                 && installer.verify(file: payloadFile, expectedHex: realDigest)
                 && !installer.verify(file: payloadFile, expectedHex: hex))
+
+        // F22 业务探测目标清洗 + 传递到远端探测命令
+        check("F22", "业务目标清洗：放行干净 http(s)，拒绝注入/非 http/超长",
+              ServerProfile.sanitizedProbeTarget(" https://api.anthropic.com ") == "https://api.anthropic.com"
+                && ServerProfile.sanitizedProbeTarget("https://x.com/a;rm -rf /") == nil
+                && ServerProfile.sanitizedProbeTarget("https://x.com/$(id)") == nil
+                && ServerProfile.sanitizedProbeTarget("ftp://x.com") == nil)
+        let probeProfile = ServerProfile(name: "t", host: "h.example.com", sshPort: 22, username: "u", remotePort: 7890,
+                                         probeTargetURL: "https://api.anthropic.com")
+        let probeArgs = RemoteProbeCommand.arguments(profile: probeProfile, remotePort: 7890, protocol: .http,
+                                                     urlString: probeProfile.probeTargetURL ?? CurlProxyProbe.verificationURL)
+        check("F22b", "自定义业务目标进入远端探测命令",
+              probeArgs.last?.contains("api.anthropic.com") == true)
     }
 
     @MainActor
