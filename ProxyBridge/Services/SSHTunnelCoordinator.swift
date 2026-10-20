@@ -399,6 +399,9 @@ final class SSHTunnelCoordinator: TunnelService {
             if let saved = autoPassword {
                 handle.writePTY(saved + "\n")
                 session.password = saved
+            } else if let primed = session.password, !primed.isEmpty {
+                // 会话内记忆（自动重连预填）：直接应答，不打扰用户输入
+                handle.writePTY(primed + "\n")
             } else {
                 // 请求 UI 输入，轮询等待（90 秒超时，绝不无限挂起）
                 var connecting = baseSnapshot(profileID: id, phase: .connecting)
