@@ -5,11 +5,11 @@ import Foundation
 enum RemoteCommandTemplate {
 
     /// 远端缺失、需要用户自行安装的依赖（App 不安装软件、不用 sudo）。
+    /// HTTP 兼容入口已由 App 内实现（远端零依赖），curl 是唯一的远端探测依赖。
     enum RemoteTool: String, CaseIterable, Sendable {
         case curl
-        case privoxy
 
-        var displayName: String { self == .curl ? "curl" : "Privoxy" }
+        var displayName: String { "curl" }
     }
 
     /// 安装指引：覆盖常见发行版；只生成命令，执行由用户决定。
@@ -22,14 +22,6 @@ enum RemoteCommandTemplate {
             sudo apt-get install -y curl
             # RHEL / CentOS / Fedora（旧系统把 dnf 换成 yum）：
             sudo dnf install -y curl
-            """
-        case .privoxy:
-            return """
-            # HTTP 兼容入口（Codex HTTP_PROXY）依赖服务器上的 Privoxy；App 不会替你安装
-            # Debian / Ubuntu：
-            sudo apt-get install -y privoxy
-            # RHEL / CentOS / Fedora（旧系统把 dnf 换成 yum）：
-            sudo dnf install -y privoxy
             """
         }
     }
@@ -65,7 +57,7 @@ enum RemoteCommandTemplate {
         """
         if includeHTTPAdapter {
             guard let httpCommands = httpCompatibilityCommands(remotePort: httpPort) else { return nil }
-            text += "\n\n# Linux HTTP 兼容入口（Privoxy -> SOCKS5）\n\(httpCommands)"
+            text += "\n\n# Linux HTTP 兼容入口（由 ProxyBridge 在 Mac 侧实现，远端零依赖）\n\(httpCommands)"
         }
         if socksVerified != true {
             text += "\n# 注意：SOCKS5 入口当前尚未通过真实远端请求验证。"

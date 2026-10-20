@@ -130,14 +130,12 @@ extension SmokeMain {
               zh.title == "未连接" && en.title == "Not connected"
                 && L10n.t("不存在的句子") == "不存在的句子")
 
-        // F09 安装指引：不含危险命令，含主流包管理器
+        // F09 安装指引：不含危险命令，含主流包管理器（HTTP 入口零远端依赖，curl 是唯一远端依赖）
         let curlHint = RemoteCommandTemplate.installHintCommands(component: .curl)
-        let privoxyHint = RemoteCommandTemplate.installHintCommands(component: .privoxy)
         let dangerous = ["rm -rf", "curl | sh", "wget", "sudo su"]
         check("F09", "安装指引覆盖 apt/dnf 且无危险命令",
               curlHint.contains("apt-get install -y curl") && curlHint.contains("dnf install -y curl")
-                && privoxyHint.contains("privoxy")
-                && !dangerous.contains { curlHint.contains($0) || privoxyHint.contains($0) })
+                && !dangerous.contains { curlHint.contains($0) })
 
         // F10/F11 远端端口冲突：窗口内自动重试，窗口后停止
         await bindConflictChecks()

@@ -415,7 +415,7 @@ struct MenuBarView: View {
     private var adapterBadgeTone: StatusTone {
         switch model.currentSnapshot.httpAdapterStatus {
         case .verified: return .green
-        case .notInstalled, .portConflict, .unavailable: return .orange
+        case .unavailable: return .orange
         default: return .gray
         }
     }
@@ -501,13 +501,13 @@ struct MenuBarView: View {
         if model.currentSnapshot.phase == .idle { return .unknown }
         switch model.currentSnapshot.httpAdapterStatus {
         case .verified: return .ok
-        case .notInstalled, .portConflict, .unavailable, .stopped: return .failed
-        case .notRequested, .checking, .starting, .running, .stopping: return .unknown
+        case .unavailable: return .failed
+        case .notRequested, .checking, .running: return .unknown
         }
     }
 
     private var httpAdapterDetail: String {
-        model.currentSnapshot.httpAdapterDetail ?? L10n.t("等待 SOCKS5 验活后检查 Privoxy 与 HTTP CONNECT")
+        model.currentSnapshot.httpAdapterDetail ?? L10n.t("等待 SOCKS5 验活后检查 HTTP CONNECT 入口")
     }
 
     // MARK: 操作

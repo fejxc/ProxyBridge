@@ -325,13 +325,13 @@ struct ServerEditorForm: View {
                         FormRow(label: "动态 SOCKS5 端口", help: "OpenSSH 原生反向动态转发；不需要 Mac 本地代理端口，只支持 TCP。") {
                             loopbackPortField($profile.remoteSocksPort, prompt: "SOCKS5 端口")
                         }
-                        FormRow(label: "HTTP 兼容入口", help: "默认在 Linux 127.0.0.1:7890 提供 Codex HTTP_PROXY/HTTPS_PROXY；底层 SOCKS5 使用独立端口。需要 Linux 已安装 Privoxy。不会安装软件或修改系统配置。") {
+                        FormRow(label: "HTTP 兼容入口", help: "默认在 Linux 127.0.0.1:7890 提供 Codex HTTP_PROXY/HTTPS_PROXY；由 App 在 Mac 侧实现 HTTP 代理语义，服务器零依赖（无需安装 Privoxy）。不会安装软件或修改系统配置。") {
                             VStack(alignment: .leading, spacing: 7) {
                                 Toggle(L10n.t("提供 HTTP 入口（Codex 继续使用 7890）"), isOn: $profile.httpAdapterEnabled)
                                     .controlSize(.small)
                                 if profile.httpAdapterEnabled {
                                     loopbackPortField($profile.remoteHTTPPort, prompt: "HTTP 端口")
-                                    Text(L10n.t("仅在 SOCKS5 已通过真实请求后启动；若 Privoxy 不可用，SOCKS5 仍保留。"))
+                                    Text(L10n.t("主路径验证通过后立即实测 HTTP CONNECT；入口异常时主路径不受影响。"))
                                         .font(.system(size: 10.5))
                                         .foregroundStyle(Palette.muted)
                                         .fixedSize(horizontal: false, vertical: true)

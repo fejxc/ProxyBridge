@@ -225,7 +225,7 @@ final class AppViewModel {
                 remoteProber: SSHRemoteProbe(factory: sshFactory),
                 secrets: KeychainPasswordStore(),
                 relayFactory: TCPRelayFactory(),
-                httpAdapterManager: SSHRemoteHTTPAdapterManager(factory: sshFactory)
+                httpEntryFactory: HTTPEntryRelayFactory()
             )),
             proxyDetector: LocalProxyDetector(
                 provider: SCDynamicStoreProxyProvider(),
@@ -893,7 +893,6 @@ final class AppViewModel {
         guard let profile = currentProfile, tunnel.isActive(profileID: profile.id) else { return nil }
         let snap = snapshots[profile.id]
         if snap?.remoteCurlMissing == true { return .curl }
-        if snap?.httpAdapterStatus == .notInstalled { return .privoxy }
         return nil
     }
 
@@ -1028,9 +1027,8 @@ final class AppViewModel {
         if snap.phase == .degraded, snap.localProxyVerified == false, snap.sshProcessRunning {
             scheduleProxyRescanAfterLocalFailure()
         }
-        // 端口绑定冲突 / HTTP 入口端口被占 → 自动发起只读诊断（用户确认后才清理）
-        if snap.phase == .error, ManagedTunnelService.isRemoteBindConflict(snap.humanReadableDetail)
-            || snap.httpAdapterStatus == .portConflict {
+        // 远端端口绑定冲突 → 自动发起只读诊断（用户确认后才清理）
+        if snap.phase == .error, ManagedTunnelService.isRemoteBindConflict(snap.humanReadableDetail) {
             conflicts.scheduleInspection(profileID: snap.profileId)
         }
         // 冲突后恢复连接成功 → 诊断卡撤下（清理中的除外，清理流程自己收尾）

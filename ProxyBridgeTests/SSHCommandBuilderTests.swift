@@ -116,24 +116,16 @@ final class SSHCommandBuilderTests: XCTestCase {
         XCTAssertEqual(args[args.count - 2], "sunyun@10.11.154.192")
     }
 
-    func testPrivoxyAdapterCommandsAreUserScopedLoopbackOnlyAndTargeted() {
-        let token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        let prepare = RemoteHTTPAdapterCommands.prepare(httpPort: 7890, socksPort: 17890, token: token)
-        XCTAssertTrue(prepare.contains("listen-address 127.0.0.1:7890"))
-        XCTAssertTrue(prepare.contains("forward-socks5 / 127.0.0.1:17890 ."))
-        XCTAssertTrue(prepare.contains("ss -ltn") && prepare.contains("netstat -lnt"))
-        XCTAssertTrue(prepare.contains("root=\"$HOME/.cache/proxybridge\""))
-        XCTAssertTrue(prepare.contains("dir=\"$root/privoxy-\(token)\""))
-        XCTAssertFalse(prepare.contains("sudo"))
-        XCTAssertFalse(prepare.contains("apt install"))
-        XCTAssertFalse(prepare.contains("sshd_config"))
-
-        let cleanup = RemoteHTTPAdapterCommands.cleanup(token: token)
-        XCTAssertTrue(cleanup.contains("process_id=\"$1\"") && cleanup.contains("ps -ww -p"))
-        XCTAssertTrue(cleanup.contains("kill \"$pid\""))
-        XCTAssertFalse(cleanup.contains("pkill"))
-        XCTAssertFalse(cleanup.contains("kill -9"))
-        XCTAssertTrue(RemoteHTTPAdapterCommands.launch(token: token).contains("privoxy --no-daemon"))
+    func testHTTPEntryForwardIsLoopbackOnlyAndAppendedAfterMainForward() {
+        let entry = SSHCommandBuilder.httpEntryForwardArgument(profile: profile(), localPort: 51_234)
+        XCTAssertEqual(entry, "127.0.0.1:7890:127.0.0.1:51234")
+        // 动态模式附加入口转发：两条 -R 并存（远端均只绑定 127.0.0.1）
+        let args = SSHCommandBuilder.arguments(profile: profile(), mode: .reverseDynamic, httpEntryLocalPort: 51_234)
+        let forwards = args.indices.filter { args[$0] == "-R" }.map { args[$0 + 1] }
+        XCTAssertEqual(forwards, ["127.0.0.1:17890", "127.0.0.1:7890:127.0.0.1:51234"])
+        // 未启用入口时保持单条转发
+        let plain = SSHCommandBuilder.arguments(profile: profile(), mode: .reverseDynamic)
+        XCTAssertEqual(plain.indices.filter { plain[$0] == "-R" }.count, 1)
     }
 
     func testPortsAreNumericOnlyInPosition() {

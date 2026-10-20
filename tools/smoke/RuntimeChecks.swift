@@ -9,21 +9,14 @@ extension SmokeMain {
               && profile.remoteSocksPort == 17_890)
         let endpoint = LocalProxyEndpoint(host: "127.0.0.1", port: 7897, protocol: .http, origin: .systemHTTP)
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpoint)
-        let adapterToken = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-        let adapterPrepare = RemoteHTTPAdapterCommands.prepare(httpPort: 7890, socksPort: 17_890, token: adapterToken)
-        let adapterCleanup = RemoteHTTPAdapterCommands.cleanup(token: adapterToken)
-        check("P01", "Privoxy 仅写用户会话配置并绑定 HTTP 与 SOCKS 回环端口",
-              adapterPrepare.contains("listen-address 127.0.0.1:7890")
-              && adapterPrepare.contains("forward-socks5 / 127.0.0.1:17890 .")
-              && adapterPrepare.contains("root=\"$HOME/.cache/proxybridge\"")
-              && adapterPrepare.contains("privoxy-\(adapterToken)")
-              && adapterPrepare.contains("ss -ltn") && adapterPrepare.contains("netstat -lnt")
-              && !adapterPrepare.contains("sudo") && !adapterPrepare.contains("apt install"))
-        check("P02", "Privoxy 清理只匹配会话 PID 与配置路径，不使用 pkill 或 SIGKILL",
-              adapterCleanup.contains("process_id=\"$1\"") && adapterCleanup.contains("ps -ww -p")
-              && adapterCleanup.contains("kill \"$pid\"")
-              && adapterCleanup.contains("$dir/config")
-              && !adapterCleanup.contains("pkill") && !adapterCleanup.contains("kill -9"))
+        // HTTP 兼容入口已改为 App 内实现（远端零依赖）：转发串必须远端/本地均绑定回环
+        check("P01", "HTTP 入口转发只绑定回环（远端 7890 → Mac 本地入口）",
+              SSHCommandBuilder.httpEntryForwardArgument(profile: profile, localPort: 45_001)
+                  == "127.0.0.1:7890:127.0.0.1:45001")
+        check("P02", "动态模式附加 HTTP 入口转发后共两条 -R 且均不含通配绑定",
+              { let args = SSHCommandBuilder.arguments(profile: profile, mode: .reverseDynamic, httpEntryLocalPort: 45_001)
+                let forwards = args.indices.filter { args[$0] == "-R" }.map { args[$0 + 1] }
+                return forwards.count == 2 && forwards.allSatisfy { $0.hasPrefix("127.0.0.1:") } }())
         func shellParses(_ script: String) -> Bool {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("ProxyBridge-(UUID()).sh")
             defer { try? FileManager.default.removeItem(at: url) }
@@ -37,10 +30,9 @@ extension SmokeMain {
             process.waitUntilExit()
             return process.terminationStatus == 0
         }
-        check("P03", "Privoxy 准备、启动和清理远端脚本通过本机 POSIX shell 语法检查",
-              shellParses(adapterPrepare)
-              && shellParses(RemoteHTTPAdapterCommands.launch(token: adapterToken))
-              && shellParses(adapterCleanup))
+        check("P03", "HTTP 入口与远端探测脚本通过本机 POSIX shell 语法检查",
+              shellParses(RemoteProbeCommand.script(remotePort: 7890, protocol: .http,
+                                                    urlString: CurlProxyProbe.verificationURL)))
         func snapshot(_ phase: TunnelPhase, detail: String = "") -> TunnelSnapshot {
             var value = TunnelSnapshot.idle(profile.id)
             value.phase = phase; value.humanReadableDetail = detail
@@ -256,15 +248,14 @@ extension SmokeMain {
         var bPlusProfile = profile
         bPlusProfile.connectionMode = .reverseDynamic
         let bPlusRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
-        let bPlusManager = SmokeHTTPAdapterManager(result: .started(RemoteHTTPAdapterSession(
-            token: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", handle: SmokeSSHHandle()
-        )))
+        let bPlusFactory = SmokeSSHFactory()
+        let bPlusEntry = SmokeHTTPEntry()
         let bPlus = SSHTunnelCoordinator(
-            processFactory: SmokeSSHFactory(),
+            processFactory: bPlusFactory,
             localProber: SmokeLocalProber(outcome: .connectionRefused),
             remoteProber: bPlusRemote,
             secrets: InMemoryPasswordStore(),
-            httpAdapterManager: bPlusManager
+            httpEntryFactory: HTTPEntryRelayFactory(make: { bPlusEntry })
         )
         bPlus.graceSeconds = 0.01
         bPlus.remoteProbeCooldown = 0
@@ -272,35 +263,35 @@ extension SmokeMain {
         bPlus.onEvent = { if case .snapshot(let value) = $0 { bPlusLatest = value } }
         bPlus.connect(configuration: TunnelConfiguration(profile: bPlusProfile, localEndpoint: nil))
         let bPlusConnected = await waitSmokeUntil { bPlusLatest?.phase == .connected }
-        check("N04", "B+ 在 SOCKS5 验活后启动，并单独验证 HTTP CONNECT",
+        let bPlusArgs = bPlusFactory.lastArguments
+        let bPlusForwards = bPlusArgs.indices.filter { bPlusArgs[$0] == "-R" }.map { bPlusArgs[$0 + 1] }
+        check("N04", "B+ 在 SOCKS5 验活后单独验证 HTTP CONNECT 入口，转发只绑回环",
               bPlusConnected && bPlusRemote.history.map { $0.1 } == [.socks5, .http]
-              && bPlusManager.starts == 1 && bPlusLatest?.httpAdapterStatus == .verified
-              && bPlusLatest?.remoteProbeVerified == true)
+              && bPlusEntry.starts == 1 && bPlusLatest?.httpAdapterStatus == .verified
+              && bPlusLatest?.remoteProbeVerified == true
+              && bPlusForwards.count == 2 && bPlusForwards.allSatisfy { $0.hasPrefix("127.0.0.1:") })
         bPlus.disconnect(profileID: bPlusProfile.id)
-        _ = await waitSmokeUntil { bPlusManager.cleanups == 1 }
+        let bPlusEntryStopped = await waitSmokeUntil { bPlusEntry.stopped }
+        check("N04b", "断开即停本地入口（无远端清理语义）", bPlusEntryStopped)
         bPlus.terminateAllSessions()
 
-        let noPrivoxyManager = SmokeHTTPAdapterManager(result: .notInstalled)
-        let noPrivoxyRemote = SmokeRemoteProber(outcome: .verified(statusCode: 401))
-        let noPrivoxy = SSHTunnelCoordinator(
+        let noEntryFactory = SSHTunnelCoordinator(
             processFactory: SmokeSSHFactory(),
             localProber: SmokeLocalProber(outcome: .connectionRefused),
-            remoteProber: noPrivoxyRemote,
-            secrets: InMemoryPasswordStore(),
-            httpAdapterManager: noPrivoxyManager
+            remoteProber: SmokeRemoteProber(outcome: .verified(statusCode: 401)),
+            secrets: InMemoryPasswordStore()
         )
-        noPrivoxy.graceSeconds = 0.01
-        noPrivoxy.remoteProbeCooldown = 0
-        var noPrivoxyLatest: TunnelSnapshot?
-        noPrivoxy.onEvent = { if case .snapshot(let value) = $0 { noPrivoxyLatest = value } }
-        noPrivoxy.connect(configuration: TunnelConfiguration(profile: bPlusProfile, localEndpoint: nil))
-        let socksFallback = await waitSmokeUntil { noPrivoxyLatest?.phase == .degraded }
-        check("N05", "Privoxy 不存在时保留已验证 SOCKS5 并报告 HTTP 不可用",
-              socksFallback && noPrivoxyLatest?.remoteProbeVerified == true
-              && noPrivoxyLatest?.httpAdapterStatus == .notInstalled
-              && noPrivoxyRemote.callCount == 1)
-        noPrivoxy.disconnect(profileID: bPlusProfile.id)
-        noPrivoxy.terminateAllSessions()
+        noEntryFactory.graceSeconds = 0.01
+        noEntryFactory.remoteProbeCooldown = 0
+        var noEntryLatest: TunnelSnapshot?
+        noEntryFactory.onEvent = { if case .snapshot(let value) = $0 { noEntryLatest = value } }
+        noEntryFactory.connect(configuration: TunnelConfiguration(profile: bPlusProfile, localEndpoint: nil))
+        let socksOnly = await waitSmokeUntil { noEntryLatest?.phase == .connected }
+        check("N05", "未装配 HTTP 入口时如实说明，SOCKS5 主路径保持已验证",
+              socksOnly && noEntryLatest?.remoteProbeVerified == true
+              && noEntryLatest?.httpAdapterStatus == .notRequested)
+        noEntryFactory.disconnect(profileID: bPlusProfile.id)
+        noEntryFactory.terminateAllSessions()
 
         var mixedProfile = profile
         mixedProfile.connectionMode = .staticForward

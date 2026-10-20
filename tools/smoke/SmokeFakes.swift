@@ -103,17 +103,25 @@ final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     }
 }
 
-final class SmokeHTTPAdapterManager: RemoteHTTPAdapterManaging, @unchecked Sendable {
-    var result: RemoteHTTPAdapterStartResult
+/// HTTP 入口替身：记录启动模式与端口（不监听真实端口）。
+final class SmokeHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
+    private let lock = NSLock()
     private(set) var starts = 0
-    private(set) var cleanups = 0
-    init(result: RemoteHTTPAdapterStartResult) { self.result = result }
-    func start(profile: ServerProfile, httpPort: Int, socksPort: Int, password: String?) async -> RemoteHTTPAdapterStartResult {
-        starts += 1
-        return result
+    private(set) var stopped = false
+    func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16 {
+        lock.lock(); starts += 1; lock.unlock()
+        return 45_001
     }
-    func cleanup(profile: ServerProfile, session: RemoteHTTPAdapterSession, password: String?) async -> RemoteHTTPAdapterCleanupResult {
-        cleanups += 1
-        return .stopped
+    func stop() {
+        lock.lock(); stopped = true; lock.unlock()
     }
+}
+
+/// 始终失败的 HTTP 入口替身。
+final class SmokeFailingHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
+    func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16 {
+        throw NSError(domain: "Smoke.HTTPEntry", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "端口被占用（冒烟注入）"])
+    }
+    func stop() {}
 }

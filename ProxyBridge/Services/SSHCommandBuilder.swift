@@ -19,34 +19,38 @@ enum SSHCommandBuilder {
         precondition((1...65_535).contains(profile.remotePort), "remotePort 必须在 1–65535")
         return tunnelArguments(
             profile: profile,
-            forwardSpecification: forwardArgument(profile: profile, localEndpoint: localEndpoint)
+            forwardSpecifications: [forwardArgument(profile: profile, localEndpoint: localEndpoint)]
         )
     }
 
     /// Build either a legacy static reverse forward or OpenSSH native reverse
-    /// dynamic SOCKS forward. The dynamic form intentionally has no local
-    /// host/port suffix: `-R 127.0.0.1:17890` is the SOCKS listener itself.
+    /// dynamic SOCKS forward, plus an optional HTTP entry forward. The dynamic
+    /// form intentionally has no local host/port suffix: `-R 127.0.0.1:17890`
+    /// is the SOCKS listener itself.
     static func arguments(
         profile: ServerProfile,
         mode: ConnectionMode,
-        localEndpoint: LocalProxyEndpoint? = nil
+        localEndpoint: LocalProxyEndpoint? = nil,
+        httpEntryLocalPort: UInt16? = nil
     ) -> [String] {
+        var forwards: [String]
         switch mode {
         case .staticForward:
             guard let localEndpoint else { preconditionFailure("静态转发必须提供本地代理端点") }
-            return arguments(profile: profile, localEndpoint: localEndpoint)
+            forwards = [forwardArgument(profile: profile, localEndpoint: localEndpoint)]
         case .reverseDynamic:
             precondition((1...65_535).contains(profile.remoteSocksPort), "remoteSocksPort 必须在 1–65535")
-            return tunnelArguments(
-                profile: profile,
-                forwardSpecification: dynamicForwardArgument(profile: profile)
-            )
+            forwards = [dynamicForwardArgument(profile: profile)]
         case .automatic:
             preconditionFailure("automatic 必须先解析为实际连接模式")
         }
+        if let httpEntryLocalPort {
+            forwards.append(httpEntryForwardArgument(profile: profile, localPort: httpEntryLocalPort))
+        }
+        return tunnelArguments(profile: profile, forwardSpecifications: forwards)
     }
 
-    private static func tunnelArguments(profile: ServerProfile, forwardSpecification: String) -> [String] {
+    private static func tunnelArguments(profile: ServerProfile, forwardSpecifications: [String]) -> [String] {
         precondition((1...65_535).contains(profile.sshPort), "sshPort 必须在 1–65535")
 
         var args: [String] = [
@@ -70,7 +74,10 @@ enum SSHCommandBuilder {
         } else {
             args += ["-o", "BatchMode=yes"]           // 非密码模式禁止任何交互提示
         }
-        args += ["-R", forwardSpecification]
+        args += ["-R", forwardSpecifications.first!]
+        for extra in forwardSpecifications.dropFirst() {
+            args += ["-R", extra] // HTTP 兼容入口等附加转发（远端同样只绑定 127.0.0.1）
+        }
         if profile.authMode == .identityFile,
            let path = profile.identityFilePath?.trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty {
@@ -88,6 +95,12 @@ enum SSHCommandBuilder {
     /// OpenSSH dynamic reverse-forward syntax, with no `host:hostport` suffix.
     static func dynamicForwardArgument(profile: ServerProfile) -> String {
         "\(ServerProfile.remoteBindHost):\(profile.remoteSocksPort)"
+    }
+
+    /// HTTP 兼容入口转发：远端 `127.0.0.1:<remoteHTTPPort>` → Mac 本地入口监听。
+    /// 入口由 App 内 HTTPEntryRelay 实现（远端零依赖，无需 Privoxy）。
+    static func httpEntryForwardArgument(profile: ServerProfile, localPort: UInt16) -> String {
+        "\(ServerProfile.remoteBindHost):\(profile.remoteHTTPPort):\(ServerProfile.remoteBindHost):\(localPort)"
     }
 
     /// One-shot remote command arguments. The remote command is one SSH argv

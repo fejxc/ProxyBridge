@@ -13,17 +13,13 @@ enum TunnelPhase: String, Codable, Sendable, CaseIterable {
     case disconnecting
 }
 
+/// HTTP 兼容入口状态（App 内实现后仅剩本地监听与端到端验证两类结论）。
 enum HTTPAdapterStatus: String, Codable, Sendable, CaseIterable {
     case notRequested
     case checking
-    case starting
     case running
     case verified
-    case notInstalled
-    case portConflict
     case unavailable
-    case stopping
-    case stopped
 }
 
 /// 单个 profile 的隧道状态快照。

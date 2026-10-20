@@ -18,7 +18,8 @@ final class SSHTunnelCoordinator: TunnelService {
     private let remoteProber: any RemoteProbeExecuting
     private let secrets: any PasswordStoring
     private let relayFactory: (any TCPRelayMaking)?
-    private let httpAdapterManager: (any RemoteHTTPAdapterManaging)?
+    /// HTTP 兼容入口工厂：nil = 功能不可用（测试环境）。
+    private let httpEntryFactory: HTTPEntryRelayFactory?
 
     /// 转发建立宽限（秒）：ExitOnForwardFailure=yes 下绑定失败会在认证后立即退出，
     /// 进程存活超过该窗口即认为转发已建立（再由远端探测给出端到端结论）。
@@ -40,12 +41,15 @@ final class SSHTunnelCoordinator: TunnelService {
         var effectiveMode: ConnectionMode?
         var selectionReason: String?
         var networkReachability: Bool?
-        var adapterSession: RemoteHTTPAdapterSession?
         var httpAdapterVerified: Bool?
         var httpAdapterStatus: HTTPAdapterStatus = .notRequested
         var httpAdapterDetail: String?
         var relay: (any TCPRelaying)?
         var trafficID: UUID?
+        /// HTTP 兼容入口（Mac 侧 HTTPEntryRelay 实现，远端零依赖）；nil = 未启用或启动失败。
+        var httpEntry: (any HTTPEntryRelaying)?
+        /// HTTP 入口的本地监听端口（构造 `-R` 附加转发用）。
+        var httpEntryPort: UInt16?
         /// 密码模式：本次连接的密码（仅内存；断开/退出即丢弃，不落盘不进日志）。
         /// UI 经 submitPassword 写入。
         var password: String?
@@ -68,14 +72,14 @@ final class SSHTunnelCoordinator: TunnelService {
         remoteProber: any RemoteProbeExecuting,
         secrets: any PasswordStoring,
         relayFactory: (any TCPRelayMaking)? = nil,
-        httpAdapterManager: (any RemoteHTTPAdapterManaging)? = nil
+        httpEntryFactory: HTTPEntryRelayFactory? = nil
     ) {
         self.processFactory = processFactory
         self.localProber = localProber
         self.remoteProber = remoteProber
         self.secrets = secrets
         self.relayFactory = relayFactory
-        self.httpAdapterManager = httpAdapterManager
+        self.httpEntryFactory = httpEntryFactory
     }
 
     // MARK: - TunnelService
@@ -114,9 +118,9 @@ final class SSHTunnelCoordinator: TunnelService {
         session.relay?.stop()
         session.task?.cancel()
         session.task = nil
-        if let profile = session.profile, session.adapterSession != nil {
-            scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true)
-        }
+        session.httpEntry?.stop()
+        session.httpEntry = nil
+        session.httpEntryPort = nil
         if let handle = session.handle {
             handle.terminate()
             scheduleForceKill(handle)
@@ -187,9 +191,9 @@ final class SSHTunnelCoordinator: TunnelService {
             session.userStopped = true
             session.task?.cancel()
             session.task = nil
-            if let profile = session.profile, session.adapterSession != nil {
-                scheduleAdapterCleanup(session: session, profile: profile, emitStatus: false)
-            }
+            session.httpEntry?.stop()
+            session.httpEntry = nil
+            session.httpEntryPort = nil
             session.password = nil
             session.relay?.stop()
             if let handle = session.handle {
@@ -375,6 +379,55 @@ final class SSHTunnelCoordinator: TunnelService {
             session.askpass = credential
         }
 
+        // 3a) HTTP 兼容入口（Mac 侧监听，远端零依赖）：必须在 ssh 启动前确定
+        // 本地监听端口，才能把附加 -R 转发写进命令。静态模式按实测上游协议
+        // 选 pipe/socks5 翻译；动态模式用直连（与动态 SOCKS5 的 Mac 出站语义一致）。
+        var httpEntryPort: UInt16?
+        if profile.httpAdapterEnabled, let httpEntryFactory {
+            let entry = httpEntryFactory.make()
+            let entryMode: HTTPEntryMode
+            switch effectiveMode {
+            case .staticForward:
+                guard let localEndpoint = selectedEndpoint else {
+                    entry.stop()
+                    break
+                }
+                switch localEndpoint.protocol {
+                case .http, .mixed: entryMode = .pipe(localEndpoint)
+                case .socks5: entryMode = .socks5(localEndpoint)
+                }
+                do {
+                    let port = try await entry.start(port: 0, mode: entryMode)
+                    httpEntryPort = port
+                    session.httpEntry = entry
+                    session.httpEntryPort = port
+                    session.httpAdapterStatus = .running
+                    session.httpAdapterDetail = "HTTP 兼容入口已启动（应用内实现，远端零依赖）"
+                } catch {
+                    entry.stop()
+                    session.httpAdapterStatus = .unavailable
+                    session.httpAdapterVerified = false
+                    session.httpAdapterDetail = "HTTP 兼容入口无法启动（\(error.localizedDescription)）；主转发不受影响"
+                }
+            case .reverseDynamic:
+                do {
+                    let port = try await entry.start(port: 0, mode: .direct)
+                    httpEntryPort = port
+                    session.httpEntry = entry
+                    session.httpEntryPort = port
+                    session.httpAdapterStatus = .running
+                    session.httpAdapterDetail = "HTTP 兼容入口已启动（应用内实现，远端零依赖）"
+                } catch {
+                    entry.stop()
+                    session.httpAdapterStatus = .unavailable
+                    session.httpAdapterVerified = false
+                    session.httpAdapterDetail = "HTTP 兼容入口无法启动（\(error.localizedDescription)）；动态 SOCKS5 不受影响"
+                }
+            case .automatic:
+                break
+            }
+        }
+
         var connecting = baseSnapshot(profileID: id, phase: .connecting)
         connecting.localProxyVerified = session.localVerified
         connecting.selectionReason = selectionReason
@@ -387,7 +440,8 @@ final class SSHTunnelCoordinator: TunnelService {
         let args = SSHCommandBuilder.arguments(
             profile: profile,
             mode: effectiveMode,
-            localEndpoint: sshEndpoint
+            localEndpoint: sshEndpoint,
+            httpEntryLocalPort: httpEntryPort
         )
         let handle = processFactory.make(
             arguments: args,
@@ -447,19 +501,26 @@ final class SSHTunnelCoordinator: TunnelService {
         case .verified(let code):
             session.remoteVerified = true
             session.networkReachability = true
-            if session.effectiveMode == .reverseDynamic && profile.httpAdapterEnabled {
-                let adapterResult = await startHTTPAdapter(session: session, profile: profile)
+            // HTTP 兼容入口已随连接启动（Mac 侧监听）：立即做一次端到端 CONNECT 验证。
+            // 失败不影响已验证的主路径（静态转发 / 动态 SOCKS5），如实降级展示。
+            if profile.httpAdapterEnabled, session.httpEntry != nil {
+                let httpOK = await verifyHTTPEntry(session: session, profile: profile)
                 guard !session.userStopped, !Task.isCancelled else { return }
-                session.phase = adapterResult.phase
-                finalSnap = baseSnapshot(profileID: id, phase: adapterResult.phase)
-                finalSnap.humanReadableDetail = adapterResult.detail
+                session.phase = httpOK ? .connected : .degraded
+                finalSnap = baseSnapshot(profileID: id, phase: session.phase)
+                finalSnap.humanReadableDetail = httpOK
+                    ? (session.effectiveMode == .reverseDynamic
+                        ? "动态 SOCKS5 与 HTTP CONNECT 入口均已验证；Clash 出站节点尚未确认\(session.selectionReason.map { "。\($0)" } ?? "")"
+                        : "远端代理与 HTTP CONNECT 入口均已验证（HTTP \(code)）")
+                    : session.httpAdapterDetail ?? "HTTP 入口验证失败；主路径仍可用"
             } else {
                 finalSnap = baseSnapshot(profileID: id, phase: .connected)
                 finalSnap.humanReadableDetail = session.effectiveMode == .reverseDynamic
                     ? "反向动态 SOCKS5 端到端请求通过（HTTP \(code)）；Clash 出站节点尚未确认\(session.selectionReason.map { "。\($0)" } ?? "")"
                     : "远端代理已验证（HTTP \(code)）"
-                if profile.httpAdapterEnabled {
-                    session.httpAdapterDetail = "当前实际使用静态转发，未启动 SOCKS5 到 HTTP 适配器"
+                if profile.httpAdapterEnabled, session.httpEntry == nil,
+                   session.httpAdapterStatus == .notRequested {
+                    session.httpAdapterDetail = "HTTP 兼容入口未启动（当前构建未装配）"
                 }
                 session.phase = .connected
             }
@@ -471,11 +532,13 @@ final class SSHTunnelCoordinator: TunnelService {
             finalSnap.remoteCurlMissing = true
             session.phase = .degraded
         case .authRequired(let detail):
-            scheduleAdapterCleanup(session: session, profile: profile, emitStatus: false)
             session.password = nil
             session.askpass?.destroy()
             session.askpass = nil
             session.relay?.stop()
+            session.httpEntry?.stop()
+            session.httpEntry = nil
+            session.httpEntryPort = nil
             handle.terminate()
             scheduleForceKill(handle)
             session.handle = nil
@@ -484,7 +547,6 @@ final class SSHTunnelCoordinator: TunnelService {
             finalSnap.humanReadableDetail = detail
             session.phase = .authRequired
         case .notProxy, .connectionFailure, .unknown:
-            scheduleAdapterCleanup(session: session, profile: profile, emitStatus: false)
             session.remoteVerified = false
             session.networkReachability = false
             finalSnap = baseSnapshot(profileID: id, phase: .degraded)
@@ -539,22 +601,20 @@ final class SSHTunnelCoordinator: TunnelService {
                 session.remoteVerified = true
                 session.networkReachability = true
                 snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP \(code)）"
-                if session.adapterSession != nil {
-                    let adapterOK = await verifyHTTPAdapter(session: session, profile: profile)
+                if session.httpEntry != nil {
+                    let entryOK = await verifyHTTPEntry(session: session, profile: profile)
                     guard !session.userStopped, !Task.isCancelled,
                           session.handle?.isRunning == true else { return }
-                    if adapterOK == false {
-                        snap.humanReadableDetail += "；HTTP 兼容入口未通过，SOCKS5 仍可用"
+                    if entryOK == false {
+                        snap.humanReadableDetail += "；HTTP 入口未通过，主路径仍可用"
                     }
                 }
             case .remoteCurlMissing, .unknown:
-                scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: "健康检查完成：远端本次无法验证")
                 session.remoteVerified = nil
                 session.networkReachability = nil
                 snap.remoteCurlMissing = outcome == .remoteCurlMissing
                 snap.humanReadableDetail = "健康检查完成：远端本次无法验证，连接已降级"
             case .authRequired(let detail):
-                scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: detail)
                 session.remoteVerified = nil
                 session.phase = .authRequired
                 session.password = nil
@@ -571,8 +631,7 @@ final class SSHTunnelCoordinator: TunnelService {
                     snap.humanReadableDetail += "；已清除记住的密码，请手动重新连接"
                 }
             case .notProxy, .connectionFailure:
-                scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: "手动检查完成：远端验证未通过")
-                session.remoteVerified = false
+                    session.remoteVerified = false
                 session.networkReachability = false
                 snap.humanReadableDetail = "手动检查完成：远端验证未通过"
             }
@@ -584,7 +643,7 @@ final class SSHTunnelCoordinator: TunnelService {
                     : "网络栈模式无需本地代理端口；远端验活结论保持不变")
         }
 
-        let requiresHTTPAdapter = profile.httpAdapterEnabled && session.effectiveMode == .reverseDynamic
+        let requiresHTTPAdapter = profile.httpAdapterEnabled && session.httpEntry != nil
         let adapterOK = !requiresHTTPAdapter || session.httpAdapterVerified == true
         // 静态模式要求本地代理和远端请求都通过；动态 B+ 还要求 HTTP CONNECT 验证。
         if (!requiresLocalProxy || localOK == true) && session.remoteVerified == true && adapterOK {
@@ -709,9 +768,6 @@ final class SSHTunnelCoordinator: TunnelService {
             }
         }
         session.relay?.stop()
-        if let profile = session.profile, session.adapterSession != nil {
-            scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: detail)
-        }
         session.phase = phase
         session.handle = nil
         session.askpass?.destroy()
@@ -807,162 +863,28 @@ final class SSHTunnelCoordinator: TunnelService {
         )
     }
 
-    private struct HTTPAdapterSetupResult {
-        var phase: TunnelPhase
-        var detail: String
-    }
-
-    private func verifyHTTPAdapter(session: Session, profile: ServerProfile) async -> Bool? {
-        guard let adapter = session.adapterSession else { return session.httpAdapterVerified }
+    /// HTTP 兼容入口（Mac 侧监听）的端到端 CONNECT 验证：从 Linux 经
+    /// `127.0.0.1:<remoteHTTPPort>` 发真实请求。入口是本地监听器，验证失败
+    /// 不需要任何远端清理，也不影响已验证的主路径（静态转发 / 动态 SOCKS5）。
+    private func verifyHTTPEntry(session: Session, profile: ServerProfile) async -> Bool {
+        session.httpAdapterStatus = .checking
         let outcome = await remoteProber.probe(
             profile: profile,
             remotePort: profile.remoteHTTPPort,
             protocol: .http,
             password: session.password
         )
-        guard !session.userStopped, !Task.isCancelled else { return nil }
+        guard !session.userStopped, !Task.isCancelled else { return false }
         if case .verified(let code) = outcome {
             session.httpAdapterVerified = true
             session.httpAdapterStatus = .verified
             session.httpAdapterDetail = "HTTP CONNECT 已验证（HTTP \(code)）"
             return true
         }
-
         session.httpAdapterVerified = false
         session.httpAdapterStatus = .unavailable
-        session.httpAdapterDetail = "HTTP CONNECT 健康检查失败（\(Self.describe(remote: outcome))）"
-        adapter.handle.terminate()
-        if let manager = httpAdapterManager {
-            let cleanup = await manager.cleanup(profile: profile, session: adapter, password: session.password)
-            if case .unableToConfirm(let detail) = cleanup { session.httpAdapterDetail? += "；\(detail)" }
-        }
-        session.adapterSession = nil
+        session.httpAdapterDetail = "HTTP CONNECT 验证失败（\(Self.describe(remote: outcome))）；主路径仍可用"
         return false
-    }
-
-    /// B+ is attempted only after the SOCKS5 path has already passed a real
-    /// remote request. A failed adapter leaves the verified SOCKS5 endpoint up.
-    private func startHTTPAdapter(session: Session, profile: ServerProfile) async -> HTTPAdapterSetupResult {
-        session.httpAdapterStatus = .checking
-        session.httpAdapterVerified = nil
-        session.httpAdapterDetail = "正在检查 Linux Privoxy 与 HTTP 端口…"
-        guard let manager = httpAdapterManager else {
-            session.httpAdapterStatus = .unavailable
-            session.httpAdapterVerified = false
-            session.httpAdapterDetail = "当前构建未装配 Privoxy 管理器；远端 SOCKS5 仍可用"
-            return HTTPAdapterSetupResult(phase: .degraded, detail: session.httpAdapterDetail!)
-        }
-
-        let result = await manager.start(
-            profile: profile,
-            httpPort: profile.remoteHTTPPort,
-            socksPort: profile.remoteSocksPort,
-            password: session.password
-        )
-        guard !Task.isCancelled, !session.userStopped else {
-            if case .started(let adapter) = result {
-                _ = await manager.cleanup(profile: profile, session: adapter, password: session.password)
-            }
-            return HTTPAdapterSetupResult(phase: .degraded, detail: "连接已取消")
-        }
-
-        switch result {
-        case .started(let adapter):
-            session.adapterSession = adapter
-            session.httpAdapterStatus = .running
-            session.httpAdapterDetail = "Privoxy 已启动，正在验证 HTTP CONNECT…"
-            let httpOutcome = await remoteProber.probe(
-                profile: profile,
-                remotePort: profile.remoteHTTPPort,
-                protocol: .http,
-                password: session.password
-            )
-            guard !Task.isCancelled, !session.userStopped else {
-                scheduleAdapterCleanup(session: session, profile: profile, emitStatus: true, statusPrefix: "连接已取消")
-                return HTTPAdapterSetupResult(phase: .degraded, detail: "连接已取消")
-            }
-            if case .verified(let code) = httpOutcome {
-                session.httpAdapterVerified = true
-                session.httpAdapterStatus = .verified
-                session.httpAdapterDetail = "HTTP CONNECT 已验证（HTTP \(code)）"
-                return HTTPAdapterSetupResult(
-                    phase: .connected,
-                    detail: "动态 SOCKS5 与 Linux HTTP CONNECT 均已验证；Clash 出站节点尚未确认\(session.selectionReason.map { "。\($0)" } ?? "")"
-                )
-            }
-
-            let explanation = Self.describe(remote: httpOutcome)
-            let cleanup = await manager.cleanup(profile: profile, session: adapter, password: session.password)
-            session.adapterSession = nil
-            session.httpAdapterVerified = false
-            session.httpAdapterStatus = .unavailable
-            session.httpAdapterDetail = "HTTP CONNECT 验证失败（\(explanation)）；已回退到 SOCKS5"
-            if case .unableToConfirm(let detail) = cleanup {
-                session.httpAdapterDetail? += "；\(detail)"
-            }
-            return HTTPAdapterSetupResult(phase: .degraded, detail: "SOCKS5 端到端请求已验证；\(session.httpAdapterDetail ?? "HTTP 兼容入口不可用")")
-        case .notInstalled:
-            session.httpAdapterStatus = .notInstalled
-            session.httpAdapterVerified = false
-            session.httpAdapterDetail = "Linux 未安装 Privoxy；应用未安装软件。可由用户/管理员手动安装后重试；SOCKS5 入口仍可用"
-        case .portConflict:
-            session.httpAdapterStatus = .portConflict
-            session.httpAdapterVerified = false
-            session.httpAdapterDetail = "Linux HTTP 端口 127.0.0.1:\(profile.remoteHTTPPort) 已被占用；请改用其他端口"
-        case .unavailable(let detail):
-            session.httpAdapterStatus = .unavailable
-            session.httpAdapterVerified = false
-            session.httpAdapterDetail = detail
-        case .authRequired(let detail):
-            session.httpAdapterStatus = .unavailable
-            session.httpAdapterVerified = false
-            session.httpAdapterDetail = "SSH 无法管理 Privoxy：\(detail)"
-        }
-        return HTTPAdapterSetupResult(
-            phase: .degraded,
-            detail: "SOCKS5 端到端请求已验证；HTTP 兼容入口不可用：\(session.httpAdapterDetail ?? "原因未知")"
-        )
-    }
-
-    /// Runs cleanup on a separate authenticated SSH command. The attached
-    /// Privoxy process is terminated immediately; cleanup only confirms and
-    /// removes the unique per-session user config.
-    private func scheduleAdapterCleanup(
-        session: Session,
-        profile: ServerProfile,
-        emitStatus: Bool,
-        statusPrefix: String? = nil
-    ) {
-        guard let adapter = session.adapterSession else { return }
-        session.adapterSession = nil
-        session.httpAdapterStatus = .stopping
-        session.httpAdapterDetail = "正在停止本 App 管理的 Privoxy 实例…"
-        adapter.handle.terminate()
-        scheduleForceKill(adapter.handle)
-        guard let manager = httpAdapterManager else {
-            session.httpAdapterStatus = .unavailable
-            session.httpAdapterDetail = "已终止本地 SSH 管理进程，但无法确认远端 Privoxy 清理状态"
-            return
-        }
-        let password = session.password
-        Task { @MainActor [weak self] in
-            let result = await manager.cleanup(profile: profile, session: adapter, password: password)
-            session.httpAdapterVerified = nil
-            switch result {
-            case .stopped:
-                session.httpAdapterStatus = .stopped
-                session.httpAdapterDetail = "本 App 管理的 Privoxy 已停止并清理本次配置"
-            case .unableToConfirm(let reason):
-                session.httpAdapterStatus = .unavailable
-                session.httpAdapterDetail = reason
-            }
-            guard emitStatus, let self else { return }
-            var snapshot = self.baseSnapshot(profileID: profile.id, phase: session.phase)
-            let prefix = statusPrefix ?? (session.userStopped ? "已断开" : nil)
-            let cleanupDetail = session.httpAdapterDetail ?? "HTTP 入口清理状态未知"
-            snapshot.humanReadableDetail = prefix.map { "\($0)；\(cleanupDetail)" } ?? cleanupDetail
-            self.onEvent?(.snapshot(snapshot))
-        }
     }
 
     private func baseSnapshot(profileID: UUID, phase: TunnelPhase) -> TunnelSnapshot {

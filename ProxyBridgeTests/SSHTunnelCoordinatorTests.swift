@@ -213,24 +213,17 @@ final class StubRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
     }
 }
 
-final class StubRemoteHTTPAdapterManager: RemoteHTTPAdapterManaging, @unchecked Sendable {
-    var startResult: RemoteHTTPAdapterStartResult
-    private(set) var startCalls = 0
-    private(set) var cleanupCalls = 0
-    private(set) var lastHTTPPort: Int?
-    private(set) var lastSOCKSPort: Int?
+/// 始终启动失败的 HTTP 入口工厂（验证入口故障不拖累主路径）。
+final class FailingHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
+    func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16 {
+        throw NSError(domain: "ProxyBridgeTest.HTTPEntry", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "端口被占用（测试注入）"])
+    }
+    func stop() {}
+}
 
-    init(startResult: RemoteHTTPAdapterStartResult) { self.startResult = startResult }
-    func start(profile: ServerProfile, httpPort: Int, socksPort: Int, password: String?) async -> RemoteHTTPAdapterStartResult {
-        startCalls += 1
-        lastHTTPPort = httpPort
-        lastSOCKSPort = socksPort
-        return startResult
-    }
-    func cleanup(profile: ServerProfile, session: RemoteHTTPAdapterSession, password: String?) async -> RemoteHTTPAdapterCleanupResult {
-        cleanupCalls += 1
-        return .stopped
-    }
+struct FailingHTTPEntryFactory: Sendable {
+    func make() -> any HTTPEntryRelaying { FailingHTTPEntry() }
 }
 
 /// Relay 替身：记录 start/retarget 的目标序列与停止（不监听真实端口）。
@@ -306,7 +299,8 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         local: ProbeOutcome = .verified(statusCode: 200),
         remote: RemoteProbeOutcome = .verified(statusCode: 200),
         grace: Double = 0.2,
-        adapterManager: (any RemoteHTTPAdapterManaging)? = nil,
+        httpEntry: Bool = false,
+        failingHTTPEntry: Bool = false,
         relayFactory: FakeRelayFactory? = nil
     ) {
         factory = FakeSSHFactory()
@@ -316,13 +310,22 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         if let relayFactory {
             self.relayFactory = relayFactory
         }
+        // 真实入口监听（回环临时端口，验证由替身探测承担）或失败替身；都关闭 = 未装配
+        let entryFactory: HTTPEntryRelayFactory?
+        if failingHTTPEntry {
+            entryFactory = HTTPEntryRelayFactory(make: { FailingHTTPEntry() })
+        } else if httpEntry {
+            entryFactory = HTTPEntryRelayFactory()
+        } else {
+            entryFactory = nil
+        }
         coordinator = SSHTunnelCoordinator(
             processFactory: factory,
             localProber: localProber,
             remoteProber: remoteProber,
             secrets: secretStore,
             relayFactory: self.relayFactory,
-            httpAdapterManager: adapterManager
+            httpEntryFactory: entryFactory
         )
         coordinator.graceSeconds = grace
         recorder = Recorder<TunnelSnapshot>()
@@ -552,44 +555,43 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertTrue(quietIdle, "无活跃会话时不得有任何事件")
     }
 
-    func testHTTPAdapterStartsOnlyAfterSOCKSProbeAndRequiresHTTPConnect() async {
-        let adapterHandle = FakeSSHHandle()
-        let manager = StubRemoteHTTPAdapterManager(
-            startResult: .started(RemoteHTTPAdapterSession(token: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", handle: adapterHandle))
-        )
-        makeCoordinator(adapterManager: manager)
+    func testHTTPEntryVerifiedAfterSOCKSOnDynamicMode() async {
+        makeCoordinator(httpEntry: true)
         var profile = configuration(endpoint: nil).profile
         profile.connectionMode = .reverseDynamic
         coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
 
         let connected = await waitLastPhase(.connected)
         XCTAssertTrue(connected)
-        XCTAssertEqual(manager.startCalls, 1)
-        XCTAssertEqual(manager.lastHTTPPort, 7_890)
-        XCTAssertEqual(manager.lastSOCKSPort, 17_890)
-        XCTAssertEqual(remoteProber.probeHistory.map { $0.1 }, [.socks5, .http], "先验 SOCKS5，再实测 HTTP CONNECT")
+        XCTAssertEqual(remoteProber.probeHistory.map { $0.1 }, [.socks5, .http], "先验 SOCKS5，再实测 HTTP CONNECT 入口")
         XCTAssertEqual(recorder.snapshot.last?.httpAdapterStatus, .verified)
         XCTAssertEqual(recorder.snapshot.last?.httpAdapterVerified, true)
+        // 附加 -R 转发已写入 ssh 命令：远端 7890 → Mac 本地入口（远端零依赖）
+        let args = factory.lastArguments
+        let forwards = args.indices.filter { args[$0] == "-R" }.map { args[$0 + 1] }
+        XCTAssertEqual(forwards.count, 2, "动态 SOCKS5 + HTTP 入口两条转发")
+        XCTAssertTrue(forwards[1].hasPrefix("127.0.0.1:7890:127.0.0.1:"), "入口转发必须远端/本地均绑定回环：\(forwards)")
 
+        // 断开：入口是本地监听，直接关闭，绝无远端清理事件
         coordinator.disconnect(profileID: profile.id)
-        let cleaned = await waitUntilMain { manager.cleanupCalls == 1 }
-        XCTAssertTrue(cleaned, "断开时应清理本 App 管理的 Privoxy")
+        let quiet = await awaitQuiet(countAtStart: recorder.count, stableMilliseconds: 300)
+        XCTAssertTrue(quiet, "断开后不得有 Privoxy/远端清理类事件")
     }
 
-    func testHTTPAdapterUnavailableKeepsVerifiedSOCKSAndReportsDegraded() async {
-        let manager = StubRemoteHTTPAdapterManager(startResult: .notInstalled)
-        makeCoordinator(adapterManager: manager)
+    func testFailingHTTPEntryKeepsVerifiedSOCKSConnected() async {
+        makeCoordinator(failingHTTPEntry: true)
         var profile = configuration(endpoint: nil).profile
         profile.connectionMode = .reverseDynamic
         coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
 
-        let degraded = await waitLastPhase(.degraded)
-        XCTAssertTrue(degraded)
-        XCTAssertEqual(remoteProber.callCount, 1, "HTTP 探测不能在 Privoxy 不存在时伪装执行")
-        XCTAssertEqual(recorder.snapshot.last?.remoteProbeVerified, true, "SOCKS5 仍保留已验证结论")
-        XCTAssertEqual(recorder.snapshot.last?.effectiveMode, .reverseDynamic)
-        XCTAssertEqual(recorder.snapshot.last?.httpAdapterStatus, .notInstalled)
-        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("SOCKS5 端到端请求已验证") == true)
+        let connected = await waitLastPhase(.connected)
+        XCTAssertTrue(connected, "入口启动失败不拖累已验证的动态 SOCKS5 主路径")
+        XCTAssertEqual(remoteProber.callCount, 1, "入口不存在时不得伪装执行 HTTP 探测")
+        XCTAssertEqual(recorder.snapshot.last?.remoteProbeVerified, true)
+        XCTAssertEqual(recorder.snapshot.last?.httpAdapterStatus, .unavailable)
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("不") == true
+                      && recorder.snapshot.last?.httpAdapterDetail?.contains("无法启动") == true,
+                      "须如实说明入口未能启动：\(recorder.snapshot.last?.httpAdapterDetail ?? "")")
     }
 
     // MARK: I01：进程 0.5s 后异常退出 → 分类进入终态
