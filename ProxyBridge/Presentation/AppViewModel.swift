@@ -15,7 +15,8 @@ enum SettingsTab: String, CaseIterable, Identifiable, Sendable {
 final class AppViewModel {
     // MARK: - 依赖（注入）
 
-    let profileStore: ProfileRepository
+    /// 服务器配置生命周期（CRUD / 校验 / ssh config 导入 / 落盘），见 ProfileManager。
+    let profileManager: ProfileManager
     let settingsStore: AppSettingsStore
     let tunnel: TunnelService
     let proxyDetector: ProxyDetectorService
@@ -34,8 +35,12 @@ final class AppViewModel {
 
     // MARK: - 状态
 
-    private(set) var profiles: [ServerProfile] = []
-    private(set) var currentProfileId: UUID?
+    // MARK: - Profile facade（存储与 CRUD 在 ProfileManager；同名转发保持视图/测试访问路径不变）
+
+    var profiles: [ServerProfile] { profileManager.profiles }
+    var currentProfileId: UUID? { profileManager.currentProfileId }
+    var editorIsNewDraft: Bool { profileManager.editorIsNewDraft }
+
     private(set) var snapshots: [UUID: TunnelSnapshot] = [:]
     private(set) var detection = ProxyDetectionState()
     /// 密码模式：等待用户输入 SSH 密码的 profile（nil = 无待输入）。
@@ -111,7 +116,6 @@ final class AppViewModel {
     private var portConflictInspectedAt: [UUID: Date] = [:]
     private static let portConflictInspectCooldown: TimeInterval = 60
 
-    private var document: ProfilesDocument = .empty()
     private let systemServices: (any AppSystemIntegrating)?
     private(set) var loginLaunchEnabled = false
     private(set) var loginStatusDescription = "仅安装后的应用可以设置登录启动"
@@ -152,7 +156,6 @@ final class AppViewModel {
         remoteJanitor: (any RemoteJanitorProviding)? = nil,
         updateInstaller: (any UpdateInstalling)? = nil
     ) {
-        self.profileStore = profileStore
         self.settingsStore = settingsStore
         self.tunnel = tunnel
         self.proxyDetector = proxyDetector
@@ -160,6 +163,7 @@ final class AppViewModel {
         self.secrets = secrets
         self.systemServices = systemServices
         self.hostKeyTrust = hostKeyTrust
+        self.profileManager = ProfileManager(profileStore: profileStore, logStore: logStore)
         self.updates = UpdateCoordinator(
             updateChecker: updateChecker,
             updateInstaller: updateInstaller,
@@ -169,6 +173,15 @@ final class AppViewModel {
         self.remoteJanitor = remoteJanitor
 
         // 装配需要引用 self 的闭包（全部存储属性已初始化之后才可捕获 self）。
+        profileManager.attach(
+            snapshot: { [weak self] id in self?.snapshots[id] },
+            applySnapshot: { [weak self] snap in self?.snapshots[snap.profileId] = snap },
+            updateReconnectPreference: { [weak self] id, reconnectEnabled, rememberPassword in
+                self?.tunnel.updateReconnectPreference(profileID: id, enabled: reconnectEnabled, rememberPassword: rememberPassword)
+            },
+            onProfileAdded: { [weak self] id in self?.snapshots[id] = TunnelSnapshot.idle(id) },
+            onProfileRemoving: { [weak self] id in self?.tearDownProfileState(id) }
+        )
         updates.attach(
             settings: { [weak self] in self?.settings ?? .defaults() },
             postNewVersionNotice: { [weak self] info in self?.postUpdateNotice(info) }
@@ -215,27 +228,8 @@ final class AppViewModel {
             logStore.append(raw: "settings.json 无法解析，已回退默认设置（文件保留原样，便于人工排查）", level: .error)
         }
 
-        do {
-            document = try profileStore.load()
-        } catch ProfileRepositoryError.corrupted(let underlying) {
-            do {
-                let side = try profileStore.quarantineCorruptFile()
-                logStore.append(
-                    raw: "配置文件无法解析（\(LogRedaction.sanitize(underlying))），已备份至 \(side.lastPathComponent) 并以空配置启动",
-                    level: .error
-                )
-            } catch {
-                logStore.append(raw: "配置文件无法解析，且备份失败：\(error.localizedDescription)", level: .error)
-            }
-            document = .empty()
-        } catch {
-            logStore.append(raw: "读取配置失败：\(error.localizedDescription)", level: .error)
-            document = .empty()
-        }
-
-        profiles = document.profiles
-        currentProfileId = document.currentProfileId ?? profiles.first?.id
-        for p in profiles {
+        profileManager.loadFromDisk()
+        for p in profileManager.profiles {
             snapshots[p.id] = TunnelSnapshot.idle(p.id)
         }
 
@@ -581,131 +575,54 @@ final class AppViewModel {
         }
     }
 
-    // MARK: - Profile 管理
+    // MARK: - Profile 操作 facade（实现在 ProfileManager）
 
     func selectProfile(_ id: UUID) {
-        guard profiles.contains(where: { $0.id == id }) else { return }
-        // 切换选择即离开「新建草稿」编辑态，编辑器需跟随展示被选服务器
-        editorIsNewDraft = false
-        currentProfileId = id
-        persist()
-        logStore.append(raw: "切换当前服务器：\(profiles.first { $0.id == id }?.name ?? "?")", level: .info, profileId: id)
+        profileManager.selectProfile(id)
     }
 
     /// 新 profile 的编辑初值。不含真实服务器默认值（约束：示例不得内置为默认）。
     func makeNewProfileDraft() -> ServerProfile {
-        ServerProfile(
-            name: "新服务器 \(profiles.count + 1)",
-            host: "",
-            sshPort: 22,
-            username: "",
-            remotePort: 7890
-        )
+        profileManager.makeNewProfileDraft()
     }
 
-    /// 侧栏「添加服务器」：置位「新草稿」信号；编辑器据此本地建立未保存草稿。
-    /// 保存时才入列落盘。
-    private(set) var editorIsNewDraft = false
-
     func requestCreateProfile() {
-        editorIsNewDraft = true
+        profileManager.requestCreateProfile()
     }
 
     /// 编辑器保存草稿。校验失败的非法配置拒绝保存（U06「拒绝保存」半边）。
     @discardableResult
     func saveDraftProfile(_ profile: ServerProfile) -> Bool {
-        let validation = ServerProfileRule.validate(profile)
-        guard validation.isValid else {
-            logStore.append(
-                raw: "服务器「\(profile.name)」配置未通过校验，已拒绝保存：\(validation.errors.joined(separator: "；"))",
-                level: .error, profileId: profile.id
-            )
-            return false
-        }
-        editorIsNewDraft = false
-        upsertProfile(profile)
-        currentProfileId = profile.id
-        persist()
-        if let conflict = remotePortConflictDescription(for: profile) {
-            logStore.append(raw: "端口冲突提示：\(conflict)", level: .warning, profileId: profile.id)
-        }
-        return true
+        profileManager.saveDraftProfile(profile)
     }
 
     /// F02「端口冲突提示」：同主机同远程监听端口会互相顶掉远端监听。
     func remotePortConflictDescription(for profile: ServerProfile) -> String? {
-        func ports(_ profile: ServerProfile) -> Set<Int> {
-            switch profile.connectionMode {
-            case .automatic:
-                var result: Set<Int> = [profile.remotePort, profile.remoteSocksPort]
-                if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
-                return result
-            case .staticForward:
-                return [profile.remotePort]
-            case .reverseDynamic:
-                var result: Set<Int> = [profile.remoteSocksPort]
-                if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
-                return result
-            }
-        }
-        let requestedPorts = ports(profile)
-        let conflicts = profiles.filter {
-            $0.id != profile.id && $0.host == profile.host && !ports($0).isDisjoint(with: requestedPorts)
-        }
-        guard !conflicts.isEmpty else { return nil }
-        let overlappingPorts = Set(conflicts.flatMap { ports($0).intersection(requestedPorts) })
-        let portsText = overlappingPorts.sorted().map(String.init).joined(separator: "、")
-        return "「\(profile.name)」与 \(conflicts.map(\.name).joined(separator: "、")) 在同一 SSH 主机上占用重叠的远程端口（\(portsText)），同时连接会互相失败"
+        profileManager.remotePortConflictDescription(for: profile)
     }
 
     /// 放弃草稿。
     func discardDraft() {
-        editorIsNewDraft = false
+        profileManager.discardDraft()
     }
 
     /// 新增或更新。若目标 profile 存在活跃连接，则按规范提示需要重连。
     func upsertProfile(_ profile: ServerProfile) {
-        if let idx = profiles.firstIndex(where: { $0.id == profile.id }) {
-            let old = profiles[idx]
-            profiles[idx] = profile
-            let connectionRelevantChange = old.host != profile.host
-                || old.sshPort != profile.sshPort
-                || old.username != profile.username
-                || old.authMode != profile.authMode
-                || old.identityFilePath != profile.identityFilePath
-                || old.remotePort != profile.remotePort
-                || old.remoteSocksPort != profile.remoteSocksPort
-                || old.remoteHTTPPort != profile.remoteHTTPPort
-                || old.connectionMode != profile.connectionMode
-                || old.httpAdapterEnabled != profile.httpAdapterEnabled
-                || old.relayPort != profile.relayPort
-            if connectionRelevantChange,
-               let snap = snapshots[profile.id], snap.phase == .connected || snap.phase == .degraded {
-                var updated = snap
-                updated.phase = .degraded
-                updated.humanReadableDetail = "配置已修改，需断开后重连才能生效（当前隧道仍使用旧配置）"
-                snapshots[profile.id] = updated
-                logStore.append(raw: "服务器「\(profile.name)」连接参数已修改，需要手动重连", level: .warning, profileId: profile.id)
-            }
-            logStore.append(raw: "已保存服务器「\(profile.name)」", level: .success, profileId: profile.id)
-        } else {
-            profiles.append(profile)
-            snapshots[profile.id] = TunnelSnapshot.idle(profile.id)
-            if currentProfileId == nil { currentProfileId = profile.id }
-            logStore.append(raw: "新增服务器「\(profile.name)」", level: .success, profileId: profile.id)
-        }
-        tunnel.updateReconnectPreference(profileID: profile.id, enabled: profile.reconnectEnabled, rememberPassword: profile.rememberPassword)
-        persist()
+        profileManager.upsert(profile)
     }
 
     /// 删除前的安全检查：活跃连接先断开（由本 App 管理的进程）。
     func deleteProfile(_ id: UUID) {
+        profileManager.delete(id)
+    }
+
+    /// ProfileManager.delete 回调：清理会话侧状态（隧道、密码、通知、快照、卡片）。
+    /// 顺序与拆分前 deleteProfile 的清理序列一致。
+    private func tearDownProfileState(_ id: UUID) {
         if tunnel.isActive(profileID: id) {
             tunnel.disconnect(profileID: id)
         }
         secrets.delete(for: id) // 清掉可能记住的密码
-        let name = profiles.first { $0.id == id }?.name ?? "?"
-        profiles.removeAll { $0.id == id }
         snapshots[id] = nil
         trafficStore.remove(id)
         pendingStartupProfiles.remove(id)
@@ -715,11 +632,17 @@ final class AppViewModel {
         finishPasswordPrompt(profileID: id)
         clearHostKeyPrompt(profileID: id)
         if portConflict?.profileID == id { portConflict = nil }
-        if currentProfileId == id {
-            currentProfileId = profiles.first?.id
-        }
-        logStore.append(raw: "已删除服务器「\(name)」", level: .warning, profileId: id)
-        persist()
+    }
+
+    /// 可导入的 ssh config 条目；文件不存在返回 nil。
+    func availableSSHConfigEntries() -> [SSHConfigEntry]? {
+        profileManager.availableSSHConfigEntries()
+    }
+
+    /// 导入选中的条目为服务器（校验失败或与既有配置重复的跳过）。返回成功导入数。
+    @discardableResult
+    func importSSHConfigEntries(_ entries: [SSHConfigEntry]) -> Int {
+        profileManager.importSSHConfigEntries(entries)
     }
 
     // MARK: - 连接动作
@@ -1027,42 +950,6 @@ final class AppViewModel {
         portConflict = nil
     }
 
-    // MARK: - ~/.ssh/config 导入（P2）
-
-    /// 可导入的 ssh config 条目；文件不存在返回 nil。
-    func availableSSHConfigEntries() -> [SSHConfigEntry]? {
-        SSHConfigParser.loadDefaultConfig()
-    }
-
-    /// 导入选中的条目为服务器（校验失败或与既有配置重复的跳过）。返回成功导入数。
-    @discardableResult
-    func importSSHConfigEntries(_ entries: [SSHConfigEntry]) -> Int {
-        var imported = 0
-        for entry in entries {
-            var profile = ServerProfile(
-                name: entry.alias,
-                host: entry.hostName ?? entry.alias,
-                sshPort: entry.port ?? 22,
-                username: entry.user ?? "",
-                remotePort: 7890
-            )
-            if let identity = entry.identityFile {
-                profile.authMode = .identityFile
-                profile.identityFilePath = identity
-            }
-            guard ServerProfileRule.validate(profile).isValid else { continue }
-            guard !profiles.contains(where: {
-                $0.host == profile.host && $0.sshPort == profile.sshPort && $0.username == profile.username
-            }) else { continue }
-            upsertProfile(profile)
-            imported += 1
-        }
-        if imported > 0 {
-            logStore.append(raw: "从 ~/.ssh/config 导入 \(imported) 台服务器（仅 HostName/Port/User/IdentityFile，不含其他指令）", level: .success)
-        }
-        return imported
-    }
-
     // MARK: - 远端依赖指引（P2：从「如实报障」到「给出下一步」）
 
     /// 当前 profile 的远端缺失依赖（curl / Privoxy）；nil = 无。
@@ -1360,18 +1247,5 @@ final class AppViewModel {
         powerAssertion?.release()
         systemServices?.stopObserving()
         tunnel.terminateAllSessions()
-    }
-
-    private func persist() {
-        document = ProfilesDocument(
-            schemaVersion: ProfilesDocument.currentSchemaVersion,
-            profiles: profiles,
-            currentProfileId: currentProfileId
-        )
-        do {
-            try profileStore.save(document)
-        } catch {
-            logStore.append(raw: "保存配置失败：\(error.localizedDescription)", level: .error)
-        }
     }
 }
