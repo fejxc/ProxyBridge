@@ -590,9 +590,10 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         XCTAssertEqual(remoteProber.callCount, 1, "入口不存在时不得伪装执行 HTTP 探测")
         XCTAssertEqual(recorder.snapshot.last?.remoteProbeVerified, true)
         XCTAssertEqual(recorder.snapshot.last?.httpAdapterStatus, .unavailable)
-        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("不") == true
-                      && recorder.snapshot.last?.httpAdapterDetail?.contains("无法启动") == true,
-                      "须如实说明入口未能启动：\(recorder.snapshot.last?.httpAdapterDetail ?? "")")
+        XCTAssertTrue(recorder.snapshot.last?.httpAdapterDetail?.contains("无法启动") == true,
+                      "入口失败原因须如实呈现：\(recorder.snapshot.last?.httpAdapterDetail ?? "")")
+        XCTAssertTrue(recorder.snapshot.last?.humanReadableDetail.contains("端到端请求通过") == true,
+                      "主路径结论须保持已验证口径：\(recorder.snapshot.last?.humanReadableDetail ?? "")")
     }
 
     // MARK: I01：进程 0.5s 后异常退出 → 分类进入终态
