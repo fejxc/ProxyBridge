@@ -486,7 +486,6 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
         profile.httpAdapterEnabled = false
         coordinator.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
         // 就绪重试退避合计 4.5s（1.5+3），等待窗口须覆盖整个重试链
-        let box = recorder
         let connected = await waitUntilMain(timeout: 12) { box.snapshot.last?.phase == .connected }
         XCTAssertTrue(connected, "前两次拒绝应被就绪重试消化，第三次验证通过 → connected：\(recorder.snapshot.map(\.phase))")
         XCTAssertEqual(sequenced.calls, 3, "恰好重试两次，不做无限探测")
