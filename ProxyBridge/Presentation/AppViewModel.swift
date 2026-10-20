@@ -31,6 +31,8 @@ final class AppViewModel {
     private let powerAssertion: (any PowerAssertionControlling)?
     /// 远端端口残留诊断清理：nil = 功能不可用。
     private let remoteJanitor: (any RemoteJanitorProviding)?
+    /// 应用内更新安装器：nil = 只保留浏览器下载路径。
+    private let updateInstaller: (any UpdateInstalling)?
 
     // MARK: - 状态
 
@@ -71,6 +73,17 @@ final class AppViewModel {
     private(set) var updateCheckUIState: UpdateCheckUIState = .idle
     /// 已通知过的版本（每版本只发一次系统通知）。
     private var updateNotifiedVersion: String?
+    /// 应用内安装状态（下载 → 校验 → 安装；校验不可用绝不自动安装）。
+    enum UpdateInstallUIState: Equatable {
+        case idle
+        case downloading(Double)
+        case verifying
+        case installing
+        case failed(String)
+    }
+    private(set) var updateInstallState: UpdateInstallUIState = .idle
+    /// 更新安装完成后的重启入口（由 AppDelegate 注入，经 terminate 流程避免单实例锁竞态）。
+    var relaunchAfterUpdate: (() -> Void)?
 
     // MARK: - 动态→静态回升（P1）
     /// 升回静态的冷却记录（防抖：代理不稳时避免模式反复横跳）。
@@ -136,7 +149,8 @@ final class AppViewModel {
         hostKeyTrust: (any HostKeyTrustProviding)? = nil,
         updateChecker: (any UpdateChecking)? = nil,
         powerAssertion: (any PowerAssertionControlling)? = nil,
-        remoteJanitor: (any RemoteJanitorProviding)? = nil
+        remoteJanitor: (any RemoteJanitorProviding)? = nil,
+        updateInstaller: (any UpdateInstalling)? = nil
     ) {
         self.profileStore = profileStore
         self.settingsStore = settingsStore
@@ -149,6 +163,7 @@ final class AppViewModel {
         self.updateChecker = updateChecker
         self.powerAssertion = powerAssertion
         self.remoteJanitor = remoteJanitor
+        self.updateInstaller = updateInstaller
 
         bootstrap()
     }
@@ -180,7 +195,8 @@ final class AppViewModel {
             hostKeyTrust: HostKeyTrustService(),
             updateChecker: GitHubReleaseUpdateChecker(),
             powerAssertion: PowerAssertionService(),
-            remoteJanitor: SSHRemoteJanitor(factory: sshFactory)
+            remoteJanitor: SSHRemoteJanitor(factory: sshFactory),
+            updateInstaller: DMGUpdateInstaller()
         )
     }
 
@@ -517,6 +533,72 @@ final class AppViewModel {
         guard let url else { return }
         NSWorkspace.shared.open(url)
         logStore.append(raw: "已打开发布页\(updateInfo.map { "（v\($0.latestVersion)）" } ?? "")", level: .info)
+    }
+
+    // MARK: - 应用内更新安装（下载 → 校验 → 替换 → 重启）
+
+    /// 下载并安装新版本。校验链不可用（无 DMG 资产 / 拿不到官方校验值 / 校验不通过）
+    /// 时绝不自动安装——如实报告并保留浏览器下载路径。
+    func downloadAndInstallUpdate() {
+        guard let info = updateInfo else { return }
+        switch updateInstallState {
+        case .downloading, .verifying, .installing:
+            return // 进行中：幂等忽略
+        case .idle, .failed:
+            break
+        }
+        guard let installer = updateInstaller else {
+            logStore.append(raw: "当前构建未装配应用内安装器，已打开发布页", level: .info)
+            openReleasePage()
+            return
+        }
+        guard let dmgURL = info.dmgURL, let shaURL = info.sha256URL else {
+            logStore.append(raw: "本版本发布页缺少 DMG 或校验资产，自动安装不可用；已打开发布页", level: .warning)
+            openReleasePage()
+            return
+        }
+        updateInstallState = .downloading(0)
+        logStore.append(raw: "开始下载 v\(info.latestVersion) 更新包（官方通用 DMG）", level: .info)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let local = await installer.download(url: dmgURL) { [weak self] value in
+                Task { @MainActor [weak self] in self?.updateInstallState = .downloading(value) }
+            }
+            guard let local else {
+                self.finishUpdateInstall(.failed("下载失败：网络不可用或 GitHub 无法访问（需要代理时请先连接本地代理）"))
+                return
+            }
+            guard let expected = await installer.fetchExpectedSHA256(url: shaURL) else {
+                self.finishUpdateInstall(.failed("无法获取官方 SHA-256 校验值，已取消自动安装（安全优先）"))
+                return
+            }
+            self.updateInstallState = .verifying
+            guard installer.verify(file: local, expectedHex: expected) else {
+                try? FileManager.default.removeItem(at: local)
+                self.finishUpdateInstall(.failed("SHA-256 校验不通过，已取消安装；请从发布页手动下载"))
+                return
+            }
+            self.updateInstallState = .installing
+            if installer.installAndRelaunch(dmg: local) {
+                try? FileManager.default.removeItem(at: local)
+                if Bundle.main.bundleURL.path.hasPrefix("/Applications/") {
+                    self.logStore.append(raw: "v\(info.latestVersion) 安装完成，正在重启应用", level: .success)
+                    self.relaunchAfterUpdate?()
+                } else {
+                    self.logStore.append(raw: "v\(info.latestVersion) 已挂载安装卷（当前非 /Applications 运行，请手动拖入）", level: .info)
+                    self.updateInstallState = .idle
+                }
+            } else {
+                self.finishUpdateInstall(.failed("安装失败：无法挂载 DMG 或替换 /Applications 中的应用（应用可能正被占用）"))
+            }
+        }
+    }
+
+    private func finishUpdateInstall(_ state: UpdateInstallUIState) {
+        updateInstallState = state
+        if case .failed(let reason) = state {
+            logStore.append(raw: "更新安装未完成：\(reason)", level: .warning)
+        }
     }
 
     // MARK: - 防空闲休眠（P1）

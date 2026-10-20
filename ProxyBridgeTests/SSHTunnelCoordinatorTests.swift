@@ -973,6 +973,50 @@ final class SSHTunnelCoordinatorTests: XCTestCase {
 
     // MARK: 记住密码（钥匙串）
 
+    /// 会话内密码记忆：网络级死亡后的重连不再询问；用户断开后作废重新询问。
+    func testSessionPasswordReusedOnReconnectButNotAfterUserDisconnect() async {
+        makeCoordinator(grace: 0.1)
+        let handle1 = FakeSSHHandle()
+        factory.enqueue(handle1)
+        let cfg = TunnelConfiguration(profile: passwordProfile(), localEndpoint: endpoint)
+
+        coordinator.connect(configuration: cfg)
+        _ = await waitUntil { handle1.startWasCalled }
+        handle1.setStderr("root@10.11.154.192's password:")
+        let prompts = passwordPrompts
+        _ = await waitUntilMain { prompts.snapshot.last == cfg.profile.id }
+        coordinator.submitPassword(profileID: cfg.profile.id, password: "s3cret-value", remember: false)
+        _ = await waitLastPhase(.connected)
+
+        // 模拟网络级死亡（非认证失败、非用户断开）→ error
+        handle1.setStderr("Connection reset by peer")
+        handle1.simulateExit(255)
+        _ = await waitLastPhase(.error)
+
+        // 重连：新 ssh 再要密码——会话内记忆直接应答，不再请求 UI
+        let handle2 = FakeSSHHandle()
+        factory.enqueue(handle2)
+        coordinator.connect(configuration: cfg)
+        _ = await waitUntil { handle2.startWasCalled }
+        handle2.setStderr("root@10.11.154.192's password:")
+        let connectedAgain = await waitLastPhase(.connected)
+        XCTAssertTrue(connectedAgain)
+        XCTAssertEqual(handle2.ptyWrites.last, "s3cret-value\n", "重连应复用会话内密码")
+        XCTAssertEqual(prompts.snapshot.filter { $0 == cfg.profile.id }.count, 1, "第二次连接不得再请求 UI 输入")
+
+        // 用户主动断开 → 会话内密码作废，再连必须重新询问
+        coordinator.disconnect(profileID: cfg.profile.id)
+        _ = await waitLastPhase(.idle)
+        let handle3 = FakeSSHHandle()
+        factory.enqueue(handle3)
+        coordinator.connect(configuration: cfg)
+        _ = await waitUntil { handle3.startWasCalled }
+        handle3.setStderr("root@10.11.154.192's password:")
+        let promptedAgain = await waitUntilMain { prompts.snapshot.filter { $0 == cfg.profile.id }.count == 2 }
+        XCTAssertTrue(promptedAgain, "用户断开后必须重新询问密码")
+        coordinator.disconnect(profileID: cfg.profile.id)
+    }
+
     func testRememberedPasswordAutoAnswersWithoutPrompt() async {
         makeCoordinator(grace: 0.1)
         let cfg = configuration(endpoint: endpoint)

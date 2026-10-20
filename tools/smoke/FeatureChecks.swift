@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // P0/P1/P2 功能冒烟检查（本地 CLI 可执行；与 XCTest 互补，覆盖生产装配链路）
 
@@ -176,6 +177,30 @@ extension SmokeMain {
 
         // F18 出口变化 → 活跃隧道立即重验（节点切换全自动闭环）
         await egressChangeChecks()
+
+        // F19 单实例锁（真实 flock：第二次获取必须失败）
+        check("F19", "单实例锁互斥（双开被拒，崩溃自动释放由内核保证）",
+              SingleInstanceGuard.acquire() && !SingleInstanceGuard.acquire())
+
+        // F20 孤儿 ssh 清扫特征（交互式 ssh 与无关进程不受影响）
+        check("F20", "孤儿 ssh 特征匹配：仅本 App 的 -N + ExitOnForwardFailure 组合",
+              LocalOrphanSweeper.matchesSignature(["-p", "20064", "-N", "-T", "-o", "ExitOnForwardFailure=yes", "u@h"])
+                && !LocalOrphanSweeper.matchesSignature(["-p", "22", "u@h"])
+                && !LocalOrphanSweeper.matchesSignature(["-N", "-o", "ServerAliveInterval=30", "u@h"])
+                && !LocalOrphanSweeper.isOrphan(pid: ProcessInfo.processInfo.processIdentifier, uid: getuid()))
+
+        // F21 更新安装：SHA 文本解析 + 真实文件校验
+        let hex = String(repeating: "ab", count: 32)
+        let payloadFile = FileManager.default.temporaryDirectory.appendingPathComponent("pb-smoke-\(UUID()).bin")
+        try? Data("payload".utf8).write(to: payloadFile)
+        defer { try? FileManager.default.removeItem(at: payloadFile) }
+        let realDigest = SHA256.hash(data: Data("payload".utf8)).map { String(format: "%02x", $0) }.joined()
+        let installer = DMGUpdateInstaller()
+        check("F21", "更新校验：官方 .sha256 解析 + 真实摘要匹配/拒绝",
+              DMGUpdateInstaller.parseSHA256Hex("\(hex)  ProxyBridge-x.dmg") == hex
+                && DMGUpdateInstaller.parseSHA256Hex("bad file") == nil
+                && installer.verify(file: payloadFile, expectedHex: realDigest)
+                && !installer.verify(file: payloadFile, expectedHex: hex))
     }
 
     @MainActor

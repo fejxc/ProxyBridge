@@ -4,6 +4,9 @@ import Foundation
 struct UpdateInfo: Equatable, Sendable {
     var latestVersion: String   // 如 "1.4.0"（无 v 前缀）
     var releaseURL: URL
+    /// 通用 DMG 下载地址与校验文件（应用内安装用；缺失时回退浏览器下载）。
+    var dmgURL: URL? = nil
+    var sha256URL: URL? = nil
 }
 
 /// 更新检查抽象（测试注入）。
@@ -37,7 +40,19 @@ final class GitHubReleaseUpdateChecker: UpdateChecking {
               let pageURL = URL(string: page) else { return nil }
         let version = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
         guard Version.isValidVersion(version) else { return nil }
-        return UpdateInfo(latestVersion: version, releaseURL: pageURL)
+        // 资产：通用 DMG 与 .sha256（供应用内下载安装）
+        var dmgURL: URL?
+        var sha256URL: URL?
+        if let assets = object["assets"] as? [[String: Any]] {
+            for asset in assets {
+                guard let name = asset["name"] as? String,
+                      let link = asset["browser_download_url"] as? String,
+                      let linkURL = URL(string: link) else { continue }
+                if name.hasSuffix("universal.dmg") { dmgURL = linkURL }
+                if name.hasSuffix(".dmg.sha256") { sha256URL = linkURL }
+            }
+        }
+        return UpdateInfo(latestVersion: version, releaseURL: pageURL, dmgURL: dmgURL, sha256URL: sha256URL)
     }
 }
 

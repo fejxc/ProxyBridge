@@ -131,33 +131,80 @@ struct MenuBarView: View {
         .accessibilityLabel("退出确认")
     }
 
-    /// 新版本横幅：面板顶部醒目入口（替代仅 links 行的小链接）。
+    /// 新版本横幅：面板顶部醒目入口；支持应用内下载安装（含进度与失败原因）。
     private func updateBanner(_ update: UpdateInfo) -> some View {
-        Button {
-            model.openReleasePage()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .foregroundStyle(Palette.blue)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L10n.t("新版本 ") + "v\(update.latestVersion) " + L10n.t("可用"))
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(Palette.ink)
-                    Text("v\(Self.currentVersion) → v\(update.latestVersion)")
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                model.openReleasePage()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .foregroundStyle(Palette.blue)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.t("新版本 ") + "v\(update.latestVersion) " + L10n.t("可用"))
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(Palette.ink)
+                        Text("v\(Self.currentVersion) → v\(update.latestVersion)")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Palette.muted)
+                            .monospacedDigit()
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "arrow.right.circle")
+                        .foregroundStyle(Palette.blue)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("新版本提示")
+
+            switch model.updateInstallState {
+            case .idle:
+                if model.updateInfo?.dmgURL != nil {
+                    Button {
+                        model.downloadAndInstallUpdate()
+                    } label: {
+                        Label(L10n.t("自动更新（下载 · 校验 · 安装）"), systemImage: "arrow.down.circle")
+                            .font(.system(size: 11))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.regular)
+                    .buttonStyle(.borderedProminent)
+                }
+            case .downloading(let progress):
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: progress)
+                    Text(L10n.t("正在下载更新…") + " \(Int(progress * 100))%")
                         .font(.system(size: 10))
                         .foregroundStyle(Palette.muted)
-                        .monospacedDigit()
                 }
-                Spacer(minLength: 4)
-                Image(systemName: "arrow.right.circle")
-                    .foregroundStyle(Palette.blue)
+            case .verifying:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.t("正在校验 SHA-256…")).font(.system(size: 10.5))
+                }
+            case .installing:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(L10n.t("正在安装并重启…")).font(.system(size: 10.5))
+                }
+            case .failed(let reason):
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(reason)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Palette.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button(L10n.t("重试下载")) { model.downloadAndInstallUpdate() }
+                        .controlSize(.small)
+                        .buttonStyle(.bordered)
+                }
             }
-            .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("新版本提示")
+        .padding(10)
+        .background(Palette.blue.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     private static var currentVersion: String { AppViewModel.currentVersion }

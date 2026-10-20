@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import ProxyBridge
 
 // MARK: - P0/P1/P2 功能测试
@@ -441,6 +442,110 @@ final class AppViewModelFeatureTests: XCTestCase {
         push(egress: "45.2.2.2") // 未变化：不重复
         try? await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertEqual(spy.healthCheckCalls.count, 1, "出口未变化不得重复重验")
+    }
+
+    // MARK: - P0：单实例 / 孤儿清扫 / 应用内更新
+
+    func testSingleInstanceLockIsExclusive() {
+        XCTAssertTrue(SingleInstanceGuard.acquire(), "首个获取者应成功")
+        XCTAssertFalse(SingleInstanceGuard.acquire(), "同机第二个实例必须被拒（崩溃时内核自动释放锁）")
+    }
+
+    func testOrphanSweeperSignatureMatrix() {
+        let tunnelArgs = ["-p", "20064", "-N", "-T", "-o", "ExitOnForwardFailure=yes", "sunyun@10.11.154.192"]
+        XCTAssertTrue(LocalOrphanSweeper.matchesSignature(tunnelArgs), "本 App 隧道命令特征")
+        XCTAssertFalse(LocalOrphanSweeper.matchesSignature(["-p", "22", "sunyun@host"]), "交互式 ssh（无 -N）不受影响")
+        XCTAssertFalse(LocalOrphanSweeper.matchesSignature(["-N", "-o", "other"]), "缺 ExitOnForwardFailure 特征")
+        // 自身进程不是孤儿（父进程非 launchd）
+        XCTAssertFalse(LocalOrphanSweeper.isOrphan(pid: ProcessInfo.processInfo.processIdentifier, uid: getuid()))
+    }
+
+    func testSHA256ParsingAndVerify() throws {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let installer = DMGUpdateInstaller()
+        // .sha256 文本解析（官方格式：<hex>  <文件名>）
+        let digest = String(repeating: "ab", count: 32)
+        XCTAssertEqual(DMGUpdateInstaller.parseSHA256Hex("\(digest)  ProxyBridge-1.4.4-universal.dmg\n"), digest)
+        XCTAssertNil(DMGUpdateInstaller.parseSHA256Hex("not-a-hash file"), "非法摘要拒绝")
+        XCTAssertNil(DMGUpdateInstaller.parseSHA256Hex(""), "空文本拒绝")
+        // 真实文件校验：内容 → SHA256 → verify
+        let file = temp.url.appendingPathComponent("payload.bin")
+        try Data("proxybridge".utf8).write(to: file)
+        let expected = SHA256.hash(data: Data("proxybridge".utf8)).map { String(format: "%02x", $0) }.joined()
+        XCTAssertTrue(installer.verify(file: file, expectedHex: expected))
+        XCTAssertFalse(installer.verify(file: file, expectedHex: String(repeating: "0", count: 64)))
+    }
+
+    /// 应用内更新状态机：下载失败/拿不到校验值 → 绝不安装；成功链 → relaunch。
+    func testUpdateInstallFlowStates() async {
+        final class StubInstaller: UpdateInstalling {
+            var localFile: URL?
+            var expected: String?
+            var failDownload = false
+            var failSHA = false
+            var failVerify = false
+            private(set) var installed: [URL] = []
+            func download(url: URL, progress: @escaping (Double) -> Void) async -> URL? {
+                if failDownload { return nil }
+                localFile = FileManager.default.temporaryDirectory.appendingPathComponent("stub-\(UUID()).dmg")
+                try? Data("dmg".utf8).write(to: localFile!)
+                progress(1)
+                return localFile
+            }
+            func fetchExpectedSHA256(url: URL) async -> String? { failSHA ? nil : expected }
+            func verify(file: URL, expectedHex: String) -> Bool { !failVerify }
+            func installAndRelaunch(dmg: URL) -> Bool { installed.append(dmg); return true }
+        }
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+
+        func make(_ installer: StubInstaller) -> (AppViewModel, TunnelSpy) {
+            let spy = TunnelSpy()
+            let info = UpdateInfo(
+                latestVersion: "999.0.0",
+                releaseURL: URL(string: "https://example.com")!,
+                dmgURL: URL(string: "https://example.com/x.dmg")!,
+                sha256URL: URL(string: "https://example.com/x.dmg.sha256")!
+            )
+            let model = AppViewModel(
+                profileStore: ProfileRepository(directoryURL: temp.url),
+                settingsStore: AppSettingsStore(directoryURL: temp.url),
+                tunnel: spy, proxyDetector: MockProxyDetector(),
+                logStore: LogStore(), secrets: InMemoryPasswordStore(),
+                updateChecker: StubUpdateChecker(info: info),
+                updateInstaller: installer
+            )
+            return (model, spy)
+        }
+
+        // 下载失败 → failed，不安装
+        let bad = StubInstaller(); bad.failDownload = true; bad.expected = String(repeating: "a", count: 64)
+        let (model1, _) = make(bad)
+        model1.downloadAndInstallUpdate()
+        let failedState = await waitUntilMain {
+            if case .failed = model1.updateInstallState { return true }
+            return false
+        }
+        XCTAssertTrue(failedState)
+        XCTAssertTrue(bad.installed.isEmpty)
+
+        // 拿不到官方校验值 → 绝不自动安装（安全优先）
+        let noSHA = StubInstaller(); noSHA.failSHA = true; noSHA.expected = String(repeating: "a", count: 64)
+        let (model2, _) = make(noSHA)
+        model2.downloadAndInstallUpdate()
+        _ = await waitUntilMain { if case .failed = model2.updateInstallState { return true }; return false }
+        XCTAssertTrue(noSHA.installed.isEmpty, "缺校验值必须拒绝安装")
+
+        // 成功链 → 安装调用 + relaunch 请求（非 /Applications 环境不重启但状态回 idle）
+        let good = StubInstaller(); good.expected = String(repeating: "a", count: 64)
+        let (model3, _) = make(good)
+        var relaunched = false
+        model3.relaunchAfterUpdate = { relaunched = true }
+        model3.downloadAndInstallUpdate()
+        let done = await waitUntilMain { !good.installed.isEmpty && model3.updateInstallState == .idle }
+        XCTAssertTrue(done, "成功链应完成安装")
+        XCTAssertEqual(relaunched, Bundle.main.bundleURL.path.hasPrefix("/Applications/"))
     }
 
     func testLegacySettingsDecodeKeepsNewFieldDefaults() throws {

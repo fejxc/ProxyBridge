@@ -54,6 +54,11 @@ final class SSHTunnelCoordinator: TunnelService {
     private var sessions: [UUID: Session] = [:]
     private var trafficGenerations: [UUID: UUID] = [:]
     private var trafficSequences: [UUID: UInt64] = [:]
+    /// 密码模式「会话内记忆」：认证成功后在内存保留（App 进程生命周期），
+    /// 供本会话内的自动重连复用——否则每次重连都卡密码提示 90 秒，
+    /// 自愈链路对密码用户实际失效。用户断开或认证被拒即清除；
+    /// 与「记住密码（钥匙串）」的跨会话持久化语义不同，如实区分。
+    private var sessionPasswords: [UUID: String] = [:]
 
     init(
         processFactory: any SSHProcessFactory = FoundationSSHProcessFactory(),
@@ -81,6 +86,7 @@ final class SSHTunnelCoordinator: TunnelService {
         }
         let session = Session()
         session.profile = configuration.profile
+        session.password = sessionPasswords[id] // 会话内记忆：自动重连免再次询问
         sessions[id] = session
 
         session.task = Task { @MainActor [weak self] in
@@ -100,6 +106,7 @@ final class SSHTunnelCoordinator: TunnelService {
 
     private func performDisconnect(profileID: UUID, idleDetail: String) {
         guard let session = sessions[profileID] else { return }
+        sessionPasswords[profileID] = nil // 用户断开：会话内密码随之丢弃
         // 断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
         session.userStopped = true
         session.relay?.stop()
@@ -189,6 +196,7 @@ final class SSHTunnelCoordinator: TunnelService {
             session.phase = .idle
             sessions[id] = nil
         }
+        sessionPasswords.removeAll() // App 退出：全部会话内密码丢弃
     }
 
     // MARK: - 连接序列
@@ -421,6 +429,7 @@ final class SSHTunnelCoordinator: TunnelService {
                     return
                 }
                 handle.writePTY(password + "\n")
+                sessionPasswords[id] = password // 会话内记忆：后续自动重连复用
             }
             var connecting2 = baseSnapshot(profileID: id, phase: .connecting)
             connecting2.localProxyVerified = session.localVerified
@@ -725,6 +734,10 @@ final class SSHTunnelCoordinator: TunnelService {
         session.remoteVerified = nil
         session.networkReachability = nil
         session.password = nil // 进程已死，密码随之丢弃
+        // 认证类失败：会话内记忆一并作废（凭据有问题，重连须重新询问，防错密码循环）
+        if case .authRequired = classification {
+            sessionPasswords[profileID] = nil
+        }
 
         var snap = baseSnapshot(profileID: profileID, phase: phase)
         snap.humanReadableDetail = detail
