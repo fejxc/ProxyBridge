@@ -6,13 +6,13 @@
 
 **在 Mac 菜单栏一键把本地代理「带」到 Linux 服务器。**ProxyBridge 通过系统 SSH 建立反向隧道，让服务器上的开发工具（Codex、curl、pip 等）直接使用 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 代理出海；也支持 OpenSSH 原生反向动态 SOCKS5，兼容 Clash Network Extension/TUN 没有本地代理端口的场景。需要 macOS 14+。
 
-[下载 1.4.4 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.4.4/ProxyBridge-1.4.4-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
+[下载 1.4.5 DMG](https://github.com/fejxc/ProxyBridge/releases/download/v1.4.5/ProxyBridge-1.4.5-universal.dmg) · [查看所有版本](https://github.com/fejxc/ProxyBridge/releases) · [查看构建与测试](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 
-当前公开稳定版为 v1.4.4：三种连接模式、本地代理端点动态跟随、节点切换自动感知（出口 IP 指纹）、首次连接指纹引导、更新检查、网络恢复快速重连、远端端口冲突自动重试与 SSH 诊断一键清理、日志落盘，界面支持中文/English。
+当前公开稳定版为 v1.4.5：三种连接模式、代理端点动态跟随、节点切换自动感知、应用内自动更新、单实例与崩溃孤儿清扫、密码会话记忆、日志落盘，界面支持中文/English。**装好这一版后，以后的更新都可以在应用内一键完成。**
 
 ## 安装
 
-1. 下载 `ProxyBridge-1.4.4-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
+1. 下载 `ProxyBridge-1.4.5-universal.dmg`，适用于 Apple Silicon 和 Intel Mac。
 2. 打开 DMG，将 `ProxyBridge.app` 拖到「应用程序」文件夹，再双击启动。
 3. 如果 macOS 阻止打开，确认文件来自本仓库 Release 后，按 [Apple 官方说明](https://support.apple.com/102445)在「系统设置 → 隐私与安全性」中允许打开。
 
@@ -113,7 +113,7 @@ bash scripts/typecheck.sh       # App 与测试代码类型检查
 bash scripts/smoke_test.sh      # 当前源码可执行回归检查
 bash scripts/relay_test.sh      # 真实本地 TCP 转发、精度与清理验证
 bash scripts/install_app.sh     # 构建并安装到 /Applications
-bash scripts/build_dmg.sh 1.4.4 # 构建通用 DMG 和 SHA-256 文件
+bash scripts/build_dmg.sh 1.4.5 # 构建通用 DMG 和 SHA-256 文件
 ```
 
 推送 `vX.Y.Z` 格式的版本标签会触发 GitHub Actions：分别在 Apple Silicon 和 Intel runner 上检查，再构建和验证通用 DMG，最后发布 GitHub Release。详见[发布流程](docs/RELEASE.md)。
