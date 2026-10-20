@@ -219,6 +219,7 @@ final class FailingHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
         throw NSError(domain: "ProxyBridgeTest.HTTPEntry", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "端口被占用（测试注入）"])
     }
+    func retarget(to mode: HTTPEntryMode) {}
     func stop() {}
 }
 

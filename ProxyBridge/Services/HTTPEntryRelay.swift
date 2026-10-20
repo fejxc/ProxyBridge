@@ -17,6 +17,8 @@ import Network
 /// 与静态转发探测的假设一致）。
 protocol HTTPEntryRelaying: AnyObject, Sendable {
     func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16
+    /// 上游端点变化时切换模式/目标：只影响之后接受的连接（语义与主 Relay 一致）。
+    func retarget(to mode: HTTPEntryMode)
     func stop()
 }
 
@@ -100,6 +102,17 @@ final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
         }
     }
 
+    /// 切换上游模式/目标：只影响之后接受的连接；已建立连接按旧模式自然结束。
+    func retarget(to mode: HTTPEntryMode) {
+        queue.async { [self] in
+            guard !stopped else { return }
+            self.mode = mode
+            for connection in connections.values where !connection.isTunneling {
+                connection.close()
+            }
+        }
+    }
+
     private func listenerState(_ state: NWListener.State) {
         guard !stopped else { return }
         switch state {
@@ -156,6 +169,8 @@ private final class EntryConnection: @unchecked Sendable {
     }
 
     private var phase: Phase = .awaitingHeader
+    /// 供 retarget 区分在途连接（语义与主 Relay 的 isEstablished 一致）。
+    var isTunneling: Bool { phase == .tunneling }
     private var incomingReady = false
     private var upstreamReady = false
     private var tunnelEstablished = false

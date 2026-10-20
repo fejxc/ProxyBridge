@@ -112,6 +112,7 @@ final class SmokeHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
         lock.lock(); starts += 1; lock.unlock()
         return 45_001
     }
+    func retarget(to mode: HTTPEntryMode) {}
     func stop() {
         lock.lock(); stopped = true; lock.unlock()
     }
@@ -123,5 +124,6 @@ final class SmokeFailingHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
         throw NSError(domain: "Smoke.HTTPEntry", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "端口被占用（冒烟注入）"])
     }
+    func retarget(to mode: HTTPEntryMode) {}
     func stop() {}
 }

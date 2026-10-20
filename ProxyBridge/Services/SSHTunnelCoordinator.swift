@@ -703,6 +703,18 @@ final class SSHTunnelCoordinator: TunnelService {
         }
 
         session.relay?.retarget(to: endpoint)
+        // HTTP 入口的上游与主 Relay 同源：端点协议可能翻转（HTTP ↔ SOCKS5），
+        // 入口模式须随之重定向，否则无缝切换后入口仍指向旧上游
+        if session.httpEntry != nil {
+            let entryMode: HTTPEntryMode
+            switch endpoint.protocol {
+            case .http, .mixed: entryMode = .pipe(endpoint)
+            case .socks5: entryMode = .socks5(endpoint)
+            }
+            session.httpEntry?.retarget(to: entryMode)
+            // 新上游下入口验证结论不再成立，与健康检查一并重验
+            session.httpAdapterVerified = nil
+        }
         session.localEndpoint = endpoint
         session.localVerified = true
         // 端点协议可能变化（HTTP ↔ SOCKS5）：远端既有验证结论对新协议不再成立，立即重验
