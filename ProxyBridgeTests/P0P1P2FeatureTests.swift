@@ -233,7 +233,7 @@ final class AppViewModelFeatureTests: XCTestCase {
         let stub = StubHostKeyTrust()
         stub.records = [HostKeyRecord(hostField: "[10.11.154.192]:20064", keyType: "ssh-ed25519", keyBlob: "AAAA", fingerprint: "SHA256:abc")]
         let (model, spy, _, hostKey, _) = makeModel(directory: temp.url, hostKey: stub)
-        let profile = ServerProfile(name: "新机器", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        let profile = ServerProfile(name: "新机器", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 17891)
         model.saveDraftProfile(profile)
         let current = model.profiles[0]
 
@@ -373,7 +373,7 @@ final class AppViewModelFeatureTests: XCTestCase {
         defer { temp.removeAll() }
         let power = SpyPowerAssertion()
         let (model, spy, _, _, spyPower) = makeModel(directory: temp.url, power: power)
-        let profile = ServerProfile(name: "p", host: "10.0.0.9", sshPort: 22, username: "u", remotePort: 7890)
+        let profile = ServerProfile(name: "p", host: "10.0.0.9", sshPort: 22, username: "u", remotePort: 17891)
         model.saveDraftProfile(profile)
         let current = model.profiles[0]
 
@@ -417,7 +417,7 @@ final class AppViewModelFeatureTests: XCTestCase {
             tunnel: spy, proxyDetector: detector,
             logStore: LogStore(), secrets: InMemoryPasswordStore()
         )
-        let profile = ServerProfile(name: "节点机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 7890)
+        let profile = ServerProfile(name: "节点机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 17891)
         model.saveDraftProfile(profile)
         let current = model.profiles[0]
         spy.activeIDs.insert(current.id)
@@ -592,7 +592,7 @@ final class AppViewModelFeatureTests: XCTestCase {
             tunnel: spy, proxyDetector: detector,
             logStore: LogStore(), secrets: InMemoryPasswordStore()
         )
-        var profile = ServerProfile(name: "混合端口", host: "10.0.0.4", sshPort: 22, username: "u", remotePort: 7890)
+        var profile = ServerProfile(name: "混合端口", host: "10.0.0.4", sshPort: 22, username: "u", remotePort: 17891)
         profile.connectionMode = .staticForward
         model.saveDraftProfile(profile)
         profile = model.profiles[0]

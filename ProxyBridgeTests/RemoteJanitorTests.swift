@@ -124,7 +124,7 @@ final class RemoteJanitorTests: XCTestCase {
             secrets: InMemoryPasswordStore(),
             remoteJanitor: janitor
         )
-        let profile = ServerProfile(name: "192服务器", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        let profile = ServerProfile(name: "192服务器", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 17891)
         model.saveDraftProfile(profile)
         let current = model.profiles[0]
 
@@ -165,7 +165,7 @@ final class RemoteJanitorTests: XCTestCase {
             secrets: InMemoryPasswordStore(),
             remoteJanitor: janitor
         )
-        let profile = ServerProfile(name: "s", host: "10.0.0.1", sshPort: 22, username: "u", remotePort: 7890)
+        let profile = ServerProfile(name: "s", host: "10.0.0.1", sshPort: 22, username: "u", remotePort: 17891)
         model.saveDraftProfile(profile)
         let current = model.profiles[0]
         var snap = TunnelSnapshot.idle(current.id)
