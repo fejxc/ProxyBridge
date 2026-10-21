@@ -188,6 +188,12 @@ final class AppViewModel {
         self.remoteJanitor = remoteJanitor
 
         // 装配需要引用 self 的闭包（全部存储属性已初始化之后才可捕获 self）。
+        // 安装器步骤日志接进应用日志（协议之外的具体实现能力，就地向下转型装配）
+        if let dmgInstaller = updateInstaller as? DMGUpdateInstaller {
+            dmgInstaller.stepLog = { [weak self] message in
+                self?.logStore.append(raw: message, level: .info)
+            }
+        }
         profileManager.attach(
             snapshot: { [weak self] id in self?.snapshots[id] },
             applySnapshot: { [weak self] snap in self?.snapshots[snap.profileId] = snap },

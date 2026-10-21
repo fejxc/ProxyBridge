@@ -28,6 +28,8 @@ protocol UpdateInstalling: AnyObject {
 @MainActor
 final class DMGUpdateInstaller: UpdateInstalling {
     private let session: URLSession
+    /// 安装步骤日志（由协调器装配到 logStore）：失败时定位到具体环节而非笼统报错。
+    var stepLog: ((String) -> Void)?
 
     init() {
         let configuration = URLSessionConfiguration.ephemeral
@@ -128,10 +130,15 @@ final class DMGUpdateInstaller: UpdateInstalling {
     // MARK: - 安装（先完整复制并验证，再原子切换）
 
     func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool {
-        guard let volumePath = mount(dmg) else { return false }
+        guard let volumePath = mount(dmg) else {
+            stepLog?("更新安装：hdiutil attach 失败（DMG 无法挂载）")
+            return false
+        }
+        stepLog?("更新安装：DMG 已挂载至 \(volumePath)")
         let mountedApp = URL(fileURLWithPath: volumePath).appendingPathComponent("ProxyBridge.app")
         guard FileManager.default.fileExists(atPath: mountedApp.path),
               validateMountedApp(mountedApp, expectedVersion: expectedVersion) else {
+            stepLog?("更新安装：挂载卷内 App 校验未通过（id/版本/codesign）")
             detach(volumePath)
             return false
         }
@@ -148,9 +155,13 @@ final class DMGUpdateInstaller: UpdateInstalling {
         let stagingURL = URL(fileURLWithPath: "/Applications/.ProxyBridge.app.new")
         try? FileManager.default.removeItem(at: stagingURL)
         do { try FileManager.default.copyItem(at: mountedApp, to: stagingURL) }
-        catch { return false }
+        catch {
+            stepLog?("更新安装：复制到暂存目录失败：\(LogRedaction.sanitize(error.localizedDescription))")
+            return false
+        }
         // 第二步：暂存副本再次验证（复制过程中的损坏在此拦截，绝不半写上线）
         guard validateMountedApp(stagingURL, expectedVersion: expectedVersion) else {
+            stepLog?("更新安装：暂存副本校验未通过（复制损坏拦截）")
             try? FileManager.default.removeItem(at: stagingURL)
             return false
         }
@@ -161,6 +172,7 @@ final class DMGUpdateInstaller: UpdateInstalling {
         if hadOld {
             do { try FileManager.default.moveItem(at: installedURL, to: backupURL) }
             catch {
+                stepLog?("更新安装：旧版让位失败：\(LogRedaction.sanitize(error.localizedDescription))")
                 try? FileManager.default.removeItem(at: stagingURL)
                 return false
             }
@@ -168,6 +180,7 @@ final class DMGUpdateInstaller: UpdateInstalling {
         do { try FileManager.default.moveItem(at: stagingURL, to: installedURL) }
         catch {
             if hadOld { try? FileManager.default.moveItem(at: backupURL, to: installedURL) } // 回滚
+            stepLog?("更新安装：新版上位失败（已回滚）：\(LogRedaction.sanitize(error.localizedDescription))")
             try? FileManager.default.removeItem(at: stagingURL)
             return false
         }
@@ -186,9 +199,12 @@ final class DMGUpdateInstaller: UpdateInstalling {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        // hdiutil 输出为三列制表符表（/dev/diskXsN ⟨tab⟩ Apple_HFS ⟨tab⟩ /Volumes/卷名），
+        // 挂载点在行中而非行首——只认行首会让解析必然失败（v1.5.0 及之前的应用内更新
+        // 因此全部倒在安装第一步）。取「行内首个 /Volumes/ 到行尾」，含空格卷名不受影响。
         return output.split(separator: "\n").compactMap { line -> String? in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            return trimmed.hasPrefix("/Volumes/") ? trimmed : nil
+            guard let range = line.range(of: "/Volumes/") else { return nil }
+            return line[range.lowerBound...].trimmingCharacters(in: .whitespacesAndNewlines)
         }.last
     }
 
