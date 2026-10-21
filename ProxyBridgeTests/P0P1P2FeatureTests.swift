@@ -145,7 +145,7 @@ final class SSHConfigParserTests: XCTestCase {
             tunnel: spy, proxyDetector: detector,
             logStore: LogStore(), secrets: InMemoryPasswordStore()
         )
-        let existing = ServerProfile(name: "已有", host: "10.0.0.5", sshPort: 22, username: "u", remotePort: 7890)
+        let existing = ServerProfile(name: "已有", host: "10.0.0.5", sshPort: 22, username: "u", remotePort: 17891)
         model.saveDraftProfile(existing)
         let imported = model.importSSHConfigEntries([
             SSHConfigEntry(alias: "gpu", hostName: "10.11.154.192", port: 20064, user: "sunyun", identityFile: "~/.ssh/id_ed25519"),
