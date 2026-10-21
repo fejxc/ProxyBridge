@@ -62,6 +62,24 @@ enum SSHErrorClassifier {
         return .genericFailure(exitCode: exitCode)
     }
 
+    /// 从 stderr 中挑出最有信息量的原始行（分类解读之外的「sshd 原话」透传）。
+    /// 规则：剔除噪声行（known_hosts 提示等）；优先含故障关键词的行（取最后一条——
+    /// 越靠后越接近退出原因）；没有关键词时取最后一条非空行。空/无有效行返回 nil。
+    static func mostInformativeLine(stderr: String) -> String? {
+        let keywords = ["denied", "failed", "refused", "timeout", "timed out",
+                        "reset", "closed by", "forwarding", "unreachable", "no route"]
+        let lines = stderr
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.contains("Permanently added") } // known_hosts 提示是噪声；其余 Warning 行（如转发失败）是关键证据
+        guard !lines.isEmpty else { return nil }
+        let informative = lines.filter { line in
+            keywords.contains { line.lowercased().contains($0) }
+        }
+        let chosen = (informative.last ?? lines.last) ?? ""
+        return chosen.isEmpty ? nil : String(chosen.prefix(160))
+    }
+
     /// 分类 → 状态机快照字段（相 + 文案）。
     static func phaseAndDetail(for classification: Classification) -> (phase: TunnelPhase, detail: String) {
         switch classification {

@@ -797,6 +797,12 @@ final class SSHTunnelCoordinator: TunnelService {
 
         var snap = baseSnapshot(profileID: profileID, phase: phase)
         snap.humanReadableDetail = detail
+        // 原始错误透传：我们的解读是注释，不是替换——sshd 的原话一并呈现，避免
+        // 翻译层丢失关键信息（v1.5.1 前的「端口占用」误导即源于此）
+        if let rawLine = SSHErrorClassifier.mostInformativeLine(stderr: stderr),
+           !detail.contains(rawLine) {
+            snap.humanReadableDetail += "；sshd 原话：\u{201C}\(LogRedaction.sanitize(rawLine))\u{201D}"
+        }
         // 首次连接（known_hosts 无记录）：标记 UI 可用的 TOFU 引导
         if case .hostKeyUnknown = classification {
             snap.hostKeyNeedsTrust = true

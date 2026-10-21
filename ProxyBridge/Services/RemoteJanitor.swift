@@ -9,15 +9,25 @@ import Foundation
 
 /// 一个远端端口的持有者。
 struct RemotePortHolding: Equatable, Identifiable, Sendable {
-    var id: String { "\(port)-\(pid)" }
+    /// socket 状态（/proc/net/tcp 的 st 列，十六进制）：0A=LISTEN、0C=CLOSE_WAIT、
+    /// 01=ESTABLISHED、06=TIME_WAIT…。v1.5.1 起全状态扫描——绑定被拒的阻塞者
+    /// 往往不是 LISTEN socket 而是卡在 CLOSE_WAIT 的旧转发连接，只认 0A 会误报
+    /// 「占用已消失」。
     var port: Int
     var pid: Int
-    /// 进程名（/proc/<pid>/comm）。
+    /// 进程名（/proc/<pid>/comm）；TIME_WAIT 为内核持有，pid=0、comm=kernel。
     var comm: String
     /// 该进程是否存在 ESTABLISHED socket（活连接 → 不得清理）。
     var established: Bool
     /// 命令行（截断）。
     var cmdline: String
+    /// socket 状态（/proc/net/tcp 的 st 列，十六进制）：0A=LISTEN、0C=CLOSE_WAIT、
+    /// 01=ESTABLISHED、06=TIME_WAIT…。v1.5.1 起全状态扫描——阻塞 sshd 重绑的往往
+    /// 不是 LISTEN socket 而是卡在 CLOSE_WAIT 的旧转发连接，只认 0A 会误报
+    /// 「占用已消失」。
+    var state: String = "0A"
+
+    var id: String { "\(port)-\(pid)-\(state)" }
 
     enum Kind: Equatable, Sendable {
         /// 同用户 sshd 会话、无任何活连接 → 上次隧道残留，可清理。
@@ -26,19 +36,22 @@ struct RemotePortHolding: Equatable, Identifiable, Sendable {
         case ownedPrivoxy
         /// 有活连接的持有者（含正在服务的会话）→ 不清理。
         case busy
+        /// 内核持有的 TIME_WAIT 残留（无进程可清理，约 60s 自过期）。
+        case residual
         /// 其他进程（用户手动服务、他人会话）→ 只报告，不清理。
         case thirdParty
 
         var isCleanable: Bool {
             switch self {
             case .staleSSHD, .ownedPrivoxy: return true
-            case .busy, .thirdParty: return false
+            case .residual, .busy, .thirdParty: return false
             }
         }
     }
 
-    /// 分类（纯函数）：活连接优先判定——宁可不清，不可误杀。
+    /// 分类（纯函数）：内核残留优先，其次活连接——宁可不清，不可误杀。
     var kind: Kind {
+        if state == "06" || pid == 0 { return .residual }
         if established { return .busy }
         if comm.contains("sshd") { return .staleSSHD }
         if cmdline.contains("/.cache/proxybridge/privoxy-") { return .ownedPrivoxy }
@@ -221,19 +234,30 @@ enum RemoteJanitorScript {
     }
 
     /// 解析诊断输出：非标记行忽略（cmdline 中 '|' 已在脚本侧替换为 '/'，剩余按段重组）。
+    /// 兼容 6 列（无状态列，默认 LISTEN）；同端口同进程多行时 LISTEN 行优先。
     static func parseInspect(_ stdout: String) -> [RemotePortHolding] {
         var holdings: [RemotePortHolding] = []
         for line in stdout.split(separator: "\n") {
             let parts = line.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
             guard parts.count >= 6, parts[0] == marker,
                   let port = Int(parts[1]), let pid = Int(parts[2]) else { continue }
-            holdings.append(RemotePortHolding(
+            // 7 列新格式：…|cmdline|state；6 列旧格式：cmdline 即末列（默认 LISTEN）
+            let (cmdline, state) = parts.count >= 7
+                ? (parts[5..<parts.count - 1].joined(separator: "|"), parts[parts.count - 1])
+                : (parts[5], "0A")
+            let holding = RemotePortHolding(
                 port: port,
                 pid: pid,
                 comm: parts[3],
                 established: parts[4] == "1",
-                cmdline: parts[5...].joined(separator: "|")
-            ))
+                cmdline: cmdline,
+                state: state
+            )
+            if let idx = holdings.firstIndex(where: { $0.port == port && $0.pid == pid }) {
+                if holdings[idx].state != "0A" && state == "0A" { holdings[idx] = holding } // LISTEN 行优先
+                continue
+            }
+            holdings.append(holding)
         }
         return holdings
     }

@@ -211,6 +211,8 @@ enum L10n {
         "仅清理同用户的僵尸 sshd 与本 App 的孤儿 Privoxy；其他进程不会被触碰。": "Only same-user stale sshd sessions and this app's orphaned Privoxy are cleaned; other processes are never touched.",
         "僵尸 sshd · 可清理": "stale sshd · cleanable",
         "孤儿 Privoxy · 可清理": "orphan Privoxy · cleanable",
+        "TIME_WAIT 残留 · 约 60s 过期": "TIME_WAIT residue · expires in ~60s",
+        "内核残留（无进程）": "kernel residue (no process)",
         "有活连接 · 不清理": "live connection · keep",
         "其他进程 · 不清理": "other process · keep",
 

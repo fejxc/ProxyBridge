@@ -60,7 +60,9 @@ struct RemotePortConflictCard: View {
                 HStack(spacing: 8) {
                     MonoText(text: "127.0.0.1:\(holding.port)", weight: .medium, size: 10.5)
                     Spacer(minLength: 4)
-                    Text("PID \(holding.pid) · \(holding.comm)")
+                    Text(holding.pid > 0
+                         ? "PID \(holding.pid) · \(holding.comm)"
+                         : L10n.t("内核残留（无进程）"))
                         .font(.system(size: 10))
                         .foregroundStyle(Palette.muted)
                     MiniBadge(text: badgeText(for: holding.kind), tone: badgeTone(for: holding.kind))
@@ -95,6 +97,7 @@ struct RemotePortConflictCard: View {
         switch kind {
         case .staleSSHD: return L10n.t("僵尸 sshd · 可清理")
         case .ownedPrivoxy: return L10n.t("孤儿 Privoxy · 可清理")
+        case .residual: return L10n.t("TIME_WAIT 残留 · 约 60s 过期")
         case .busy: return L10n.t("有活连接 · 不清理")
         case .thirdParty: return L10n.t("其他进程 · 不清理")
         }
@@ -103,7 +106,7 @@ struct RemotePortConflictCard: View {
     private func badgeTone(for kind: RemotePortHolding.Kind) -> StatusTone {
         switch kind {
         case .staleSSHD, .ownedPrivoxy: return .orange
-        case .busy, .thirdParty: return .gray
+        case .residual, .busy, .thirdParty: return .gray
         }
     }
 }

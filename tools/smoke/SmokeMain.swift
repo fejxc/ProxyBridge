@@ -29,6 +29,7 @@ struct SmokeMain {
         await liveProxyChecks()
         sshChecks()
         await askpassChecks()
+        rawErrorLineChecks()
         await probeRegressionChecks()
         await runtimeChecks()
         await relayLifecycleChecks()
@@ -121,6 +122,22 @@ struct SmokeMain {
         let activePath = active.environmentAdditions[SSHAskpassCredential.credentialFileEnvKey] ?? ""
         check("ASK08", "清扫保留活跃凭据", FileManager.default.fileExists(atPath: activePath))
         active.destroy()
+    }
+
+    // 错误透传：分类器须挑出 sshd 的「原话」而不是噪声/首行
+    static func rawErrorLineChecks() {
+        let stderr = "Warning: Permanently added the host.\n"
+            + "debug1: Connecting to server port 22\n"
+            + "channel 2: open failed: administratively prohibited\n"
+            + "Warning: remote port forwarding failed for listen port 7890\n"
+        let line = SSHErrorClassifier.mostInformativeLine(stderr: stderr)
+        check("RAW1", "优先取含故障关键词的最后一行", line?.contains("forwarding failed") == true)
+        check("RAW2", "剔除 known_hosts 噪声，保留转发失败原话",
+              line?.contains("Permanently added") != true)
+        check("RAW3", "空输入安全", SSHErrorClassifier.mostInformativeLine(stderr: "") == nil)
+        let long = String(repeating: "x", count: 300) + " connection refused"
+        let capped = SSHErrorClassifier.mostInformativeLine(stderr: long)
+        check("RAW4", "超长行截断至 160 字符", capped?.count == 160 && capped?.hasSuffix("x") == true)
     }
 
     @MainActor

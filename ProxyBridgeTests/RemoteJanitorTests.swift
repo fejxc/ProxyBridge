@@ -36,6 +36,31 @@ final class RemoteJanitorTests: XCTestCase {
         XCTAssertFalse(holdings[3].kind.isCleanable)
     }
 
+    static let statefulOutput = """
+    PBJANITOR|7890|9001|sshd|0|sshd: root@notty|0C
+    PBJANITOR|7890|0|kernel|0|TIME_WAIT×3|06
+    PBJANITOR|17890|9002|sshd|1|sshd: root@pts|01
+    PBJANITOR|17890|9002|sshd|1|sshd: root@pts|0A
+    """
+
+    func testParseInspectFullStateScan() {
+        let holdings = RemoteJanitorScript.parseInspect(Self.statefulOutput)
+        XCTAssertEqual(holdings.count, 3, "CLOSE_WAIT/TIME_WAIT/LISTEN 各一条；同端口同进程去重为一条")
+        XCTAssertEqual(holdings[0].state, "0C")
+        XCTAssertEqual(holdings[0].kind, .staleSSHD, "CLOSE_WAIT 的旧 sshd 子进程 → 可精准清理")
+        XCTAssertTrue(holdings[0].kind.isCleanable)
+        XCTAssertEqual(holdings[1].state, "06")
+        XCTAssertEqual(holdings[1].kind, .residual, "TIME_WAIT 为内核持有 → 只报告不可清理")
+        XCTAssertFalse(holdings[1].kind.isCleanable)
+        XCTAssertEqual(holdings[2].state, "0A", "同 pid 的 LISTEN 行优先于 ESTABLISHED 行")
+        XCTAssertEqual(holdings[2].kind, .busy)
+    }
+
+    func testLegacySixColumnStillParsesAsListening() {
+        let holdings = RemoteJanitorScript.parseInspect(Self.sampleOutput)
+        XCTAssertTrue(holdings.allSatisfy { $0.state == "0A" }, "6 列旧格式默认 LISTEN")
+    }
+
     func testKindActiveSSHDNeverCleanable() {
         let live = RemotePortHolding(port: 17890, pid: 123, comm: "sshd", established: true, cmdline: "sshd: root@notty")
         XCTAssertEqual(live.kind, .busy, "活 sshd（另一条正常隧道）绝不清理")
