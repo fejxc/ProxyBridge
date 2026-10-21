@@ -249,7 +249,7 @@ extension SmokeMain {
             tunnel: spy, proxyDetector: detector,
             logStore: LogStore(), secrets: InMemoryPasswordStore()
         )
-        let profile = ServerProfile(name: "节点机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 7890)
+        let profile = ServerProfile(name: "节点机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 17891)
         model.saveDraftProfile(profile)
         let current = model.profiles[0]
         spy.active.insert(current.id)
@@ -308,6 +308,13 @@ extension SmokeMain {
         check("F13", "远端诊断/清理脚本通过 POSIX shell 语法检查",
               shellParses(RemoteJanitorScript.inspectScript(ports: [17890, 7890]))
                 && shellParses(RemoteJanitorScript.cleanScript(pids: [111, 222], ports: [17890])))
+        let inspectScript = RemoteJanitorScript.inspectScript(ports: [17890])
+        let cleanScript = RemoteJanitorScript.cleanScript(pids: [111], ports: [17890])
+        check("F13c", "诊断与清理复查覆盖非 LISTEN socket 状态",
+              inspectScript.contains("$10 \":\" $4")
+                && inspectScript.contains("TIME_WAIT×")
+                && !inspectScript.contains("$4==\"0A\"")
+                && !cleanScript.contains("$4==\"0A\""))
         check("F13b", "清理结果解析", RemoteJanitorScript.parseClean("PBJANITOR|FREED|17890\nPBJANITOR|STILL|7890")
                 == RemoteCleanOutcome(freedPorts: [17890], stillHeldPorts: [7890]))
 
@@ -335,7 +342,7 @@ extension SmokeMain {
             logStore: LogStore(), secrets: InMemoryPasswordStore(),
             remoteJanitor: janitor
         )
-        var profile = ServerProfile(name: "192", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        var profile = ServerProfile(name: "192", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 17891)
         profile.connectionMode = .reverseDynamic
         model.saveDraftProfile(profile)
         profile = model.profiles[0]
@@ -464,7 +471,7 @@ extension SmokeMain {
             tunnel: spy, proxyDetector: detector,
             logStore: LogStore(), secrets: InMemoryPasswordStore()
         )
-        var profile = ServerProfile(name: "自动机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 7890)
+        var profile = ServerProfile(name: "自动机", host: "10.0.0.3", sshPort: 22, username: "u", remotePort: 17891)
         profile.connectionMode = .automatic
         profile.reconnectEnabled = false
         model.saveDraftProfile(profile)

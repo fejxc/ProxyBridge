@@ -75,7 +75,7 @@ final class AppViewModelTests: XCTestCase {
     }
 
     private func validProfile(name: String = "测试机") -> ServerProfile {
-        ServerProfile(name: name, host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890)
+        ServerProfile(name: name, host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 17891)
     }
 
     // MARK: 启动装配

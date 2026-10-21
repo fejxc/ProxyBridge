@@ -194,7 +194,7 @@ bash scripts/smoke_test.sh      # 当前源码可执行回归检查
 bash scripts/relay_test.sh      # 真实本地 TCP 转发、精度与清理验证
 bash scripts/integration_test.sh # 集成测试：用户态 sshd 真隧道 4 场景（无需管理员）
 bash scripts/install_app.sh     # 构建并安装到 /Applications
-bash scripts/build_dmg.sh 1.5.2 # 构建通用 DMG 和 SHA-256 文件（参数为版本号）
+bash scripts/build_dmg.sh 1.5.3 # 构建通用 DMG 和 SHA-256 文件（参数为版本号）
 ```
 
 推送 `vX.Y.Z` 格式的版本标签会触发 GitHub Actions：分别在 Apple Silicon 和 Intel runner 上检查，再构建和验证通用 DMG，最后发布 GitHub Release。详见[发布流程](docs/RELEASE.md)与 [BUILD.md](BUILD.md)。

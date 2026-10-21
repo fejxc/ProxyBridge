@@ -110,7 +110,7 @@ final class ProfileManager {
             host: "",
             sshPort: 22,
             username: "",
-            remotePort: 7890
+            remotePort: 17891
         )
     }
 
@@ -155,7 +155,9 @@ final class ProfileManager {
                 if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
                 return result
             case .staticForward:
-                return [profile.remotePort]
+                var result: Set<Int> = [profile.remotePort]
+                if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
+                return result
             case .reverseDynamic:
                 var result: Set<Int> = [profile.remoteSocksPort]
                 if profile.httpAdapterEnabled { result.insert(profile.remoteHTTPPort) }
@@ -235,7 +237,7 @@ final class ProfileManager {
                 host: entry.hostName ?? entry.alias,
                 sshPort: entry.port ?? 22,
                 username: entry.user ?? "",
-                remotePort: 7890
+                remotePort: 17891
             )
             if let identity = entry.identityFile {
                 profile.authMode = .identityFile

@@ -292,6 +292,10 @@ enum ServerProfileRule {
         if profile.httpAdapterEnabled && profile.remoteHTTPPort == profile.remoteSocksPort {
             result.errors.append("HTTP 兼容入口端口不能与 SOCKS5 端口相同")
         }
+        if profile.httpAdapterEnabled && profile.connectionMode != .reverseDynamic
+            && profile.remoteHTTPPort == profile.remotePort {
+            result.errors.append("HTTP 兼容入口端口不能与静态转发端口相同")
+        }
         if profile.proxySelectionMode == .manual {
             if let ep = profile.manualEndpoint {
                 if !LocalProxyEndpointRule.isValid(host: ep.host, port: ep.port) {

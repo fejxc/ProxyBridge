@@ -161,14 +161,19 @@ final class SSHRemoteJanitor: RemoteJanitorProviding {
 enum RemoteJanitorScript {
     static let marker = "PBJANITOR"
 
-    /// 诊断：对每个端口输出一行 `PBJANITOR|<port>|<pid>|<comm>|<est 0/1>|<cmdline>`。
-    /// 进程遍历在持有 LISTEN socket 的进程上早停于输出；多持有者全部列出（如实）。
+    /// 诊断：对每个端口输出一行 `PBJANITOR|<port>|<pid>|<comm>|<est 0/1>|<cmdline>|<state>`。
+    /// 扫描本地端口的所有 TCP 状态；TIME_WAIT 无进程，仅聚合报告一次。
     static func inspectScript(ports: [Int]) -> String {
         let portList = ports.map(String.init).joined(separator: " ")
         return """
         for port in \(portList); do
           hex=$(printf '%04X' "$port")
-          for ino in $(awk -v p=":$hex" '$2 ~ p"$" && $4=="0A" {print $10}' /proc/net/tcp /proc/net/tcp6 2>/dev/null); do
+          timewait=0
+          for entry in $(awk -v p=":$hex" '$2 ~ p"$" {print $10 ":" $4}' /proc/net/tcp /proc/net/tcp6 2>/dev/null); do
+            ino=${entry%:*}
+            state=${entry##*:}
+            if [ "$state" = "06" ]; then timewait=$((timewait + 1)); continue; fi
+            [ "$ino" != "0" ] || continue
             for d in /proc/[0-9]*; do
               ls -l "$d/fd" 2>/dev/null | grep -F "socket:[$ino]" >/dev/null || continue
               pid=${d#/proc/}
@@ -178,9 +183,12 @@ enum RemoteJanitorScript {
                 if awk -v i="$fdino" '$10==i && $4=="01" {f=1} END{exit !f}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then est=1; break; fi
               done
               cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null | tr '|' '/' | cut -c1-160)
-              printf '\(marker)|%s|%s|%s|%s|%s\\n' "$port" "$pid" "$comm" "$est" "$cmd"
+              printf '\(marker)|%s|%s|%s|%s|%s|%s\\n' "$port" "$pid" "$comm" "$est" "$cmd" "$state"
             done
           done
+          if [ "$timewait" -gt 0 ]; then
+            printf '\(marker)|%s|0|kernel|0|TIME_WAIT×%s|06\\n' "$port" "$timewait"
+          fi
         done
         """
     }
@@ -197,7 +205,7 @@ enum RemoteJanitorScript {
         sleep 1
         for port in \(portList); do
           hex=$(printf '%04X' "$port")
-          if awk -v p=":$hex" '$2 ~ p"$" && $4=="0A" {f=1} END{exit !f}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
+          if awk -v p=":$hex" '$2 ~ p"$" {f=1} END{exit !f}' /proc/net/tcp /proc/net/tcp6 2>/dev/null; then
             printf '\(marker)|STILL|%s\\n' "$port"
           else
             printf '\(marker)|FREED|%s\\n' "$port"

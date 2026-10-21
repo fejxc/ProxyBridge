@@ -3,7 +3,7 @@ import Foundation
 extension SmokeMain {
     @MainActor
     static func runtimeChecks() async {
-        let profile = ServerProfile(name: "runtime", host: "test.invalid", sshPort: 22, username: "test", remotePort: 7890)
+        let profile = ServerProfile(name: "runtime", host: "test.invalid", sshPort: 22, username: "test", remotePort: 17891)
         check("N07", "Codex HTTP compatibility defaults to port 7890 while SOCKS5 stays distinct",
               profile.httpAdapterEnabled && profile.remoteHTTPPort == 7_890
               && profile.remoteSocksPort == 17_890)

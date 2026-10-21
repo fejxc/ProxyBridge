@@ -9,7 +9,7 @@ final class ProfileValidationTests: XCTestCase {
         host: String = "10.11.154.192",
         sshPort: Int = 20064,
         username: String = "sunyun",
-        remotePort: Int = 7890
+        remotePort: Int = 17891
     ) -> ServerProfile {
         ServerProfile(
             name: name, host: host, sshPort: sshPort,
@@ -23,6 +23,15 @@ final class ProfileValidationTests: XCTestCase {
         let v = ServerProfileRule.validate(makeProfile())
         XCTAssertTrue(v.isValid, "基线配置必须通过：\(v.errors)")
         XCTAssertTrue(v.warnings.isEmpty)
+    }
+
+    func testStaticAndHTTPEntryCannotBindSameRemotePort() {
+        var profile = makeProfile(remotePort: 7890)
+        XCTAssertFalse(ServerProfileRule.validate(profile).isValid)
+        profile.connectionMode = .staticForward
+        XCTAssertFalse(ServerProfileRule.validate(profile).isValid)
+        profile.remotePort = 17891
+        XCTAssertTrue(ServerProfileRule.validate(profile).isValid)
     }
 
     // MARK: 端口边界（U06）

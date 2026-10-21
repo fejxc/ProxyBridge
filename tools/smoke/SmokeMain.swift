@@ -195,12 +195,14 @@ struct SmokeMain {
     static func validationChecks() {
         func profile(
             name: String = "实验室服务器", host: String = "10.11.154.192",
-            sshPort: Int = 20064, username: String = "sunyun", remotePort: Int = 7890
+            sshPort: Int = 20064, username: String = "sunyun", remotePort: Int = 17891
         ) -> ServerProfile {
             ServerProfile(name: name, host: host, sshPort: sshPort, username: username, remotePort: remotePort)
         }
 
         check("S01", "合法主机/基线通过", ServerProfileRule.validate(profile()).isValid)
+        check("S01b", "HTTP 入口与静态转发端口重叠时拒绝保存",
+              !ServerProfileRule.validate(profile(remotePort: 7890)).isValid)
         for bad in ["bad host", "host;rm -rf /", "$(whoami).x.com", "`id`.x.com", "a|b", "hÖst", "", "::1", "example..com"] {
             check("S02", "拒绝非法主机「\(bad)」", !ServerProfileRule.validate(profile(host: bad)).isValid)
         }
@@ -508,7 +510,7 @@ struct SmokeMain {
             logStore: LogStore(),
             secrets: InMemoryPasswordStore()
         )
-        model.saveDraftProfile(ServerProfile(name: "动态跟随", host: "10.11.154.192", sshPort: 22, username: "sunyun", remotePort: 7890))
+        model.saveDraftProfile(ServerProfile(name: "动态跟随", host: "10.11.154.192", sshPort: 22, username: "sunyun", remotePort: 17891))
         let profile = model.profiles[0]
         spy.activeID = profile.id
 
@@ -602,14 +604,14 @@ struct SmokeMain {
                 capability: .verified)]
             return s
         }() )
-        var profile = ServerProfile(name: "冒烟机", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 7890, preferredProtocol: .socks5)
+        var profile = ServerProfile(name: "冒烟机", host: "10.11.154.192", sshPort: 20064, username: "sunyun", remotePort: 17891, preferredProtocol: .socks5)
         model.saveDraftProfile(profile)
         model.connect()
         check("S26b", "连接经校验并把已验证端点传给服务",
               spy.box.connects.count == 1 && spy.box.connects.first?.localEndpoint?.port == 7897)
 
         check("S26k", "复制命令采用实际 HTTP 候选而非 SOCKS5 偏好",
-              model.remoteCommandText()?.contains("http://127.0.0.1:7890") == true)
+              model.remoteCommandText()?.contains("http://127.0.0.1:17891") == true)
 
         // 无效配置拦截（U06 两个半边）
         profile.host = "bad host"
