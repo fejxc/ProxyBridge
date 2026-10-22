@@ -17,6 +17,7 @@
 - [v1.4.6](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.6)：更新链路加固（流式下载、codesign 完整性与身份核对、同卷原子替换）；发布流程钉死与被测代码一致（CI 绿门槛、标签内构建、资产不可覆盖）；真实验收清单成为发布门槛；「已连接」明确标注探测目标并支持每服务器业务验证目标。
 - [v1.5.2](https://github.com/fejxc/ProxyBridge/releases/tag/v1.5.2)：应用内更新 DMG 挂载点修复与步骤日志；增加 sshd 原始转发错误透传。
 - v1.5.3：修复 HTTP 入口与静态转发使用相同端口导致的 SSH 监听失败；新建配置使用独立静态端口；补齐全 TCP 状态的远端残留诊断与清理复查，修正 1.5.2 发布说明与实际诊断扫描不一致的问题。
+- [v1.6.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.6.0)：Clash TUN 无端口稳定性专项——修复 HTTP 入口拒绝路径连接泄漏，增加 SSH 存活时连续业务失败的受控自愈、在线路径指纹与无端口出口观测、自愈轨迹 UI。
 - [v1.5.1](https://github.com/fejxc/ProxyBridge/releases/tag/v1.5.1)：修复应用内更新必然失败的问题（hdiutil 挂载点解析自 1.4.5 起即错），安装器增加步骤级日志。
 - [v1.5.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.5.0)：架构改造版——AppViewModel 拆分、密码认证迁 SSH_ASKPASS（密码输入前移，不再有挂起等待）、去除 Privoxy 远端依赖（HTTP 兼容入口 App 内实现）、新增集成测试层（真实 ssh 真隧道，并借此修复业务验证目标自 1.4.6 起未生效的问题）、构建清单一致性守护。
 - [v1.4.7](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.7)：修复动态 SOCKS5 首验「监听就绪」竞态（Network Extension 客户端下首次连接不再误报部分可用）；混合端口协议翻转不再触发切换；稳定期成功检查日志节流。
@@ -25,7 +26,7 @@
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-当前稳定版为 `ProxyBridge-1.5.3-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
+当前稳定版为 `ProxyBridge-1.6.0-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
 
 ## 后续版本
 
@@ -42,10 +43,10 @@ Release 页的**版本更新说明自动取自标签内 CHANGELOG.md 的对应�
 ## 本地打包
 
 ```bash
-bash scripts/build_dmg.sh 1.5.3
+bash scripts/build_dmg.sh 1.6.0
 ```
 
-候选产物：`build/dist/ProxyBridge-1.5.3-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
+候选产物：`build/dist/ProxyBridge-1.6.0-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
 
 ## 签名与权限
 

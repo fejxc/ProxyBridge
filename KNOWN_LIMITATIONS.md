@@ -1,11 +1,11 @@
-# 已知限制（截至 ProxyBridge 1.5.0）
+# 已知限制（截至 ProxyBridge 1.6.0）
 
 已实现 SSH 密码（SSH_ASKPASS）/钥匙串/密钥认证、网络退避重连、周期健康检查、睡眠唤醒恢复、启动连接、登录项注册和系统异常通知。手动断开停止重试；认证与主机指纹错误需要人工处理。HTTP 兼容入口由 App 内实现，远端零依赖（仅 sshd + curl）。
 
 - **系统权限由用户决定**：登录项可能等待系统批准，通知可能被拒绝。界面显示实际状态，启动不自动请求通知授权、不重新注册被撤销的登录项。
 - **未公证**：当前为 ad-hoc 签名；其他电脑首次打开可能被 Gatekeeper 拦截。Developer ID 签名与 Apple 公证尚未接入。
 - **系统交互验收**：真实通知展示、实际注销/登录后的启动、实体 Mac 睡眠/唤醒尚待人工验证；状态机、注册失败、批准状态、退避取消和通知逻辑使用替身验证。
-- **测试环境**：当前执行环境只有 Command Line Tools，不能运行 xcodebuild/XCTest；本机使用 `scripts/typecheck.sh`（App 与 XCTest 源码 + 构建清单一致性）、`scripts/smoke_test.sh`（197 项生产代码断言）、`scripts/relay_test.sh`（本地 TCP Relay）与 `scripts/integration_test.sh`（用户态 sshd 真隧道 4 场景）验证。真实 Xcode XCTest 与 Intel 实机运行仍待验收。
+- **测试环境**：当前执行环境只有 Command Line Tools，不能运行 xcodebuild/XCTest；本机使用 `scripts/typecheck.sh`（App 与 XCTest 源码 + 构建清单一致性）、`scripts/smoke_test.sh`（203 项生产代码断言）、`scripts/relay_test.sh`（本地 TCP Relay）与 `scripts/integration_test.sh`（用户态 sshd 真隧道 6 场景）验证。真实 Xcode XCTest 由 GitHub CI 执行；Intel 运行仍以 CI 原生检查为准。
 - **密码认证（SSH_ASKPASS）**：密码经 helper 读取 0600 会话凭据文件交付（不经 argv/环境变量/日志），认证完成即销毁；已知折衷是密码短暂落盘（用户级临时目录 0700 + 文件 0600，同用户可见性，进程在销毁前崩溃可能残留，创建时清扫超 1 小时残留兜底）。要求 OpenSSH ≥ 8.4（macOS 14 自带 9.x）。密码输入发生在连接发起前，等待输入超时（90 秒）不再产生挂起的 ssh 进程。
 - **需要重新输入密码的情况**：未记住的密码不会跨连接保存，重连需输入；认证被拒绝会清除对应记住密码。主机密钥错误不会被误当成密码错误清除密码。
 - **协议与网络范围**：静态上游只使用经实测的本地回环代理；动态反向 SOCKS5 不依赖 Mac 代理端口，可兼容 TUN/Network Extension 出站。远端只绑定 127.0.0.1；不支持 IPv6 字面量 SSH 主机、PAC 结果解析、代理认证、UDP 或透明系统代理。HTTP 兼容入口的 SOCKS5 上游/直连模式支持 CONNECT（https_proxy）与绝对格式明文请求；HTTP/Mixed 上游为透明管道（语义最全）。
@@ -13,7 +13,7 @@
 - **探测依赖**：本地和远端需 curl；探测目标为用户配置的业务验证 URL（缺省 `https://api.openai.com/v1/models`），HTTP 401 视为 HTTPS 路径可达。远端缺 curl、网络超时或目标服务不可达时会如实降级。
 - **界面限制**：菜单栏固定宽度；超大字体及小屏自适应、逐页视觉验收未完成；当前只提供简体中文。
 
-1.5.3 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件为准。
+1.6.0 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件为准。
 
 ## 1.2.0 补充
 
@@ -23,6 +23,9 @@
 - 本机完成 arm64 验证与 arm64/x86_64 通用包编译，未在 Intel 实机运行 1.2.0，1.2.0 已通过 GitHub CI（含 Xcode/XCTest）、arm64/x86_64 原生编译与 TCP 测试，并发布通用 DMG。详见[流量统计报告](docs/TRAFFIC-STATISTICS.md)。
 
 ## 开发分支补充
+
+- **TUN 无端口自愈边界**：1.6.0 的自愈只把远端连接级失败（如 curl exit 7/28、代理连接拒绝）视为隧道故障；业务 HTTP 403/429/5xx、探测超时、缺 curl 和认证错误不触发重建。连续三次失败后默认 60 秒冷却、5 分钟最多两次受控重建。系统重建会让已有长连接中断，应用层重试由使用方负责；真实 Clash TUN 的 24 小时稳定性验收仍在进行。
+- **路径与出口指纹边界**：在线路径变化和当前网络出口 IP 只是复测线索；出口 IP 相同不代表 Clash 路径未变，IP 变化也不能证明命中了某个节点或规则。DNS/fake-IP、进程规则和 TUN 栈行为仍需按实际 Clash 客户端核对。
 
 - **应用内更新的身份边界**：下载的 DMG 经官方 .sha256 校验 + 挂载后 `codesign --verify`（完整性/未篡改）+ bundle id 与版本号核对（防张冠李戴），三道验证均通过才替换；替换采用「同卷完整复制并二次验证 → rename 原子切换 → 失败回滚」。但 ad-hoc 签名不含 Developer ID，无法做独立于发布渠道的密码学发布者身份证明——公证接入后此边界消除。流式下载与分块哈希不再整读内存。
 - **发布门槛**：发布工作流要求标签指向提交的 CI 全绿、只使用标签内的脚本与源码、已公开附件不可覆盖；真实环境验收清单（docs/ACCEPTANCE-CHECKLIST.md）为人工门槛，未验收版本不发布。
