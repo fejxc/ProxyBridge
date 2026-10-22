@@ -13,10 +13,16 @@ protocol EgressIPProbing: AnyObject, Sendable {
     func probe(host: String, port: Int, protocol: ProxyProtocol) async -> String?
 }
 
+/// Mac 当前网络栈出口探测。无本地端口的动态模式用它作为路径变化线索；
+/// IP 只能说明出口变化，不能证明 Clash 命中的节点或规则。
+protocol DirectEgressIPProbing: AnyObject, Sendable {
+    func probeCurrentNetwork() async -> String?
+}
+
 /// 生产实现：/usr/bin/curl 经代理 GET 出口端点，解析 stdout 中的 IP。
 /// 安全约束与 CurlProxyProbe 同源：参数数组直传不经 shell、-q 跳过 curlrc、
 /// 最小环境变量、独立 URL 白名单。
-final class CurlEgressIPProbe: EgressIPProbing {
+final class CurlEgressIPProbe: EgressIPProbing, DirectEgressIPProbing {
     static let egressURL = "https://api.ip.sb/ip"
     static let urlWhitelist: Set<String> = [egressURL]
 
@@ -49,6 +55,25 @@ final class CurlEgressIPProbe: EgressIPProbing {
         }
     }
 
+    func probeCurrentNetwork() async -> String? {
+        guard FileManager.default.isExecutableFile(atPath: CurlProxyProbe.executableURL.path) else { return nil }
+        let args = Self.currentNetworkArguments(
+            connectTimeout: connectTimeoutSeconds,
+            maxTime: maxTimeSeconds
+        )
+        let box = CurlProxyProbe.ProcessBox()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let output = Self.run(arguments: args, cancellationBox: box)
+                    continuation.resume(returning: Self.parseIP(output))
+                }
+            }
+        } onCancel: {
+            box.terminateIfRunning()
+        }
+    }
+
     /// 参数构建（纯函数）：经代理取回端点响应体（stdout 即 IP 文本）。
     static func arguments(
         host: String, port: Int, protocol: ProxyProtocol,
@@ -65,6 +90,19 @@ final class CurlEgressIPProbe: EgressIPProbing {
             "-q",
             "--noproxy", "",
             `protocol`.curlProxyFlag, proxyValue,
+            "--connect-timeout", String(connectTimeout),
+            "--max-time", String(maxTime),
+            "--silent", "--show-error",
+            egressURL,
+        ]
+    }
+
+    /// `--noproxy '*'` 禁用 curlrc/环境变量代理；TUN 场景下该请求仍由当前路由决定。
+    static func currentNetworkArguments(connectTimeout: Int, maxTime: Int) -> [String] {
+        precondition(urlWhitelist.contains(egressURL))
+        return [
+            "-q",
+            "--noproxy", "*",
             "--connect-timeout", String(connectTimeout),
             "--max-time", String(maxTime),
             "--silent", "--show-error",

@@ -1,5 +1,6 @@
 import XCTest
 import CryptoKit
+import Network
 @testable import ProxyBridge
 
 // MARK: - P0/P1/P2 功能测试
@@ -281,6 +282,7 @@ final class AppViewModelFeatureTests: XCTestCase {
             var onSleep: (() -> Void)?
             var onWake: (() -> Void)?
             var onNetworkRestored: (() -> Void)?
+            var onNetworkPathChanged: ((NetworkPathFingerprint) -> Void)?
             var loginState: LoginItemState = .disabled
             private(set) var updateNotifications: [String] = []
             func setLoginEnabled(_ enabled: Bool) async throws {}
@@ -442,6 +444,176 @@ final class AppViewModelFeatureTests: XCTestCase {
         push(egress: "45.2.2.2") // 未变化：不重复
         try? await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertEqual(spy.healthCheckCalls.count, 1, "出口未变化不得重复重验")
+    }
+
+    /// 无本地端口模式：当前网络出口变化只是复测线索；nil 是未知，不触发修复。
+    func testDirectEgressChangeTriggersSingleRecheck() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        final class ScriptedDetector: ProxyDetectorService {
+            var onStateChange: (@MainActor (ProxyDetectionState) -> Void)?
+            func startObservingSystemChanges() -> Bool { true }
+            func detect() {}
+        }
+        let spy = TunnelSpy()
+        let detector = ScriptedDetector()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: temp.url),
+            settingsStore: AppSettingsStore(directoryURL: temp.url),
+            tunnel: spy, proxyDetector: detector,
+            logStore: LogStore(), secrets: InMemoryPasswordStore()
+        )
+        let profile = ServerProfile(name: "TUN机", host: "10.0.0.4", sshPort: 22, username: "u", remotePort: 17891)
+        model.saveDraftProfile(profile)
+        let current = model.profiles[0]
+        spy.activeIDs.insert(current.id)
+
+        func push(egress: String?) {
+            var state = ProxyDetectionState()
+            state.directEgressIP = egress
+            detector.onStateChange?(state)
+        }
+        push(egress: "203.0.113.7")
+        let first = await waitUntilMain { spy.healthCheckCalls.contains(current.id) == false }
+        XCTAssertTrue(first, "首次观测只建立指纹基线")
+
+        push(egress: "198.51.100.8")
+        let rechecked = await waitUntilMain { spy.healthCheckCalls.contains(current.id) }
+        XCTAssertTrue(rechecked, "当前网络出口变化应触发远端复测")
+
+        push(egress: "198.51.100.8")
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(spy.healthCheckCalls.count, 1, "出口未变化不得重复重验")
+    }
+
+    /// 在线路径特征变化只触发复测；10 秒冷却防止系统路径抖动造成风暴。
+    func testNetworkPathChangeCooldown() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        final class PathSystemServices: AppSystemIntegrating {
+            var onSleep: (() -> Void)?
+            var onWake: (() -> Void)?
+            var onNetworkRestored: (() -> Void)?
+            var onNetworkPathChanged: ((NetworkPathFingerprint) -> Void)?
+            var loginState: LoginItemState = .disabled
+            func setLoginEnabled(_ enabled: Bool) async throws {}
+            func notificationPermission(request: Bool) async throws -> NotificationPermission { .notDetermined }
+            func postNotification(profileID: UUID, body: String) async throws {}
+            func postUpdateNotification(version: String) async throws {}
+            func clearNotifications() {}
+            func stopObserving() {}
+        }
+        let spy = TunnelSpy()
+        let system = PathSystemServices()
+        let model = AppViewModel(
+            profileStore: ProfileRepository(directoryURL: temp.url),
+            settingsStore: AppSettingsStore(directoryURL: temp.url),
+            tunnel: spy, proxyDetector: MockProxyDetector(),
+            logStore: LogStore(), secrets: InMemoryPasswordStore(),
+            systemServices: system
+        )
+        let profile = ServerProfile(name: "路径机", host: "10.0.0.5", sshPort: 22, username: "u", remotePort: 17891)
+        model.saveDraftProfile(profile)
+        let current = model.profiles[0]
+        spy.activeIDs.insert(current.id)
+
+        func fingerprint(interfaces: Set<NWInterface.InterfaceType>) -> NetworkPathFingerprint {
+            NetworkPathFingerprint(
+                isSatisfied: true,
+                interfaceTypes: interfaces,
+                isConstrained: false,
+                isExpensive: false,
+                supportsIPv4: true,
+                supportsIPv6: false
+            )
+        }
+        system.onNetworkPathChanged?(fingerprint(interfaces: [.wifi]))
+        let first = await waitUntilMain { spy.healthCheckCalls.contains(current.id) }
+        XCTAssertTrue(first, "在线路径变化应触发复测")
+
+        system.onNetworkPathChanged?(fingerprint(interfaces: [.wiredEthernet]))
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(spy.healthCheckCalls.count, 1, "冷却窗口内的连续路径变化只复测一次")
+    }
+
+    /// SSH 活着但业务连续失败：第三次触发受控重建；成功后连续计数从快照复位。
+    func testPersistentBusinessFailureRebuildsWithBudget() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.businessRecoveryCooldownSeconds = 0.05
+        runtime.businessRecoveryWindowSeconds = 1
+        runtime.maximumBusinessRecoveries = 2
+        var decisions: [TunnelRecoveryDecision] = []
+        runtime.onEvent = { event in
+            if case .snapshot(let snapshot) = event, let decision = snapshot.lastRecoveryDecision {
+                decisions.append(decision)
+            }
+        }
+
+        var profile = ServerProfile(name: "业务自愈", host: "10.0.0.6", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = true
+        let configuration = TunnelConfiguration(profile: profile, localEndpoint: nil)
+        runtime.connect(configuration: configuration)
+        let initiallyConnected = await waitUntilMain { spy.connectCalls.count == 1 }
+        XCTAssertTrue(initiallyConnected)
+
+        func emitFailure(_ count: Int) {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = count
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 7）"
+            spy.emit(snap)
+        }
+
+        emitFailure(3)
+        let firstRebuilt = await waitUntilMain { spy.connectCalls.count == 2 && spy.systemDisconnectCalls.count == 1 }
+        XCTAssertTrue(firstRebuilt, "连续三次业务失败应受控重建")
+        let scheduled = await waitUntilMain { decisions.contains { $0.state == .scheduled && $0.action == .rebuildTunnel } }
+        XCTAssertTrue(scheduled, "重建排程应作为结构化决策暴露给面板")
+
+        emitFailure(3)
+        let secondRebuilt = await waitUntilMain { spy.connectCalls.count == 3 && spy.systemDisconnectCalls.count == 2 }
+        XCTAssertTrue(secondRebuilt)
+
+        emitFailure(3)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(spy.connectCalls.count, 3, "滚动窗口最多重建两次")
+        XCTAssertEqual(spy.systemDisconnectCalls.count, 2)
+        let exhausted = await waitUntilMain { decisions.last?.state == .budgetExhausted && decisions.last?.action == .probeOnly }
+        XCTAssertTrue(exhausted, "预算用尽后应显示只探测，而不是静默停住")
+        XCTAssertTrue(spy.onEvent != nil)
+    }
+
+    /// 用户断开会取消待执行的业务自愈，desired 清空后不会 ghost 重连。
+    func testUserDisconnectCancelsPendingBusinessRecovery() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.businessRecoveryCooldownSeconds = 0.2
+
+        var profile = ServerProfile(name: "取消自愈", host: "10.0.0.7", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitUntilMain { spy.connectCalls.count == 1 }
+
+        func emitFailure(_ count: Int) {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = count
+            spy.emit(snap)
+        }
+        emitFailure(3)
+        runtime.disconnect(profileID: profile.id)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(spy.connectCalls.count, 1, "用户断开后业务自愈任务不得重建")
+        XCTAssertTrue(spy.systemDisconnectCalls.isEmpty, "取消的重建任务不得再断开旧会话")
     }
 
     // MARK: - P0：单实例 / 孤儿清扫 / 应用内更新

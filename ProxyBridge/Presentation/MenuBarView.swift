@@ -9,6 +9,8 @@ struct MenuBarView: View {
     /// 改为面板内联确认条；8 秒无操作自动复位）。
     @State private var confirmQuit = false
     @State private var confirmQuitResetTask: Task<Void, Never>?
+    /// 自愈轨迹默认只占一行；展开后才显示状态迁移和原因，减少面板噪声。
+    @State private var showRecoveryTrace = false
 
     /// 打开设置并把窗口带到前台（菜单栏应用无 Dock 图标，必须显式激活）。
     private func openSettingsFront(tab: SettingsTab) {
@@ -68,6 +70,7 @@ struct MenuBarView: View {
                     RemotePortConflictCard()
                 }
                 checks
+                recoveryTraceCard
                 if let tool = model.remoteToolHint {
                     RemoteToolHintCard(tool: tool) {
                         model.runHealthCheck()
@@ -434,6 +437,10 @@ struct MenuBarView: View {
                 separator
                 HealthCheckRow(title: L10n.t("HTTP 兼容入口"), display: httpAdapterDisplay, detail: httpAdapterDetail)
             }
+            if let recovery = TunnelStatusPresentation.recoveryDecision(for: model.currentSnapshot) {
+                separator
+                HealthCheckRow(title: recovery.title, display: recovery.display, detail: recovery.detail)
+            }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -441,6 +448,122 @@ struct MenuBarView: View {
             model.openSettings(tab: .logs)
         }
         .help(L10n.t("点击查看日志定位原因"))
+    }
+
+    /// magpie Routing 面板的 SwiftUI 版迁移：最近决策 + 可展开原因 + 主动复测。
+    @ViewBuilder
+    private var recoveryTraceCard: some View {
+        let history = model.currentSnapshot.recoveryHistory
+        if !history.isEmpty {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        showRecoveryTrace.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Palette.tone(recoveryTone))
+                            .frame(width: 7, height: 7)
+                        Text(L10n.t("自愈轨迹"))
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Palette.ink)
+                        MiniBadge(text: L10n.t("最近 \(history.count) 条"), tone: recoveryTone)
+                        Spacer(minLength: 4)
+                        Image(systemName: showRecoveryTrace ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Palette.muted)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.t("自愈轨迹") + "，\(history.count) " + L10n.t("条记录"))
+                .accessibilityHint(L10n.t("展开查看每一步自愈原因"))
+
+                if showRecoveryTrace {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(history.enumerated().reversed()), id: \.offset) { _, decision in
+                            recoveryRow(decision)
+                        }
+                    }
+                    .padding(.leading, 13)
+                    .overlay(alignment: .leading) {
+                        Rectangle()
+                            .fill(Palette.border)
+                            .frame(width: 1)
+                            .padding(.vertical, 4)
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                HStack(spacing: 8) {
+                    Button {
+                        model.runHealthCheck()
+                    } label: {
+                        Label(L10n.t("立即复测"), systemImage: "arrow.clockwise")
+                            .font(.system(size: 10.5))
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        openSettingsFront(tab: .logs)
+                    } label: {
+                        Label(L10n.t("查看日志"), systemImage: "list.bullet.rectangle")
+                            .font(.system(size: 10.5))
+                    }
+                    .controlSize(.small)
+                    .buttonStyle(.bordered)
+                    Spacer(minLength: 0)
+                }
+            }
+            .padding(10)
+            .background(Palette.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(Palette.border, lineWidth: 1)
+            )
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private var recoveryTone: StatusTone {
+        model.currentSnapshot.lastRecoveryDecision.map { Palette.recoveryTone($0) } ?? .gray
+    }
+
+    private func recoveryRow(_ decision: TunnelRecoveryDecision) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(decision.state.displayName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Palette.tone(Palette.recoveryTone(decision)))
+                Text(decision.action.displayName)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.muted)
+                Spacer(minLength: 4)
+                Text(decision.decidedAt.formatted(date: .omitted, time: .standard))
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .foregroundStyle(Palette.muted)
+            }
+            if let next = decision.nextActionAt, decision.state == .scheduled {
+                Text(L10n.t("下次执行 ") + next.formatted(date: .omitted, time: .standard))
+                    .font(.system(size: 10))
+                    .monospacedDigit()
+                    .foregroundStyle(Palette.muted)
+            }
+            if !decision.reason.isEmpty {
+                Text(decision.reason)
+                    .font(.system(size: 10))
+                    .foregroundStyle(Palette.muted.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(decision.state.displayName)，\(decision.action.displayName)，\(decision.reason)")
     }
 
     private var separator: some View {

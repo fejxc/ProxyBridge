@@ -55,6 +55,8 @@ final class SSHTunnelCoordinator: TunnelService {
         var password: String?
         /// 密码模式：本次连接的 askpass 凭据装置（认证后销毁，见 SSHAskpassCredential）。
         var askpass: SSHAskpassCredential?
+        /// 连续业务探测硬失败数；连接重建、验证成功后复位，unknown 不计数。
+        var consecutiveRemoteFailures = 0
     }
 
     private var sessions: [UUID: Session] = [:]
@@ -133,6 +135,7 @@ final class SSHTunnelCoordinator: TunnelService {
         session.localVerified = nil
         session.remoteVerified = nil
         session.networkReachability = nil
+        session.consecutiveRemoteFailures = 0
 
         var stopping = baseSnapshot(profileID: profileID, phase: .disconnecting)
         stopping.humanReadableDetail = "正在断开（终止本 App 启动的 SSH 进程）"
@@ -501,6 +504,7 @@ final class SSHTunnelCoordinator: TunnelService {
         case .verified(let code):
             session.remoteVerified = true
             session.networkReachability = true
+            session.consecutiveRemoteFailures = 0
             // HTTP 兼容入口已随连接启动（Mac 侧监听）：立即做一次端到端 CONNECT 验证。
             // 失败不影响已验证的主路径（静态转发 / 动态 SOCKS5），如实降级展示。
             if profile.httpAdapterEnabled, session.httpEntry != nil {
@@ -549,6 +553,9 @@ final class SSHTunnelCoordinator: TunnelService {
         case .notProxy, .connectionFailure, .unknown:
             session.remoteVerified = false
             session.networkReachability = false
+            if remoteOutcome.isHardBusinessFailure {
+                session.consecutiveRemoteFailures += 1
+            }
             finalSnap = baseSnapshot(profileID: id, phase: .degraded)
             finalSnap.humanReadableDetail = "隧道已建立，远端代理未通过验证（\(Self.describe(remote: remoteOutcome))）"
             session.phase = .degraded
@@ -600,6 +607,7 @@ final class SSHTunnelCoordinator: TunnelService {
             case .verified(let code):
                 session.remoteVerified = true
                 session.networkReachability = true
+                session.consecutiveRemoteFailures = 0
                 snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP \(code)）"
                 if session.httpEntry != nil {
                     let entryOK = await verifyHTTPEntry(session: session, profile: profile)
@@ -631,9 +639,12 @@ final class SSHTunnelCoordinator: TunnelService {
                     snap.humanReadableDetail += "；已清除记住的密码，请手动重新连接"
                 }
             case .notProxy, .connectionFailure:
-                    session.remoteVerified = false
+                session.remoteVerified = false
                 session.networkReachability = false
-                snap.humanReadableDetail = "手动检查完成：远端验证未通过"
+                if outcome.isHardBusinessFailure {
+                    session.consecutiveRemoteFailures += 1
+                }
+                snap.humanReadableDetail = "手动检查完成：远端验证未通过（\(Self.describe(remote: outcome))）"
             }
         } else {
             snap.humanReadableDetail = includeRemote
@@ -656,6 +667,7 @@ final class SSHTunnelCoordinator: TunnelService {
             snap.phase = session.phase
         }
         snap.remoteProbeVerified = session.remoteVerified
+        snap.consecutiveRemoteFailures = session.consecutiveRemoteFailures
         snap.httpAdapterVerified = session.httpAdapterVerified
         snap.httpAdapterStatus = session.httpAdapterStatus
         snap.httpAdapterDetail = session.httpAdapterDetail
@@ -923,7 +935,8 @@ final class SSHTunnelCoordinator: TunnelService {
             clashNodeConfirmed: nil,
             httpAdapterVerified: session?.httpAdapterVerified,
             httpAdapterStatus: session?.httpAdapterStatus ?? .notRequested,
-            httpAdapterDetail: session?.httpAdapterDetail
+            httpAdapterDetail: session?.httpAdapterDetail,
+            consecutiveRemoteFailures: session?.consecutiveRemoteFailures ?? 0
         )
     }
 

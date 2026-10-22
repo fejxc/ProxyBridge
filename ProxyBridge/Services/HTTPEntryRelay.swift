@@ -165,12 +165,15 @@ private final class EntryConnection: @unchecked Sendable {
         case awaitingHeader
         case connecting
         case tunneling
+        /// 拒绝响应发送中；close() 在发送完成或超时后执行实际清理。
+        case rejecting
         case closed
     }
 
     private var phase: Phase = .awaitingHeader
     /// 供 retarget 区分在途连接（语义与主 Relay 的 isEstablished 一致）。
     var isTunneling: Bool { phase == .tunneling }
+    private var isClosing: Bool { phase == .rejecting || phase == .closed }
     private var incomingReady = false
     private var upstreamReady = false
     private var tunnelEstablished = false
@@ -198,7 +201,7 @@ private final class EntryConnection: @unchecked Sendable {
         deadline = timeout
         queue.asyncAfter(deadline: .now() + 10, execute: timeout)
         incoming.stateUpdateHandler = { [weak self] state in
-            guard let self, self.phase != .closed else { return }
+            guard let self, !self.isClosing else { return }
             switch state {
             case .ready:
                 self.incomingReady = true
@@ -242,7 +245,7 @@ private final class EntryConnection: @unchecked Sendable {
         let upstream = NWConnection(host: NWEndpoint.Host(host), port: targetPort, using: parameters)
         outgoing = upstream
         upstream.stateUpdateHandler = { [weak self] (state: NWConnection.State) in
-            guard let self, self.phase != .closed else { return }
+            guard let self, !self.isClosing else { return }
             switch state {
             case .ready:
                 self.upstreamReady = true
@@ -333,7 +336,7 @@ private final class EntryConnection: @unchecked Sendable {
         handshakeStarted = true
         let greeting = Data([0x05, 0x01, 0x00]) // VER=5, 1 个方法，NO-AUTH
         upstream.send(content: greeting, completion: .contentProcessed { [weak self] error in
-            guard let self, self.phase != .closed else { return }
+            guard let self, !self.isClosing else { return }
             guard error == nil else { self.reject("502 Bad Gateway"); return }
             self.receiveExactly(on: upstream, count: 2) { reply in
                 guard reply.count == 2, reply[0] == 0x05, reply[1] == 0x00 else {
@@ -352,7 +355,7 @@ private final class EntryConnection: @unchecked Sendable {
         request.append(UInt8(port >> 8))
         request.append(UInt8(port & 0xff))
         upstream.send(content: request, completion: .contentProcessed { [weak self] error in
-            guard let self, self.phase != .closed else { return }
+            guard let self, !self.isClosing else { return }
             guard error == nil else { self.reject("502 Bad Gateway"); return }
             self.receiveSOCKS5Reply(on: upstream)
         })
@@ -389,7 +392,7 @@ private final class EntryConnection: @unchecked Sendable {
 
     /// 隧道建立（pipe：两端 TCP ready 即成；socks5/direct：握手/连接完成并应答后）。
     private func establishTunnel() {
-        guard phase != .closed, !tunnelEstablished, outgoing != nil else { return }
+        guard !isClosing, !tunnelEstablished, outgoing != nil else { return }
         tunnelEstablished = true
         phase = .tunneling
         deadline?.cancel(); deadline = nil
@@ -399,7 +402,7 @@ private final class EntryConnection: @unchecked Sendable {
     /// SOCKS5/直连路径上游就绪：CONNECT 向客户端回 200；明文请求把翻译后的
     /// 头部与余量字节发给上游，然后双向透传。
     private func completeTunnel() {
-        guard phase != .closed, !tunnelEstablished, let upstream = outgoing else { return }
+        guard !isClosing, !tunnelEstablished, let upstream = outgoing else { return }
         if isConnect {
             incoming.send(content: Data("HTTP/1.1 200 Connection established\r\n\r\n".utf8), completion: .contentProcessed { [weak self] _ in
                 // 应答完成后可能两端已就绪，再补一次泵启动
@@ -411,7 +414,7 @@ private final class EntryConnection: @unchecked Sendable {
             remainderAfterHead = Data()
             plainRequestHead = nil
             upstream.send(content: request, completion: .contentProcessed { [weak self] error in
-                guard let self else { return }
+                guard let self, !self.isClosing else { return }
                 guard error == nil else { self.reject("502 Bad Gateway"); return }
                 self.maybeStartTunnel()
             })
@@ -438,7 +441,7 @@ private final class EntryConnection: @unchecked Sendable {
 
     private func receiveChunk(on connection: NWConnection, remaining: Int, box: Accumulator, then: @escaping (Data) -> Void) {
         connection.receive(minimumIncompleteLength: remaining, maximumLength: remaining) { [weak self] data, _, eof, error in
-            guard let self, self.phase != .closed else { return }
+            guard let self, !self.isClosing else { return }
             guard error == nil, let data, !eof else { self.reject("502 Bad Gateway"); return }
             box.data.append(data.prefix(remaining))
             let left = remaining - box.data.count
@@ -449,9 +452,14 @@ private final class EntryConnection: @unchecked Sendable {
     // MARK: - 应答与关闭
 
     private func reject(_ status: String) {
-        guard phase != .closed else { return }
-        phase = .closed
+        guard !isClosing else { return }
+        phase = .rejecting
+        deadline?.cancel()
         let response = "HTTP/1.1 \(status)\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+        // 兜底：对端不读取响应时不能永久占用名额
+        let cleanupTimeout = DispatchWorkItem { [weak self] in self?.close() }
+        deadline = cleanupTimeout
+        queue.asyncAfter(deadline: .now() + 5, execute: cleanupTimeout)
         incoming.send(content: Data(response.utf8), completion: .contentProcessed { [weak self] _ in
             self?.close()
         })

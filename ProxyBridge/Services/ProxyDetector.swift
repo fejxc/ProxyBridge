@@ -32,6 +32,8 @@ struct ProxyDetectionState: Equatable, Sendable {
     var systemProxyActiveButUnresolved: Bool = false
     /// 当前经最佳已验证端点观测到的出口 IP（节点切换指纹）；nil = 未探测到（如实）。
     var egressIP: String?
+    /// 当前 Mac 网络栈出口（无本地端口模式专用线索）；nil = 不可用或未探测。
+    var directEgressIP: String?
     var lastScanAt: Date?
 
     /// 最佳已验证端点：系统来源优先于环境变量，同一来源再按 preferred 协议选择。

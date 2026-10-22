@@ -153,4 +153,80 @@ final class TunnelStatusTests: XCTestCase {
         XCTAssertNil(s.lastRemoteProbeAt)
         XCTAssertEqual(s.phase, .idle)
     }
+
+    // MARK: 自愈决策展示
+
+    private func recovery(
+        state: TunnelRecoveryState,
+        action: TunnelRecoveryAction = .rebuildTunnel,
+        failures: Int = 3,
+        remaining: Int = 1,
+        next: Date? = nil
+    ) -> TunnelRecoveryDecision {
+        TunnelRecoveryDecision(
+            scope: .remotePath,
+            action: action,
+            state: state,
+            reason: "远端代理请求失败",
+            decidedAt: Date(timeIntervalSince1970: 0),
+            nextActionAt: next,
+            consecutiveFailures: failures,
+            remainingRecoveries: remaining
+        )
+    }
+
+    func testScheduledRecoveryDecisionPresentation() {
+        pinChineseForTesting()
+        let now = Date()
+        var snapshot = snap(phase: .reconnecting, sshRunning: false)
+        snapshot.lastRecoveryDecision = recovery(
+            state: .scheduled,
+            next: now.addingTimeInterval(3)
+        )
+        let presentation = TunnelStatusPresentation.recoveryDecision(for: snapshot, now: now)
+        XCTAssertEqual(presentation?.title, "自愈决策")
+        XCTAssertEqual(presentation?.display, .unknown)
+        XCTAssertTrue(presentation?.detail.contains("远端业务通路") ?? false)
+        XCTAssertTrue(presentation?.detail.contains("3 秒后执行") ?? false)
+        XCTAssertTrue(presentation?.detail.contains("剩余重建预算 1 次") ?? false)
+    }
+
+    func testRecoveryDecisionStateMapsToHealthDisplay() {
+        pinChineseForTesting()
+        var recovered = snap(phase: .connected, local: true, sshRunning: true, remote: true)
+        recovered.lastRecoveryDecision = recovery(state: .succeeded, failures: 0, remaining: 1)
+        XCTAssertEqual(TunnelStatusPresentation.recoveryDecision(for: recovered)?.display, .ok)
+
+        var executed = snap(phase: .connecting, sshRunning: false)
+        executed.lastRecoveryDecision = recovery(state: .executed, next: nil)
+        XCTAssertEqual(TunnelStatusPresentation.recoveryDecision(for: executed)?.display, .unknown)
+
+        var exhausted = snap(phase: .degraded, sshRunning: true)
+        exhausted.lastRecoveryDecision = recovery(
+            state: .budgetExhausted,
+            action: .probeOnly,
+            remaining: 0
+        )
+        XCTAssertEqual(TunnelStatusPresentation.recoveryDecision(for: exhausted)?.display, .failed)
+    }
+
+    func testSnapshotWithoutRecoveryDecisionHasNoRow() {
+        XCTAssertNil(TunnelStatusPresentation.recoveryDecision(for: snap(phase: .degraded, sshRunning: true)))
+    }
+
+    /// UI 时间线只保留短环形历史，避免长期故障刷爆菜单栏状态。
+    func testRecoveryHistoryKeepsBoundedNewestDecisions() {
+        let pid = UUID()
+        var snapshot = TunnelSnapshot.idle(pid)
+        for index in 0..<8 {
+            snapshot.appendRecoveryDecision(recovery(
+                state: index % 2 == 0 ? .scheduled : .executed,
+                failures: index
+            ))
+        }
+        XCTAssertEqual(snapshot.recoveryHistory.count, 6)
+        XCTAssertEqual(snapshot.recoveryHistory.first?.consecutiveFailures, 2)
+        XCTAssertEqual(snapshot.recoveryHistory.last?.consecutiveFailures, 7)
+        XCTAssertEqual(snapshot.lastRecoveryDecision?.consecutiveFailures, 7)
+    }
 }

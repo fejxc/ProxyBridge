@@ -114,6 +114,13 @@ final class SSHErrorClassifierTests: XCTestCase {
         XCTAssertFalse(outcome.isVerified)
     }
 
+    func testBusinessFailureClassificationDoesNotRebuildOnTargetHTTPStatus() {
+        XCTAssertTrue(RemoteProbeOutcome.connectionFailure(reason: "curl exit 7").isHardBusinessFailure)
+        XCTAssertFalse(RemoteProbeOutcome.notProxy(statusCode: 403).isHardBusinessFailure)
+        XCTAssertFalse(RemoteProbeOutcome.unknown(reason: "timeout").isHardBusinessFailure)
+        XCTAssertFalse(RemoteProbeOutcome.remoteCurlMissing.isHardBusinessFailure)
+    }
+
     func testRemoteParseSSHFailures() {
         let auth = SSHRemoteProbe.parse(exitCode: 255, stdout: "", stderr: "Permission denied (publickey).")
         guard case .authRequired = auth else { return XCTFail("实际 \(auth)") }

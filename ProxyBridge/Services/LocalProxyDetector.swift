@@ -85,6 +85,8 @@ final class LocalProxyDetector: ProxyDetectorService {
     private let monitor: any SystemProxyChangeMonitoring
     /// 出口 IP 指纹探测（节点切换检测）；nil = 不探测（测试装配）。
     private let egressProber: (any EgressIPProbing)?
+    /// 无本地端口时的当前网络出口探测；nil = 不探测（测试装配）。
+    private let directEgressProber: (any DirectEgressIPProbing)?
 
     /// 变化防抖间隔。默认 800ms；测试注入更短值。
     var debounceSeconds: TimeInterval = 0.8
@@ -102,13 +104,15 @@ final class LocalProxyDetector: ProxyDetectorService {
         prober: any ProxyProbeExecuting,
         monitor: any SystemProxyChangeMonitoring,
         environmentProvider: any ProxyEnvironmentProviding = ProcessProxyEnvironmentProvider(),
-        egressProber: (any EgressIPProbing)? = nil
+        egressProber: (any EgressIPProbing)? = nil,
+        directEgressProber: (any DirectEgressIPProbing)? = nil
     ) {
         self.provider = provider
         self.environmentProvider = environmentProvider
         self.prober = prober
         self.monitor = monitor
         self.egressProber = egressProber
+        self.directEgressProber = directEgressProber
         self.state.isLive = true
     }
 
@@ -149,7 +153,7 @@ final class LocalProxyDetector: ProxyDetectorService {
         state.isScanning = true
         emit()
 
-        scanTask = Task { @MainActor [weak self, provider, environmentProvider, prober] in
+        scanTask = Task { @MainActor [weak self, provider, environmentProvider, prober, directEgressProber] in
             guard let self else { return }
             let snapshot = provider.readProxies()
             let built = ProxyCandidateBuilder.build(
@@ -202,6 +206,14 @@ final class LocalProxyDetector: ProxyDetectorService {
                 guard generation == self.scanGeneration, !Task.isCancelled else { return }
             } else {
                 self.state.egressIP = nil
+            }
+
+            // 无本地端口时没有既有代理出口指纹；当前网络出口是可比较的弱信号。
+            if self.state.bestVerifiedEndpoint() == nil, let directEgressProber {
+                self.state.directEgressIP = await directEgressProber.probeCurrentNetwork()
+                guard generation == self.scanGeneration, !Task.isCancelled else { return }
+            } else {
+                self.state.directEgressIP = nil
             }
 
             self.state.lastScanAt = Date()

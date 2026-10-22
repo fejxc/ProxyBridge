@@ -7,6 +7,7 @@ final class TunnelSpy: TunnelService {
     var onEvent: (@MainActor (TunnelEvent) -> Void)?
     private(set) var connectCalls: [TunnelConfiguration] = []
     private(set) var disconnectCalls: [UUID] = []
+    private(set) var systemDisconnectCalls: [(profileID: UUID, reason: String)] = []
     private(set) var healthCheckCalls: [UUID] = []
     private(set) var retargetCalls: [(profileID: UUID, endpoint: LocalProxyEndpoint)] = []
     var activeIDs: Set<UUID> = []
@@ -17,6 +18,11 @@ final class TunnelSpy: TunnelService {
 
     func disconnect(profileID: UUID) {
         disconnectCalls.append(profileID)
+    }
+
+    func disconnectForSystemReason(profileID: UUID, reason: String) {
+        systemDisconnectCalls.append((profileID, reason))
+        disconnect(profileID: profileID)
     }
 
     func runHealthCheck(profileID: UUID) {

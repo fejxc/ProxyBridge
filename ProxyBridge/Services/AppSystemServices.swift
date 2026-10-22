@@ -11,6 +11,8 @@ protocol AppSystemIntegrating: AnyObject {
     var onWake: (() -> Void)? { get set }
     /// 网络路径从断开恢复（Wi-Fi 重连、VPN 起来等）：调用方应立即重连而非等 SSH 存活超时。
     var onNetworkRestored: (() -> Void)? { get set }
+    /// 网络保持在线但路径特征变化（接口/约束状态/TUN 等）：调用方应去抖复测，而不是盲目重建。
+    var onNetworkPathChanged: ((NetworkPathFingerprint) -> Void)? { get set }
     var loginState: LoginItemState { get }
     func setLoginEnabled(_ enabled: Bool) async throws
     func notificationPermission(request: Bool) async throws -> NotificationPermission
@@ -19,6 +21,41 @@ protocol AppSystemIntegrating: AnyObject {
     func postUpdateNotification(version: String) async throws
     func clearNotifications()
     func stopObserving()
+}
+
+/// NWPath 的可比较摘要。只保留影响出站路径判断的特征，不据此断言 TUN 故障。
+struct NetworkPathFingerprint: Equatable, Sendable {
+    let isSatisfied: Bool
+    let interfaceTypes: Set<NWInterface.InterfaceType>
+    let isConstrained: Bool
+    let isExpensive: Bool
+    let supportsIPv4: Bool
+    let supportsIPv6: Bool
+
+    init(path: NWPath) {
+        self.isSatisfied = path.status == .satisfied
+        self.interfaceTypes = Set(path.availableInterfaces.map(\.type))
+        self.isConstrained = path.isConstrained
+        self.isExpensive = path.isExpensive
+        self.supportsIPv4 = path.supportsIPv4
+        self.supportsIPv6 = path.supportsIPv6
+    }
+
+    init(
+        isSatisfied: Bool,
+        interfaceTypes: Set<NWInterface.InterfaceType>,
+        isConstrained: Bool,
+        isExpensive: Bool,
+        supportsIPv4: Bool,
+        supportsIPv6: Bool
+    ) {
+        self.isSatisfied = isSatisfied
+        self.interfaceTypes = interfaceTypes
+        self.isConstrained = isConstrained
+        self.isExpensive = isExpensive
+        self.supportsIPv4 = supportsIPv4
+        self.supportsIPv6 = supportsIPv6
+    }
 }
 
 enum LoginItemState: Equatable {
@@ -49,12 +86,15 @@ final class AppSystemServices: AppSystemIntegrating {
     var onSleep: (() -> Void)?
     var onWake: (() -> Void)?
     var onNetworkRestored: (() -> Void)?
+    var onNetworkPathChanged: ((NetworkPathFingerprint) -> Void)?
     private var observers: [NSObjectProtocol] = []
     private var pathMonitor: NWPathMonitor?
     /// 路径曾进入断开状态（只在 断开→恢复 的边沿触发回调，持续在线不触发）。
     private var pathWasDown = false
     /// 恢复去抖任务（1.5s 收敛窗口）。
     private var restoreTask: Task<Void, Never>?
+    /// 最近已通知的在线路径；nil 表示尚未建立基线。
+    private var lastNotifiedPath: NetworkPathFingerprint?
 
     init() {
         let center = NSWorkspace.shared.notificationCenter
@@ -73,31 +113,41 @@ final class AppSystemServices: AppSystemIntegrating {
         let monitor = NWPathMonitor()
         pathMonitor = monitor
         monitor.pathUpdateHandler = { [weak self] path in
-            // 只捕获不可变值跨线程；状态判断收敛到 MainActor 方法内
-            let satisfied = path.status == .satisfied
+            let fingerprint = NetworkPathFingerprint(path: path)
+            let services = self
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    self?.handlePathTransition(satisfied: satisfied)
+                    services?.handlePathTransition(fingerprint)
                 }
             }
         }
         monitor.start(queue: DispatchQueue(label: "dev.sunyun.ProxyBridge.pathmonitor", qos: .utility))
     }
 
-    private func handlePathTransition(satisfied: Bool) {
-        guard satisfied else {
+    private func handlePathTransition(_ fingerprint: NetworkPathFingerprint) {
+        guard fingerprint.isSatisfied else {
             restoreTask?.cancel()
             restoreTask = nil
+            lastNotifiedPath = nil
             pathWasDown = true
             return
         }
-        guard pathWasDown else { return } // 持续在线的常规更新：不触发
+        let restored = pathWasDown
+        let meaningfulChange = !restored && lastNotifiedPath != nil && lastNotifiedPath != fingerprint
+        // 断开恢复已有专门的完整重扫/重建流程，避免同一次变化重复触发健康复测。
+        let shouldNotifyPathChange = meaningfulChange
+        guard restored || meaningfulChange else {
+            if lastNotifiedPath == nil { lastNotifiedPath = fingerprint }
+            return
+        }
         pathWasDown = false
+        lastNotifiedPath = fingerprint
         restoreTask?.cancel()
         restoreTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
-            self?.onNetworkRestored?()
+            if restored { self?.onNetworkRestored?() }
+            if shouldNotifyPathChange { self?.onNetworkPathChanged?(fingerprint) }
         }
     }
 

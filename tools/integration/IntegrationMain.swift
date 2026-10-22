@@ -492,7 +492,88 @@ func directRelayProbe(relayPort: UInt16, webPort: UInt16) async -> Bool {
     return true
 }
 
+/// Direct probe of HTTPEntryRelay so rejection cleanup can be tested above the
+/// listener's connection limit without depending on SSH or a proxy client.
+func httpEntryRejectionProbe(entryPort: UInt16, webPort: UInt16) async -> Bool {
+    final class ResponseBox: @unchecked Sendable {
+        var value = Data()
+    }
+    let lastResponse = ResponseBox()
+    func request(_ payload: String, expect marker: String) async -> Bool {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            guard let port = NWEndpoint.Port(rawValue: entryPort) else {
+                continuation.resume(returning: false)
+                return
+            }
+            let connection = NWConnection(
+                host: NWEndpoint.Host("127.0.0.1"),
+                port: port,
+                using: .tcp
+            )
+            var response = Data()
+            var settled = false
+            let queue = DispatchQueue(label: "pb-integration-http-entry-probe")
+
+            func finish(_ result: Bool) {
+                guard !settled else { return }
+                settled = true
+                connection.stateUpdateHandler = nil
+                connection.cancel()
+                continuation.resume(returning: result)
+            }
+
+            connection.stateUpdateHandler = { state in
+                guard case .ready = state else { return }
+                connection.send(
+                    content: Data(payload.utf8),
+                    completion: .contentProcessed { error in
+                        guard error == nil else { finish(false); return }
+                        connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1024) { data, _, _, _ in
+                            if let data { response.append(data) }
+                            lastResponse.value = response
+                            finish(response.contains(Data(marker.utf8)))
+                        }
+                    }
+                )
+            }
+            connection.start(queue: queue)
+
+            Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                finish(false)
+            }
+        }
+    }
+
+    let host = "127.0.0.1:\(webPort)"
+    let healthy = "GET http://\(host)/probe HTTP/1.1\r\nHost: \(host)\r\nConnection: close\r\n\r\n"
+    let invalid = "CONNECT not-a-host HTTP/1.1\r\nHost: \(host)\r\nConnection: close\r\n\r\n"
+    guard await request(healthy, expect: "HTTP/1.1 200 OK") else {
+        print("FAIL  I5 HTTP入口拒绝清理  健康请求未成功")
+        return false
+    }
+    for index in 1...HTTP_ENTRY_REJECTION_COUNT {
+        guard await request(invalid, expect: "HTTP/1.1 400 Bad Request") else {
+            print("FAIL  I5 HTTP入口拒绝清理  第 \(index) 次拒绝响应未返回：\(String(decoding: lastResponse.value.prefix(160), as: UTF8.self))")
+            return false
+        }
+    }
+    let healthyAgain = await request(healthy, expect: "HTTP/1.1 200 OK")
+    let healthyAfterDelay = healthyAgain ? true : await {
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        return await request(healthy, expect: "HTTP/1.1 200 OK")
+    }()
+    if healthyAfterDelay {
+        print("PASS  I5 HTTP入口拒绝清理  \(HTTP_ENTRY_REJECTION_COUNT) 次拒绝后仍可服务")
+    } else {
+        print("FAIL  I5 HTTP入口拒绝清理  拒绝后健康请求失败")
+    }
+    return healthyAfterDelay
+}
+
 // MARK: - 入口
+
+private let HTTP_ENTRY_REJECTION_COUNT = 300
 
 @main
 struct IntegrationEntry {
@@ -553,6 +634,21 @@ struct IntegrationEntry {
                         host: sshHost,
                         probeTargetOverride: probeTarget) { passed += 1 } else { failed += 1 }
         web3.stop()
+
+        // 场景 5：HTTP 入口直连模式拒绝路径生命周期。共发送超过连接上限的
+        // 可恢复 400，防止 reject() 提前把连接标记为 closed 导致名额泄漏。
+        do {
+            let web5 = try WebOrigin()
+            let entry5 = HTTPEntryRelay()
+            let entryPort = try await entry5.start(port: 0, mode: .direct)
+            guard entryPort != 0 else { throw CancellationError() }
+            let i5 = await httpEntryRejectionProbe(entryPort: entryPort, webPort: web5.port)
+            if i5 { passed += 1 } else { failed += 1 }
+            entry5.stop(); web5.stop()
+        } catch {
+            print("FAIL  I5 HTTP入口拒绝清理  测试服务启动失败：\(error)")
+            failed += 1
+        }
 
         // 场景 4：askpass 密码投递取证（PB_ASKPASS_PROOF=1，仅本地测试 sshd）：
         // 真实 coordinator 全流程 + 故意错密码 → 期待快速 authRequired（密码认证被拒绝），

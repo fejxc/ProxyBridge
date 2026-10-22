@@ -22,6 +22,94 @@ enum HTTPAdapterStatus: String, Codable, Sendable, CaseIterable {
     case unavailable
 }
 
+/// 当前自愈策略只覆盖“SSH 存活但远端业务通路连续失败”；
+/// 后续分层探测扩展时再增加本机出口、HTTP 入口等作用域。
+enum TunnelFaultScope: String, Sendable, Equatable {
+    case remotePath
+
+    var displayName: String {
+        switch self {
+        case .remotePath: return L10n.t("远端业务通路")
+        }
+    }
+}
+
+enum TunnelRecoveryAction: String, Sendable, Equatable {
+    case rebuildTunnel
+    case probeOnly
+
+    var displayName: String {
+        switch self {
+        case .rebuildTunnel: return L10n.t("受控重建隧道")
+        case .probeOnly: return L10n.t("只继续探测")
+        }
+    }
+}
+
+enum TunnelRecoveryState: String, Sendable, Equatable {
+    case scheduled
+    case executed
+    case succeeded
+    case budgetExhausted
+
+    var displayName: String {
+        switch self {
+        case .scheduled: return L10n.t("已排程")
+        case .executed: return L10n.t("已执行")
+        case .succeeded: return L10n.t("已恢复")
+        case .budgetExhausted: return L10n.t("预算用尽")
+        }
+    }
+}
+
+extension TunnelRecoveryState {
+    var healthDisplay: HealthCheckDisplay {
+        switch self {
+        case .scheduled, .executed: return .unknown
+        case .succeeded: return .ok
+        case .budgetExhausted: return .failed
+        }
+    }
+}
+
+/// 一次自愈决策的可解释记录。它不是故障本身，只说明策略选择了什么动作。
+struct TunnelRecoveryDecision: Equatable, Sendable {
+    let scope: TunnelFaultScope
+    let action: TunnelRecoveryAction
+    let state: TunnelRecoveryState
+    let reason: String
+    let decidedAt: Date
+    let nextActionAt: Date?
+    let consecutiveFailures: Int
+    let remainingRecoveries: Int
+
+    func succeeded(at date: Date = Date()) -> TunnelRecoveryDecision {
+        TunnelRecoveryDecision(
+            scope: scope,
+            action: action,
+            state: .succeeded,
+            reason: reason,
+            decidedAt: date,
+            nextActionAt: nil,
+            consecutiveFailures: 0,
+            remainingRecoveries: remainingRecoveries
+        )
+    }
+
+    func executed(at date: Date = Date()) -> TunnelRecoveryDecision {
+        TunnelRecoveryDecision(
+            scope: scope,
+            action: action,
+            state: .executed,
+            reason: reason,
+            decidedAt: date,
+            nextActionAt: nil,
+            consecutiveFailures: consecutiveFailures,
+            remainingRecoveries: remainingRecoveries
+        )
+    }
+}
+
 /// 单个 profile 的隧道状态快照。
 ///
 /// 三态语义（重要）：`localProxyVerified` / `remoteProbeVerified` 为 `Bool?`：
@@ -52,6 +140,12 @@ struct TunnelSnapshot: Equatable, Sendable {
     var hostKeyNeedsTrust: Bool = false
     /// 远端缺少 curl：端到端验证被阻塞，UI 提供安装指引（缺 Privoxy 走 httpAdapterStatus）。
     var remoteCurlMissing: Bool = false
+    /// 连续业务探测硬失败次数；unknown/缺 curl 属不确定，不计数。
+    var consecutiveRemoteFailures: Int = 0
+    /// 最近一次策略决策；由运行时策略层附加，协调器只负责故障证据。
+    var lastRecoveryDecision: TunnelRecoveryDecision? = nil
+    /// 最近的状态迁移，给面板展示“为什么走到这一步”；只保留短环形历史。
+    var recoveryHistory: [TunnelRecoveryDecision] = []
 
     static func idle(_ profileId: UUID) -> TunnelSnapshot {
         TunnelSnapshot(
@@ -69,6 +163,14 @@ struct TunnelSnapshot: Equatable, Sendable {
     /// 远端未验证时即使 SSH 存活也只能是 degraded。
     var isEndToEndVerified: Bool {
         phase == .connected && remoteProbeVerified == true
+    }
+
+    mutating func appendRecoveryDecision(_ decision: TunnelRecoveryDecision, limit: Int = 6) {
+        recoveryHistory.append(decision)
+        if recoveryHistory.count > limit {
+            recoveryHistory.removeFirst(recoveryHistory.count - limit)
+        }
+        lastRecoveryDecision = decision
     }
 }
 
@@ -104,6 +206,12 @@ enum HealthCheckDisplay: String, Sendable {
         case .failed: return .red
         }
     }
+}
+
+struct RecoveryDecisionPresentation: Equatable {
+    var title: String
+    var detail: String
+    var display: HealthCheckDisplay
 }
 
 struct StatusPresentation: Equatable, Sendable {
@@ -188,5 +296,36 @@ enum TunnelStatusPresentation {
         case .some(false): return .failed
         case .none: return .unknown
         }
+    }
+
+    /// 把自愈决策翻译成面板行；无决策时返回 nil，面板不占位。
+    static func recoveryDecision(for snapshot: TunnelSnapshot, now: Date = Date()) -> RecoveryDecisionPresentation? {
+        guard let decision = snapshot.lastRecoveryDecision else { return nil }
+        let display: HealthCheckDisplay
+        switch decision.state {
+        case .scheduled, .executed: display = .unknown
+        case .succeeded: display = .ok
+        case .budgetExhausted: display = .failed
+        }
+
+        var parts = ["\(decision.scope.displayName) · \(decision.action.displayName) · \(decision.state.displayName)"]
+        if decision.consecutiveFailures > 0 {
+            parts.append(String(format: L10n.t("连续失败 %d 次"), decision.consecutiveFailures))
+        }
+        if let next = decision.nextActionAt, decision.state == .scheduled {
+            let seconds = max(0, Int(next.timeIntervalSince(now).rounded()))
+            parts.append(String(format: L10n.t("%d 秒后执行"), seconds))
+        }
+        if decision.remainingRecoveries >= 0 {
+            parts.append(String(format: L10n.t("剩余重建预算 %d 次"), decision.remainingRecoveries))
+        }
+        if !decision.reason.isEmpty {
+            parts.append(decision.reason)
+        }
+        return RecoveryDecisionPresentation(
+            title: L10n.t("自愈决策"),
+            detail: parts.joined(separator: "；"),
+            display: display
+        )
     }
 }

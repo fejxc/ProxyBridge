@@ -19,6 +19,16 @@ enum RemoteProbeOutcome: Equatable, Sendable {
         if case .verified = self { return true }
         return false
     }
+
+    /// 只有连接/代理通路明确失败才进入连续失败自愈；超时、缺 curl 和业务 HTTP
+    /// 状态（403/429/5xx 等）不是隧道故障证据，不能触发重建。
+    var isHardBusinessFailure: Bool {
+        switch self {
+        case .connectionFailure: return true
+        case .notProxy: return false
+        case .verified, .remoteCurlMissing, .authRequired, .unknown: return false
+        }
+    }
 }
 
 /// 远端探测执行抽象（测试注入 / 生产 SSH 实现）。

@@ -38,6 +38,15 @@ enum Palette {
         case .red: return red
         }
     }
+
+    /// 自愈状态色：迁移 magpie Routing 面板的 wait/green/red 语义。
+    static func recoveryTone(_ decision: TunnelRecoveryDecision) -> StatusTone {
+        switch decision.state {
+        case .scheduled, .executed: return .blue
+        case .succeeded: return .green
+        case .budgetExhausted: return .orange
+        }
+    }
 }
 
 extension NSColor {

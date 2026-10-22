@@ -116,6 +116,16 @@ final class FakeChangeMonitor: SystemProxyChangeMonitoring {
     }
 }
 
+final class FakeDirectEgressProbe: DirectEgressIPProbing {
+    private let result: String?
+
+    init(result: String?) {
+        self.result = result
+    }
+
+    func probeCurrentNetwork() async -> String? { result }
+}
+
 // MARK: - 检测器行为（U15 等）
 
 @MainActor
@@ -330,5 +340,50 @@ final class LocalProxyDetectorTests: XCTestCase {
         XCTAssertTrue(done)
         XCTAssertTrue(states.snapshot.last?.systemProxyActiveButUnresolved == true)
         XCTAssertTrue(states.snapshot.last?.candidates.isEmpty == true)
+    }
+
+    /// 无本地端口模式需要独立的 Mac 出口指纹；与代理出口字段不能混用。
+    func testNoProxyScanPopulatesDirectEgressOnly() async {
+        let provider = FakeProxyProvider(snapshot: SystemProxySnapshot())
+        let detector = LocalProxyDetector(
+            provider: provider,
+            prober: FakeProxyProber(outcome: .verified(statusCode: 200)),
+            monitor: FakeChangeMonitor(),
+            directEgressProber: FakeDirectEgressProbe(result: "203.0.113.7")
+        )
+        let states = Recorder<ProxyDetectionState>()
+        detector.onStateChange = { states.append($0) }
+
+        detector.detect()
+        let done = await waitUntilMain { states.snapshot.last?.isScanning == false }
+        XCTAssertTrue(done)
+        XCTAssertNil(states.snapshot.last?.egressIP)
+        XCTAssertEqual(states.snapshot.last?.directEgressIP, "203.0.113.7")
+    }
+
+    func testDirectEgressFailureRemainsInconclusive() async {
+        let provider = FakeProxyProvider(snapshot: SystemProxySnapshot())
+        let detector = LocalProxyDetector(
+            provider: provider,
+            prober: FakeProxyProber(outcome: .verified(statusCode: 200)),
+            monitor: FakeChangeMonitor(),
+            directEgressProber: FakeDirectEgressProbe(result: nil)
+        )
+        let states = Recorder<ProxyDetectionState>()
+        detector.onStateChange = { states.append($0) }
+
+        detector.detect()
+        let done = await waitUntilMain { states.snapshot.last?.isScanning == false }
+        XCTAssertTrue(done)
+        XCTAssertNil(states.snapshot.last?.directEgressIP, "探测失败是未知，不是故障结论")
+    }
+
+    func testCurrentNetworkEgressArgumentsBypassProxyEnvironment() {
+        let args = CurlEgressIPProbe.currentNetworkArguments(connectTimeout: 2, maxTime: 6)
+        let proxyIndex = args.firstIndex(of: "--noproxy")
+        XCTAssertEqual(proxyIndex.flatMap { args[$0 + 1] }, "*", "当前网络探测必须绕过环境代理")
+        XCTAssertEqual(args.last, CurlEgressIPProbe.egressURL)
+        XCTAssertTrue(args.contains("--connect-timeout"))
+        XCTAssertTrue(args.contains("--max-time"))
     }
 }

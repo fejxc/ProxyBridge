@@ -34,6 +34,7 @@ final class RuntimeSystemSpy: AppSystemIntegrating {
     var onSleep: (() -> Void)?
     var onWake: (() -> Void)?
     var onNetworkRestored: (() -> Void)?
+    var onNetworkPathChanged: ((NetworkPathFingerprint) -> Void)?
     var loginState: LoginItemState = .disabled
     var permission: NotificationPermission = .notDetermined
     var loginShouldFail = false

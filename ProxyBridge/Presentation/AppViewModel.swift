@@ -149,8 +149,13 @@ final class AppViewModel {
     private var lastFailureRescanAt: Date?
     /// 上一次观测到的代理出口 IP（节点切换指纹比对）。
     private var lastEgressIP: String?
+    /// 上一次观测到的当前网络出口（无本地端口模式指纹比对）。
+    private var lastDirectEgressIP: String?
+    /// 在线路径特征变化后的最小复测间隔，防止系统路径抖动造成风暴。
+    private var lastPathRevalidationAt: Date?
     private static let retargetRetryCooldown: TimeInterval = 20
     private static let failureRescanCooldown: TimeInterval = 30
+    private static let pathRevalidationCooldown: TimeInterval = 10
     /// App 退出清理观察者（PRD F05：退出时清理自身 SSH 子进程）。
     private var terminateObserver: (any NSObjectProtocol)?
 
@@ -237,7 +242,8 @@ final class AppViewModel {
                 provider: SCDynamicStoreProxyProvider(),
                 prober: CurlProxyProbe(),
                 monitor: SCDynamicStoreChangeMonitor(),
-                egressProber: CurlEgressIPProbe()
+                egressProber: CurlEgressIPProbe(),
+                directEgressProber: CurlEgressIPProbe()
             ),
             logStore: LogStore.live(),
             secrets: KeychainPasswordStore(),
@@ -276,6 +282,9 @@ final class AppViewModel {
         }
         systemServices?.onNetworkRestored = { [weak self] in
             self?.handleNetworkRestored()
+        }
+        systemServices?.onNetworkPathChanged = { [weak self] path in
+            self?.handleNetworkPathChanged(path)
         }
         if let runtime = tunnel as? ManagedTunnelService {
             runtime.resolveEndpoint = { [weak self] profile in
@@ -346,6 +355,7 @@ final class AppViewModel {
                 self.retargetActiveTunnelsIfEndpointChanged()
                 self.upgradeDynamicTunnelsWhenProxyRecovered()
                 self.handleEgressIPChange(state.egressIP)
+                self.handleDirectEgressIPChange(state.directEgressIP)
             }
         }
     }
@@ -397,6 +407,18 @@ final class AppViewModel {
         proxyDetector.detect()
         tunnel.handleNetworkRestoration()
         updates.checkAfterNetworkRestored()
+    }
+
+    /// 在线路径特征变化（接口/约束/TUN 等）：只复测，不盲目重建 SSH。
+    private func handleNetworkPathChanged(_ path: NetworkPathFingerprint) {
+        let now = Date()
+        guard now.timeIntervalSince(lastPathRevalidationAt ?? .distantPast) >= Self.pathRevalidationCooldown else { return }
+        lastPathRevalidationAt = now
+        logStore.append(raw: "网络路径特征变化：重新检测代理并复测活跃连接", level: .info)
+        proxyDetector.detect()
+        for profile in profiles where tunnel.isActive(profileID: profile.id) {
+            tunnel.runHealthCheck(profileID: profile.id)
+        }
     }
 
     /// P1 自动回升：automatic 模式回退到动态 SOCKS5 后，本地代理恢复并连续两次扫描
@@ -882,6 +904,24 @@ final class AppViewModel {
         )
         for profile in profiles where tunnel.isActive(profileID: profile.id) {
             tunnel.runHealthCheck(profileID: profile.id) // 立即远端重验（协调器 5s 冷却兜底）
+        }
+    }
+
+    /// 无本地端口模式的出口变化线索：触发复测；nil 保持不确定，不触发修复。
+    private func handleDirectEgressIPChange(_ egress: String?) {
+        defer { lastDirectEgressIP = egress }
+        guard let egress else { return }
+        guard let previous = lastDirectEgressIP else {
+            logStore.append(raw: "已观测当前网络出口 IP：\(egress)", level: .info)
+            return
+        }
+        guard previous != egress else { return }
+        logStore.append(
+            raw: "当前网络出口已变化（\(previous) → \(egress)）：立即重新验证远端代理；该指纹不能证明 Clash 命中的节点或规则",
+            level: .info
+        )
+        for profile in profiles where tunnel.isActive(profileID: profile.id) {
+            tunnel.runHealthCheck(profileID: profile.id)
         }
     }
 
