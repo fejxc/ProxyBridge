@@ -166,15 +166,14 @@ struct GeneralSettingsView: View {
         .onAppear { model.refreshSystemStatus() }
     }
 
-    /// 设置行（系统 LabeledContent：左标题+副标题，右控件）。
+    /// 设置行（显式左对齐：标题+副标题贴内容区左缘，控件靠右——
+    /// 系统的 LabeledContent 会把标签朝控件对齐，左边缘参差，故不用）。
     private func settingRow<Control: View>(
         title: String,
         subtitle: String,
         @ViewBuilder control: () -> Control
     ) -> some View {
-        LabeledContent {
-            control()
-        } label: {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.callout.weight(.semibold))
@@ -185,6 +184,8 @@ struct GeneralSettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.leading)
             }
+            Spacer(minLength: 12)
+            control()
         }
         .padding(.vertical, 9)
         .accessibilityElement(children: .combine)

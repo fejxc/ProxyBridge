@@ -158,9 +158,8 @@ struct HealthCheckRow: View {
     }
 }
 
-/// 表单行：左标签（+说明）+ 右控件，系统 LabeledContent 布局。
-/// 帮助文案放在标签侧（与 GeneralSettingsView 的行结构一致），
-/// 控件右对齐——系统设置的原生行形态。
+/// 表单行：左标签（+说明）贴左缘、右控件靠右的显式布局。
+/// 不用 LabeledContent——macOS 上它把标签朝控件对齐，左边缘参差。
 @MainActor
 struct FormRow<Control: View>: View {
     let label: String
@@ -168,9 +167,7 @@ struct FormRow<Control: View>: View {
     @ViewBuilder var control: Control
 
     var body: some View {
-        LabeledContent {
-            control
-        } label: {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
                     .font(.callout)
@@ -183,6 +180,8 @@ struct FormRow<Control: View>: View {
                         .multilineTextAlignment(.leading)
                 }
             }
+            Spacer(minLength: 12)
+            control
         }
         .padding(.vertical, 3)
     }

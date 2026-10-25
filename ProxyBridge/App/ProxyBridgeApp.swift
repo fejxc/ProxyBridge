@@ -114,8 +114,12 @@ final class ProxyBridgeAppDelegate: NSObject, NSApplicationDelegate {
         guard let model else { return }
         if settingsController == nil {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 960, height: 680),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+                styleMask: [.titled, .fullSizeContentView, .closable, .miniaturizable, .resizable],
+                backing: .buffered, defer: false)
             window.title = "ProxyBridge"
+            // 标题栏透明 + 内容延伸到标题栏下方：侧栏的玻璃材质才会占据整个左列，
+            // 否则标题栏是一条不透明的灰条，窗口看起来没有通透感
+            window.titlebarAppearsTransparent = true
             window.identifier = NSUserInterfaceItemIdentifier("ProxyBridgeSettings")
             window.minSize = NSSize(width: 860, height: 600)
             window.isReleasedWhenClosed = false
