@@ -17,6 +17,7 @@
 - [v1.4.6](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.6)：更新链路加固（流式下载、codesign 完整性与身份核对、同卷原子替换）；发布流程钉死与被测代码一致（CI 绿门槛、标签内构建、资产不可覆盖）；真实验收清单成为发布门槛；「已连接」明确标注探测目标并支持每服务器业务验证目标。
 - [v1.5.2](https://github.com/fejxc/ProxyBridge/releases/tag/v1.5.2)：应用内更新 DMG 挂载点修复与步骤日志；增加 sshd 原始转发错误透传。
 - v1.5.3：修复 HTTP 入口与静态转发使用相同端口导致的 SSH 监听失败；新建配置使用独立静态端口；补齐全 TCP 状态的远端残留诊断与清理复查，修正 1.5.2 发布说明与实际诊断扫描不一致的问题。
+- [v1.7.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.7.0)：界面 Apple 原生化专项——设计令牌全面迁移系统语义色、15 种手工字号收敛为 6 档语义字阶、徽章胶囊降噪、容器去描边与系统材质、设置分组 GroupBox/LabeledContent 原生化；行为零变化。
 - [v1.6.1](https://github.com/fejxc/ProxyBridge/releases/tag/v1.6.1)：全库三轮审查批改——远端探测 URL 引号（带查询串业务目标修复）、密码模式三处（超时泄漏 Relay、凭据销毁时机、「记住」后置落盘）、自愈状态机（孤儿任务/冲突窗口/休眠重置）、HTTP 入口数据面（CONNECT 余量字节/半关闭/双泵）、应用内更新主线程卸载与中断恢复、TOFU 信任对齐 ssh 生效文件、视图层修复与三处状态对象重构。
 - [v1.6.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.6.0)：Clash TUN 无端口稳定性专项——修复 HTTP 入口拒绝路径连接泄漏，增加 SSH 存活时连续业务失败的受控自愈、在线路径指纹与无端口出口观测、自愈轨迹 UI。
 - [v1.5.1](https://github.com/fejxc/ProxyBridge/releases/tag/v1.5.1)：修复应用内更新必然失败的问题（hdiutil 挂载点解析自 1.4.5 起即错），安装器增加步骤级日志。
@@ -27,7 +28,7 @@
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-当前稳定版为 `ProxyBridge-1.6.1-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
+当前稳定版为 `ProxyBridge-1.7.0-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
 
 ## 后续版本
 
@@ -44,10 +45,10 @@ Release 页的**版本更新说明自动取自标签内 CHANGELOG.md 的对应�
 ## 本地打包
 
 ```bash
-bash scripts/build_dmg.sh 1.6.1
+bash scripts/build_dmg.sh 1.7.0
 ```
 
-候选产物：`build/dist/ProxyBridge-1.6.1-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
+候选产物：`build/dist/ProxyBridge-1.7.0-universal.dmg` 及同名 `.sha256` 文件。版本从 Xcode 工程读取，构建工具支持交叉编译；最低系统版本为 macOS 14。
 
 ## 签名与权限
 
