@@ -8,8 +8,8 @@ struct TrafficStatsView: View {
     /// 连接建立时间（动态模式无流量数据时至少诚实展示会话时长）。
     var connectedSince: Date?
     @State private var expanded = false
-    private let uploadColor = Color(red: 0.28, green: 0.48, blue: 0.70)
-    private let downloadColor = Color(red: 0.25, green: 0.56, blue: 0.42)
+    private let uploadColor = Color(nsColor: .systemBlue)
+    private let downloadColor = Color(nsColor: .systemGreen)
     init(session: TrafficSessionModel, connected: Bool, supported: Bool = true, connectedSince: Date? = nil, initiallyExpanded: Bool = false) {
         self.session = session; self.connected = connected; self.supported = supported
         self.connectedSince = connectedSince

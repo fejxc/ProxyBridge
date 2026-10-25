@@ -158,7 +158,9 @@ struct HealthCheckRow: View {
     }
 }
 
-/// 表单行：左标签 + 右控件。
+/// 表单行：左标签（+说明）+ 右控件，系统 LabeledContent 布局。
+/// 帮助文案放在标签侧（与 GeneralSettingsView 的行结构一致），
+/// 控件右对齐——系统设置的原生行形态。
 @MainActor
 struct FormRow<Control: View>: View {
     let label: String
@@ -166,22 +168,23 @@ struct FormRow<Control: View>: View {
     @ViewBuilder var control: Control
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(label)
-                .font(.callout)
-                .foregroundStyle(Palette.muted)
-                .frame(width: 110, alignment: .leading)
-            VStack(alignment: .leading, spacing: 5) {
-                control
+        LabeledContent {
+            control
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.callout)
+                    .foregroundStyle(Palette.ink)
                 if let help {
                     Text(help)
                         .font(.caption2)
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.vertical, 3)
     }
 }
 

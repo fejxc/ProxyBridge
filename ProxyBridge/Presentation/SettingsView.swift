@@ -1,91 +1,79 @@
 import SwiftUI
 
-/// 设置窗口（约 960×680）：左侧栏 + 四个分区（原型 02）。
+/// 设置窗口（约 960×680）：系统 NavigationSplitView 双栏 + 四个分区（原型 02）。
 @MainActor
 struct SettingsView: View {
     @Environment(AppViewModel.self) private var model
 
     var body: some View {
-        HStack(spacing: 0) {
+        NavigationSplitView {
             sidebar
-            Divider()
+                .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 280)
+        } detail: {
             content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Palette.background)
         }
         .frame(minWidth: 860, minHeight: 600)
         .preferredColorScheme(nil) // 跟随系统深浅色
     }
 
-    // MARK: 侧栏
+    // MARK: 侧栏（原生 List：半透明侧栏材质 + 系统选中态）
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(L10n.t("设置"))
-                .font(.footnote.weight(.bold))
-                .foregroundStyle(Palette.muted)
-                .padding(.horizontal, 12)
-                .padding(.top, 16)
-                .padding(.bottom, 6)
-
-            ForEach(SettingsTab.allCases) { tab in
-                SidebarButton(
-                    title: tab.title,
-                    symbol: tab.symbol,
-                    isActive: model.settingsTab == tab
-                ) {
-                    model.openSettings(tab: tab)
+        List(selection: Binding(
+            get: { model.settingsTab },
+            set: { model.openSettings(tab: $0) }
+        )) {
+            Section {
+                ForEach(SettingsTab.allCases) { tab in
+                    Label(tab.title, systemImage: tab.symbol)
+                        .tag(tab)
                 }
             }
-
-            Spacer(minLength: 12)
-
-            HStack {
-                Text(L10n.t("我的服务器"))
-                    .font(.footnote.weight(.bold))
-                    .foregroundStyle(Palette.muted)
-                Spacer()
-                Text("\(model.profiles.count)")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Palette.muted)
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 4)
-
-            ScrollView {
-                VStack(spacing: 2) {
-                    ForEach(model.profiles) { profile in
-                        SidebarProfileRow(
-                            name: profile.name,
-                            isCurrent: profile.id == model.currentProfileId,
-                            isConnected: {
-                                let phase = model.snapshots[profile.id]?.phase
-                                return phase == .connected || phase == .degraded
-                            }()
-                        ) {
-                            model.selectProfile(profile.id)
-                            model.openSettings(tab: .servers)
+            Section {
+                ForEach(model.profiles) { profile in
+                    Button {
+                        model.selectProfile(profile.id)
+                        model.openSettings(tab: .servers)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Circle()
+                                .fill(profileColor(profile.id))
+                                .frame(width: 7, height: 7)
+                            Text(profile.name)
+                                .font(.subheadline)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 0)
                         }
                     }
-                    Button {
-                        model.openSettings(tab: .servers)
-                        model.requestCreateProfile()
-                    } label: {
-                        Label(L10n.t("添加服务器"), systemImage: "plus")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .padding(.top, 6)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("服务器 \(profile.name)\(isConnected(profile.id) ? "，已连接" : "")")
                 }
-                .padding(.horizontal, 8)
+                Button {
+                    model.openSettings(tab: .servers)
+                    model.requestCreateProfile()
+                } label: {
+                    Label(L10n.t("添加服务器"), systemImage: "plus")
+                }
+            } header: {
+                HStack {
+                    Text(L10n.t("我的服务器"))
+                    Spacer()
+                    Text("\(model.profiles.count)")
+                        .monospacedDigit()
+                }
             }
-            .frame(maxHeight: 220)
         }
-        .padding(.bottom, 14)
-        .frame(width: 210, alignment: .leading)
-        .background(Palette.softFill)
+        .listStyle(.sidebar)
+    }
+
+    private func profileColor(_ id: UUID) -> Color {
+        isConnected(id) ? Palette.green : Palette.muted.opacity(0.6)
+    }
+
+    private func isConnected(_ id: UUID) -> Bool {
+        let phase = model.snapshots[id]?.phase
+        return phase == .connected || phase == .degraded
     }
 
     // MARK: 内容区
@@ -112,7 +100,9 @@ struct SettingsView: View {
             }
             .padding(24)
             .frame(maxWidth: 760, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .background(Palette.background)
     }
 
     private var titleBar: some View {
@@ -157,68 +147,5 @@ extension SettingsTab {
         case .logs: return "list.bullet.rectangle"
         case .general: return "gearshape"
         }
-    }
-}
-
-// MARK: 侧栏小组件
-
-@MainActor
-struct SidebarButton: View {
-    let title: String
-    let symbol: String
-    let isActive: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(systemName: symbol)
-                    .font(.callout)
-                    .frame(width: 18)
-                Text(title)
-                    .font(.callout.weight(isActive ? .semibold : .regular))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(isActive ? Palette.blue : Palette.muted)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
-            .background(isActive ? Palette.blue.opacity(0.1) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
-    }
-}
-
-@MainActor
-struct SidebarProfileRow: View {
-    let name: String
-    let isCurrent: Bool
-    let isConnected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 7) {
-                Circle()
-                    .fill(isConnected ? Palette.green : Palette.muted.opacity(0.6))
-                    .frame(width: 7, height: 7)
-                Text(name)
-                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(isCurrent ? Palette.blue : Palette.muted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .contentShape(Rectangle())
-            .background(isCurrent ? Palette.blue.opacity(0.08) : .clear)
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("服务器 \(name)\(isConnected ? "，已连接" : "")")
-        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 }

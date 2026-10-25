@@ -308,11 +308,11 @@ struct MenuBarView: View {
                 }
 
                 Picker(L10n.t("选择服务器"), selection: Binding(
-                    get: { model.currentProfileId ?? UUID() },
-                    set: { model.selectProfile($0) }
+                    get: { model.currentProfileId },
+                    set: { if let id = $0 { model.selectProfile(id) } }
                 )) {
                     ForEach(model.profiles) { p in
-                        Text(p.name).tag(p.id)
+                        Text(p.name).tag(Optional(p.id))
                     }
                 }
                 .pickerStyle(.menu)
