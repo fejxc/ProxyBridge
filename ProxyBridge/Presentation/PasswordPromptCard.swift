@@ -16,7 +16,7 @@ struct PasswordPromptCard: View {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.orange)
-                    Text("「\(model.pendingPasswordProfileName ?? "服务器")」需要 SSH 密码")
+                    Text(L10n.t("「") + (model.pendingPasswordProfileName ?? L10n.t("服务器")) + L10n.t("」需要 SSH 密码"))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }

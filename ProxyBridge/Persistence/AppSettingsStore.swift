@@ -84,7 +84,9 @@ struct AppSettings: Codable, Equatable {
         redactLogsOnCopy = try c.decodeIfPresent(Bool.self, forKey: .redactLogsOnCopy) ?? d.redactLogsOnCopy
         checkForUpdates = try c.decodeIfPresent(Bool.self, forKey: .checkForUpdates) ?? d.checkForUpdates
         keepAwakeWhileConnected = try c.decodeIfPresent(Bool.self, forKey: .keepAwakeWhileConnected) ?? d.keepAwakeWhileConnected
-        language = try c.decodeIfPresent(AppLanguage.self, forKey: .language) ?? d.language
+        // language 用容错解码：新版本新增语言后由旧版本降级读取时，未知枚举值
+        // 不应判废整份设置（其余 7 项偏好跟着重置）；回落系统语言即可
+        language = (try? c.decodeIfPresent(AppLanguage.self, forKey: .language)) ?? d.language
     }
 }
 
@@ -109,12 +111,22 @@ final class AppSettingsStore: @unchecked Sendable {
             guard let data = try? Data(contentsOf: fileURL),
                   let decoded = try? JSONDecoder().decode(AppSettings.self, from: data)
             else {
-                // 损坏：回退默认值但如实上报（调用方写日志），不静默吞掉
+                // 损坏：与 profiles.json 同策略——先把原文件改名保底再回退默认值，
+                // 否则下一次 save() 会原子覆盖原文件，人工排查就失去了现场
                 lastLoadWasCorrupted = true
+                quarantineCorruptFile()
                 return .defaults()
             }
             return decoded.sanitized
         }
+    }
+
+    /// 将无法解析的 settings.json 改名保底（附时间戳 + 随机后缀防同秒碰撞）。
+    private func quarantineCorruptFile() {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let side = fileURL.deletingLastPathComponent()
+            .appendingPathComponent("settings.corrupt-\(stamp)-\(UUID().uuidString.prefix(8)).json")
+        try? FileManager.default.moveItem(at: fileURL, to: side)
     }
 
     func save(_ settings: AppSettings) throws {

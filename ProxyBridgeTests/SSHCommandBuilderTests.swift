@@ -198,7 +198,7 @@ final class SSHCommandBuilderTests: XCTestCase {
             "if ! command -v curl >/dev/null 2>&1; then echo \(RemoteProbeCommand.noCurlMarker); exit 0; fi; "
                 + "exec curl --noproxy \"\" --proxy http://127.0.0.1:7890 "
                 + "--connect-timeout 3 --max-time 8 --silent --show-error "
-                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/"
+                + "--output /dev/null --write-out '%{http_code}' 'https://www.example.com/'"
         )
         XCTAssertEqual(
             RemoteProbeCommand.script(
@@ -207,7 +207,19 @@ final class SSHCommandBuilderTests: XCTestCase {
             "if ! command -v curl >/dev/null 2>&1; then echo \(RemoteProbeCommand.noCurlMarker); exit 0; fi; "
                 + "exec curl --noproxy \"\" --socks5-hostname 127.0.0.1:1080 "
                 + "--connect-timeout 3 --max-time 8 --silent --show-error "
-                + "--output /dev/null --write-out '%{http_code}' https://www.example.com/"
+                + "--output /dev/null --write-out '%{http_code}' 'https://www.example.com/'"
         )
+    }
+
+    /// 带查询串（含 `&`）的业务目标必须整体留在 curl 参数里：
+    /// 未加引号时远端 shell 会把 `&` 当后台操作符截断命令，探测恒失败。
+    func testRemoteProbeScriptQuotesURLWithQueryParameters() {
+        let script = RemoteProbeCommand.script(
+            remotePort: 7890, protocol: .http,
+            urlString: "https://www.example.com/v1/messages?foo=1&bar=2"
+        )
+        XCTAssertTrue(script.contains("'https://www.example.com/v1/messages?foo=1&bar=2'"))
+        // 引号必须落在 URL 前后，shell 词法下 curl 只收到一个参数
+        XCTAssertFalse(script.contains("bar=2 "))
     }
 }

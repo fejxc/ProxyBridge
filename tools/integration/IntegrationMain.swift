@@ -242,7 +242,8 @@ final class AlwaysVerifiedLocalProber: ProxyProbeExecuting, @unchecked Sendable 
 final class MemoryPasswordStore: PasswordStoring {
     private var storage: [UUID: String] = [:]
     private let lock = NSLock()
-    func save(_ password: String, for id: UUID) { lock.lock(); storage[id] = password; lock.unlock() }
+    @discardableResult
+    func save(_ password: String, for id: UUID) -> Bool { lock.lock(); storage[id] = password; lock.unlock(); return true }
     func load(for id: UUID) -> String? { lock.lock(); defer { lock.unlock() }; return storage[id] }
     func delete(for id: UUID) { lock.lock(); storage[id] = nil; lock.unlock() }
     func exists(for id: UUID) -> Bool { lock.lock(); defer { lock.unlock() }; return storage[id] != nil }

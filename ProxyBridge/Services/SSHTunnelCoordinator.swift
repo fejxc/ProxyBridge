@@ -55,6 +55,12 @@ final class SSHTunnelCoordinator: TunnelService {
         var password: String?
         /// 密码模式：本次连接的 askpass 凭据装置（认证后销毁，见 SSHAskpassCredential）。
         var askpass: SSHAskpassCredential?
+        /// 用户提交密码时勾选的「记住」意图：钥匙串写入推迟到认证成功之后，
+        /// 错密码不会污染持久化存储。
+        var rememberPasswordRequested = false
+        /// 健康检查因上一次刷新/切换任务在途而被拒时置位；任务收尾后排空，
+        /// 周期不再整段丢失到下一个间隔。
+        var pendingHealthCheck = false
         /// 连续业务探测硬失败数；连接重建、验证成功后复位，unknown 不计数。
         var consecutiveRemoteFailures = 0
     }
@@ -117,19 +123,9 @@ final class SSHTunnelCoordinator: TunnelService {
         sessionPasswords[profileID] = nil // 用户断开：会话内密码随之丢弃
         // 断开是终态：先置位再取消，保证后续所有路径静默（U13/I03）
         session.userStopped = true
-        session.relay?.stop()
         session.task?.cancel()
         session.task = nil
-        session.httpEntry?.stop()
-        session.httpEntry = nil
-        session.httpEntryPort = nil
-        if let handle = session.handle {
-            handle.terminate()
-            scheduleForceKill(handle)
-        }
-        session.handle = nil
-        session.askpass?.destroy()
-        session.askpass = nil
+        teardownSessionResources(session, terminateProcess: true)
         session.password = nil // 断开即丢弃
         session.phase = .idle
         session.localVerified = nil
@@ -148,10 +144,16 @@ final class SSHTunnelCoordinator: TunnelService {
 
     func runHealthCheck(profileID: UUID) {
         guard let session = sessions[profileID] else { return }
-        guard session.task == nil, session.userStopped == false else { return }
+        guard session.userStopped == false else { return }
         guard session.phase == .connected || session.phase == .degraded,
               let handle = session.handle, handle.isRunning else {
             // 错误/认证终态不由健康检查翻转
+            return
+        }
+        // 上一次刷新/端点切换任务在途：登记待办，任务收尾后排空，
+        // 该周期不再整段丢失到下一个间隔
+        guard session.task == nil else {
+            session.pendingHealthCheck = true
             return
         }
         session.task = Task { @MainActor [weak self] in
@@ -160,9 +162,14 @@ final class SSHTunnelCoordinator: TunnelService {
     }
 
     func runLocalHealthCheck(profileID: UUID) {
-        guard let session = sessions[profileID], session.task == nil, !session.userStopped,
+        guard let session = sessions[profileID], !session.userStopped,
               session.phase == .connected || session.phase == .degraded,
               session.handle?.isRunning == true else { return }
+        // 与 runHealthCheck 同语义：在途时登记待办而非丢弃
+        guard session.task == nil else {
+            session.pendingHealthCheck = true
+            return
+        }
         session.task = Task { @MainActor [weak self] in
             await self?.runHealthRefresh(session: session, includeRemote: false)
         }
@@ -176,9 +183,9 @@ final class SSHTunnelCoordinator: TunnelService {
     func submitPassword(profileID: UUID, password: String, remember: Bool) {
         guard let session = sessions[profileID], !session.userStopped else { return }
         session.password = password
-        if remember {
-            secrets.save(password, for: profileID) // 用户勾选「记住」→ 存入钥匙串
-        }
+        // 「记住」不在此刻写钥匙串：认证成功（转发建立）后才落盘，
+        // 输错密码 + 勾记住不会把错误密码持久化
+        session.rememberPasswordRequested = remember
     }
 
     func cancelPasswordPrompt(profileID: UUID) {
@@ -194,22 +201,30 @@ final class SSHTunnelCoordinator: TunnelService {
             session.userStopped = true
             session.task?.cancel()
             session.task = nil
-            session.httpEntry?.stop()
-            session.httpEntry = nil
-            session.httpEntryPort = nil
             session.password = nil
-            session.relay?.stop()
-            if let handle = session.handle {
-                handle.terminate()
-                scheduleForceKill(handle)
-            }
-            session.handle = nil
-            session.askpass?.destroy()
-            session.askpass = nil
+            teardownSessionResources(session, terminateProcess: true)
             session.phase = .idle
             sessions[id] = nil
         }
         sessionPasswords.removeAll() // App 退出：全部会话内密码丢弃
+    }
+
+    /// 释放会话持有的本地资源：Relay 监听器、HTTP 入口监听器、askpass 凭据文件，
+    /// 并按需终止本 App 拥有的 ssh 进程。全部终态路径（用户断开、App 退出、进程退出、
+    /// Relay 失败、认证被拒、启动失败、密码放弃）都必须经过这里——释放序列此前在
+    /// 多处手工复制且覆盖面不一，HTTP 入口监听器曾因此在数条终态路径上泄漏。
+    private func teardownSessionResources(_ session: Session, terminateProcess: Bool) {
+        session.relay?.stop()
+        session.httpEntry?.stop()
+        session.httpEntry = nil
+        session.httpEntryPort = nil
+        session.askpass?.destroy()
+        session.askpass = nil
+        if terminateProcess, let handle = session.handle {
+            handle.terminate()
+            scheduleForceKill(handle)
+        }
+        session.handle = nil
     }
 
     // MARK: - 连接序列
@@ -354,9 +369,14 @@ final class SSHTunnelCoordinator: TunnelService {
                     if session.userStopped || Task.isCancelled { return }
                     try? await Task.sleep(nanoseconds: 200_000_000)
                 }
-                guard !session.userStopped, !Task.isCancelled,
-                      let entered = session.password, !entered.isEmpty else {
+                // 断开/取消优先于超时判定：断开路径已发 idle 终态并清理监听器，
+                // 这里若再发「超时」错误快照，会把已断开（或重连中）的状态翻回失败
+                guard !session.userStopped, !Task.isCancelled else { return }
+                guard let entered = session.password, !entered.isEmpty else {
                     session.password = nil
+                    // Relay 已在第 2 步启动：超时放弃必须一并释放（其余资源此刻
+                    // 尚未创建，统一走清理路径保证未来新增资源不在此处泄漏）
+                    teardownSessionResources(session, terminateProcess: false)
                     finishSetup(session: session, profileID: id) {
                         session.phase = .error
                         var errorState = self.baseSnapshot(profileID: id, phase: .error)
@@ -370,6 +390,7 @@ final class SSHTunnelCoordinator: TunnelService {
             session.password = password
             sessionPasswords[id] = password // 会话内记忆：后续自动重连复用
             guard let entered = password, let credential = SSHAskpassCredential(password: entered) else {
+                teardownSessionResources(session, terminateProcess: false) // 凭据装置创建失败：释放已启动的资源
                 finishSetup(session: session, profileID: id) {
                     session.phase = .error
                     var errorState = self.baseSnapshot(profileID: id, phase: .error)
@@ -388,6 +409,13 @@ final class SSHTunnelCoordinator: TunnelService {
         var httpEntryPort: UInt16?
         if profile.httpAdapterEnabled, let httpEntryFactory {
             let entry = httpEntryFactory.make()
+            // 监听器启动成功后死亡（端口被抢/系统回收）此前无上报通道，最长静默
+            // 一个健康检查周期——对齐主 Relay 的 onFailure 语义，死后立即如实降级
+            entry.onFailure = { [weak self] detail in
+                Task { @MainActor [weak self] in
+                    self?.httpEntryListenerFailed(profileID: id, detail: detail)
+                }
+            }
             let entryMode: HTTPEntryMode
             switch effectiveMode {
             case .staticForward:
@@ -461,8 +489,7 @@ final class SSHTunnelCoordinator: TunnelService {
         do {
             try handle.start()
         } catch {
-            session.handle = nil
-            session.relay?.stop()
+            teardownSessionResources(session, terminateProcess: false)
             finishSetup(session: session, profileID: id) {
                 var errorState = self.baseSnapshot(profileID: id, phase: .error)
                 errorState.humanReadableDetail = "无法启动 SSH 进程：\(error.localizedDescription)"
@@ -484,9 +511,20 @@ final class SSHTunnelCoordinator: TunnelService {
             waited += 0.1
         }
         guard !session.userStopped, !Task.isCancelled, handle.isRunning else { return }
-        // 认证已通过：凭据文件即刻销毁（此后连接生命周期内不再需要）
-        session.askpass?.destroy()
-        session.askpass = nil
+        // 认证已通过（ExitOnForwardFailure 下进程存活即转发已建立 ⇒ 认证完成）：
+        // 「记住」此刻才写钥匙串——错密码路径（进程退出）永远走不到这里
+        if session.rememberPasswordRequested, let password = session.password {
+            session.rememberPasswordRequested = false
+            if !secrets.save(password, for: id) {
+                // 保存失败：KeychainStore 已留 OSLog；界面在下次连接时会因
+                // 钥匙串无记录重新询问（rememberPassword 标志与实际状态偏差可自愈）
+            }
+        }
+        // 凭据文件销毁时机：不能按宽限期猜——高延迟链路（TCP 连接本身可合法
+        // 耗时 ConnectTimeout=10 秒）在宽限期结束时认证可能尚未开始，此刻销毁
+        // 会让 askpass 读到空串、认证失败，还会误清钥匙串记住的密码。改为在
+        // 首次远端验证结束后销毁（转发已建立 ⇒ 认证必然完成）；进程退出、断开、
+        // 认证被拒等路径仍即刻销毁，崩溃残留由 >1 小时清扫兜底。
 
         // 5) 转发已建立（ExitOnForwardFailure 保证），进行远端端到端验证
         var verifying = baseSnapshot(profileID: id, phase: .connecting)
@@ -497,6 +535,8 @@ final class SSHTunnelCoordinator: TunnelService {
 
         let remoteOutcome = await remoteVerifyWithReadinessRetry(session: session, profile: profile)
         guard !session.userStopped, !Task.isCancelled else { return }
+        session.askpass?.destroy()
+        session.askpass = nil
 
         session.lastRemoteProbeAt = Date()
         var finalSnap: TunnelSnapshot
@@ -537,15 +577,7 @@ final class SSHTunnelCoordinator: TunnelService {
             session.phase = .degraded
         case .authRequired(let detail):
             session.password = nil
-            session.askpass?.destroy()
-            session.askpass = nil
-            session.relay?.stop()
-            session.httpEntry?.stop()
-            session.httpEntry = nil
-            session.httpEntryPort = nil
-            handle.terminate()
-            scheduleForceKill(handle)
-            session.handle = nil
+            teardownSessionResources(session, terminateProcess: true)
             session.remoteVerified = nil
             finalSnap = baseSnapshot(profileID: id, phase: .authRequired)
             finalSnap.humanReadableDetail = detail
@@ -566,7 +598,10 @@ final class SSHTunnelCoordinator: TunnelService {
     /// 健康检查：复核本地 + 远端（带冷却与并发锁），只影响 connected/degraded。
     /// 每个挂起点之后都必须重新验证会话状态——用户断开 / 进程死亡的终态绝不被翻转。
     private func runHealthRefresh(session: Session, includeRemote: Bool = true) async {
-        defer { session.task = nil }
+        defer {
+            session.task = nil
+            drainPendingHealthCheck(session: session)
+        }
         guard let profile = session.profile else { return }
         let id = profile.id
         guard let handle = session.handle, handle.isRunning else { return }
@@ -626,12 +661,7 @@ final class SSHTunnelCoordinator: TunnelService {
                 session.remoteVerified = nil
                 session.phase = .authRequired
                 session.password = nil
-                session.askpass?.destroy()
-                session.askpass = nil
-                session.relay?.stop()
-                handle.terminate()
-                scheduleForceKill(handle)
-                session.handle = nil
+                teardownSessionResources(session, terminateProcess: true)
                 snap.sshProcessRunning = false
                 snap.humanReadableDetail = detail
                 if profile.authMode == .password, detail.contains("认证被拒绝"), secrets.exists(for: id) {
@@ -674,6 +704,18 @@ final class SSHTunnelCoordinator: TunnelService {
         onEvent?(.snapshot(snap))
     }
 
+    /// 排空被在途任务推迟的健康检查（见 runHealthCheck 的 pending 登记）。
+    private func drainPendingHealthCheck(session: Session) {
+        guard session.pendingHealthCheck else { return }
+        session.pendingHealthCheck = false
+        guard session.task == nil, !session.userStopped,
+              session.phase == .connected || session.phase == .degraded,
+              session.handle?.isRunning == true else { return }
+        session.task = Task { @MainActor [weak self] in
+            await self?.runHealthRefresh(session: session)
+        }
+    }
+
     // MARK: - 本地端点动态跟随（U15：代理变化无缝切换）
 
     /// 本地代理端点变化后的无缝切换：实测新端点 → 切 Relay 目标 → 按新协议重验远端。
@@ -691,7 +733,10 @@ final class SSHTunnelCoordinator: TunnelService {
     }
 
     private func runLocalRetarget(session: Session, profileID: UUID, endpoint: LocalProxyEndpoint) async {
-        defer { session.task = nil }
+        defer {
+            session.task = nil
+            drainPendingHealthCheck(session: session)
+        }
         guard let profile = session.profile,
               let handle = session.handle, handle.isRunning,
               session.phase == .connected || session.phase == .degraded else { return }
@@ -763,6 +808,20 @@ final class SSHTunnelCoordinator: TunnelService {
         onEvent?(.snapshot(snap))
     }
 
+    /// HTTP 入口监听器在启动成功后死亡：如实降级呈现并释放引用，
+    /// 主转发路径（静态转发 / 动态 SOCKS5）不受影响。
+    private func httpEntryListenerFailed(profileID: UUID, detail: String) {
+        guard let session = sessions[profileID], session.httpEntry != nil, !session.userStopped else { return }
+        session.httpEntry = nil
+        session.httpEntryPort = nil
+        session.httpAdapterVerified = false
+        session.httpAdapterStatus = .unavailable
+        session.httpAdapterDetail = "HTTP 入口监听器异常退出（\(detail)）；主转发路径不受影响"
+        var snap = baseSnapshot(profileID: profileID, phase: session.phase)
+        snap.humanReadableDetail = session.httpAdapterDetail ?? "HTTP 入口监听器异常退出；主转发路径不受影响"
+        onEvent?(.snapshot(snap))
+    }
+
     // MARK: - 事件与辅助
 
     private func handleProcessExit(profileID: UUID, exitCode: Int32) {
@@ -775,8 +834,17 @@ final class SSHTunnelCoordinator: TunnelService {
         let classification = SSHErrorClassifier.classify(exitCode: exitCode, stderr: stderr)
         var (phase, detail) = SSHErrorClassifier.phaseAndDetail(for: classification)
         if stderr.lowercased().contains("remote port forwarding failed"), let profile = session.profile {
-            let port = session.effectiveMode == .reverseDynamic ? profile.remoteSocksPort : profile.remotePort
-            detail = "远端 127.0.0.1:\(port) 监听失败：端口可能被占用或服务器禁止转发。最常见原因是上一次连接的 sshd 尚未释放端口（通常 1–3 分钟内自行恢复）；开启自动重连后应用会在几分钟内自动重试。持续失败请在服务器配置中更换端口，或联系管理员检查 sshd 的 AllowTcpForwarding/PermitListen。"
+            // sshd 原话形如 "remote port forwarding failed for listen port 7890"：
+            // 失败的可能是主转发，也可能是 HTTP 入口的附加转发，按行内端口精确归因
+            var failedPort = session.effectiveMode == .reverseDynamic ? profile.remoteSocksPort : profile.remotePort
+            if let range = stderr.range(of: "listen port ") {
+                let digits = stderr[range.upperBound...].prefix(while: { $0.isNumber })
+                if let reported = Int(digits),
+                   [profile.remotePort, profile.remoteSocksPort, profile.remoteHTTPPort].contains(reported) {
+                    failedPort = reported
+                }
+            }
+            detail = "远端 127.0.0.1:\(failedPort) 监听失败：端口可能被占用或服务器禁止转发。最常见原因是上一次连接的 sshd 尚未释放端口（通常 1–3 分钟内自行恢复）；开启自动重连后应用会在几分钟内自动重试。持续失败请在服务器配置中更换端口，或联系管理员检查 sshd 的 AllowTcpForwarding/PermitListen。"
         }
 
         // 密码模式认证失败：给出密码语向的具体原因（而非泛化的密钥/agent 提示）
@@ -791,11 +859,8 @@ final class SSHTunnelCoordinator: TunnelService {
                 detail += "；已清除记住的密码，下次连接将重新询问"
             }
         }
-        session.relay?.stop()
+        teardownSessionResources(session, terminateProcess: false) // 进程已自行退出，无需终止
         session.phase = phase
-        session.handle = nil
-        session.askpass?.destroy()
-        session.askpass = nil
         session.task?.cancel()
         session.task = nil
         session.localVerified = nil
@@ -827,11 +892,8 @@ final class SSHTunnelCoordinator: TunnelService {
         session.task?.cancel(); session.task = nil
         session.phase = .error
         session.password = nil
-        session.askpass?.destroy()
-        session.askpass = nil
+        teardownSessionResources(session, terminateProcess: true)
         session.localVerified = nil; session.remoteVerified = nil
-        if let handle = session.handle { handle.terminate(); scheduleForceKill(handle) }
-        session.handle = nil
         var snapshot = baseSnapshot(profileID: profileID, phase: .error)
         snapshot.humanReadableDetail = detail
         onEvent?(.snapshot(snapshot))

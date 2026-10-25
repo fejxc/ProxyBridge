@@ -14,9 +14,9 @@ struct LogsView: View {
         var id: String { rawValue }
         var title: String {
             switch self {
-            case .all: return "全部时间"
-            case .lastHour: return "近 1 小时"
-            case .last24Hours: return "近 24 小时"
+            case .all: return L10n.t("全部时间")
+            case .lastHour: return L10n.t("近 1 小时")
+            case .last24Hours: return L10n.t("近 24 小时")
             }
         }
         var cutoff: Date? {
@@ -75,7 +75,7 @@ struct LogsView: View {
                 Button {
                     model.copyLogsToPasteboard()
                 } label: {
-                    Label(model.settings.redactLogsOnCopy ? "复制脱敏日志" : "复制未脱敏日志",
+                    Label(model.settings.redactLogsOnCopy ? L10n.t("复制脱敏日志") : L10n.t("复制未脱敏日志"),
                           systemImage: "doc.on.doc")
                 }
                 .help(model.settings.redactLogsOnCopy
@@ -96,7 +96,9 @@ struct LogsView: View {
                 }
             }
 
-            SectionCard(title: filtered.isEmpty ? "暂无匹配日志" : "最近活动（最多保留 \(LogStore.capacity) 条）") {
+            SectionCard(title: filtered.isEmpty
+                        ? L10n.t("暂无匹配日志")
+                        : String(format: L10n.t("最近活动（最多保留 %d 条）"), LogStore.capacity)) {
                     LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(filtered) { entry in
                         logRow(entry)

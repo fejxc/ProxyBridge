@@ -173,17 +173,18 @@ final class UpdateCoordinator {
                 return
             }
             guard let expected = await installer.fetchExpectedSHA256(url: shaURL) else {
+                try? FileManager.default.removeItem(at: local) // 校验链不可用：不留下载残片
                 self.finishInstall(.failed("无法获取官方 SHA-256 校验值，已取消自动安装（安全优先）"))
                 return
             }
             self.installState = .verifying
-            guard installer.verify(file: local, expectedHex: expected) else {
+            guard await installer.verify(file: local, expectedHex: expected) else {
                 try? FileManager.default.removeItem(at: local)
                 self.finishInstall(.failed("SHA-256 校验不通过，已取消安装；请从发布页手动下载"))
                 return
             }
             self.installState = .installing
-            if installer.installAndRelaunch(dmg: local, expectedVersion: info.latestVersion) {
+            if await installer.installAndRelaunch(dmg: local, expectedVersion: info.latestVersion) {
                 try? FileManager.default.removeItem(at: local)
                 if Bundle.main.bundleURL.path.hasPrefix("/Applications/") {
                     self.logStore.append(raw: "v\(info.latestVersion) 安装完成，正在重启应用", level: .success)
@@ -193,6 +194,7 @@ final class UpdateCoordinator {
                     self.installState = .idle
                 }
             } else {
+                try? FileManager.default.removeItem(at: local) // 安装失败：重试时重新下载，不留旧包
                 self.finishInstall(.failed("安装失败：无法挂载 DMG 或替换 /Applications 中的应用（应用可能正被占用）"))
             }
         }

@@ -104,10 +104,10 @@ struct MenuBarView: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(Palette.red)
             VStack(alignment: .leading, spacing: 2) {
-                Text("退出将断开 \(activeTunnelCount) 条活跃隧道")
+                Text(String(format: L10n.t("退出将断开 %d 条活跃隧道"), activeTunnelCount))
                     .font(.system(size: 11.5, weight: .semibold))
                     .foregroundStyle(Palette.ink)
-                Text("SSH 进程会被终止，不会遗留。")
+                Text(L10n.t("SSH 进程会被终止，不会遗留。"))
                     .font(.system(size: 10))
                     .foregroundStyle(Palette.muted)
             }
@@ -116,7 +116,7 @@ struct MenuBarView: View {
                 cancelQuit()
                 NSApplication.shared.terminate(nil)
             } label: {
-                Text("确认退出")
+                Text(L10n.t("确认退出"))
             }
             .controlSize(.small)
             .buttonStyle(.borderedProminent)
@@ -131,7 +131,7 @@ struct MenuBarView: View {
         .background(Palette.red.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("退出确认")
+        .accessibilityLabel(L10n.t("退出确认"))
     }
 
     /// 新版本横幅：面板顶部醒目入口；支持应用内下载安装（含进度与失败原因）。
@@ -161,7 +161,7 @@ struct MenuBarView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("新版本提示")
+            .accessibilityLabel(L10n.t("新版本提示"))
 
             switch model.updateInstallState {
             case .idle:
@@ -347,7 +347,7 @@ struct MenuBarView: View {
                     Spacer(minLength: 0)
                     VStack(alignment: .leading, spacing: 5) {
                         Text(isDynamicMode
-                             ? (model.currentProfile?.httpAdapterEnabled == true ? "Linux Codex HTTP" : "Linux SOCKS5")
+                             ? (model.currentProfile?.httpAdapterEnabled == true ? L10n.t("Linux Codex HTTP") : L10n.t("Linux SOCKS5"))
                              : L10n.t("Linux 远端代理"))
                             .font(.system(size: 10.5))
                             .foregroundStyle(Palette.muted)
@@ -468,7 +468,7 @@ struct MenuBarView: View {
                         Text(L10n.t("自愈轨迹"))
                             .font(.system(size: 12.5, weight: .semibold))
                             .foregroundStyle(Palette.ink)
-                        MiniBadge(text: L10n.t("最近 \(history.count) 条"), tone: recoveryTone)
+                        MiniBadge(text: String(format: L10n.t("最近 %d 条"), history.count), tone: recoveryTone)
                         Spacer(minLength: 4)
                         Image(systemName: showRecoveryTrace ? "chevron.up" : "chevron.down")
                             .font(.system(size: 10, weight: .semibold))
@@ -590,8 +590,7 @@ struct MenuBarView: View {
     private func sshDetail(for display: HealthCheckDisplay) -> String {
         switch display {
         case .ok:
-            let base = "隧道运行中"
-            return base
+            return L10n.t("隧道运行中")
         case .unknown: return L10n.t("正在建立 SSH 连接…")
         case .failed: return model.currentSnapshot.phase == .authRequired
             ? L10n.t("需要核对服务器指纹或 SSH 身份验证")
@@ -646,7 +645,7 @@ struct MenuBarView: View {
             }
             .controlSize(.large)
             .buttonStyle(.bordered)
-            .accessibilityHint("只重新验证，不修改任何配置")
+            .accessibilityHint(L10n.t("只重新验证，不修改任何配置"))
         }
     }
 

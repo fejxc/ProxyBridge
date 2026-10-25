@@ -11,6 +11,10 @@ struct ServerEditorView: View {
     /// 草稿对应的原始值（未保存变更检测）。
     @State private var lastLoaded: ServerProfile?
     @State private var showUnsavedBanner = false
+    /// 钥匙串查询结果的视图层缓存：hasStoredPassword 直连 SecItemCopyMatching，
+    /// 若在 body 里调用，表单每敲一个键就会查询一次；改为只在会改变其真值的
+    /// 时点（装载草稿 / 保存 / 忘记密码）刷新。
+    @State private var draftHasStoredPassword = false
     /// ~/.ssh/config 导入面板。
     @State private var importEntries: [SSHConfigEntry]?
 
@@ -90,14 +94,20 @@ struct ServerEditorView: View {
                 profile: draftBinding,
                 isNew: model.editorIsNewDraft,
                 snapshotPhase: model.snapshots[draftBinding.wrappedValue.id]?.phase,
-                hasStoredPassword: model.hasStoredPassword(for: draftBinding.wrappedValue.id),
-                onForgetStoredPassword: { model.forgetStoredPassword() },
+                hasStoredPassword: draftHasStoredPassword,
+                onForgetStoredPassword: {
+                    // 草稿可能不是当前选中的服务器（未保存横幅状态）：
+                    // 必须按草稿 id 删凭据，否则会删掉另一台服务器的密码
+                    model.forgetStoredPassword(for: draftBinding.wrappedValue.id)
+                    refreshStoredPasswordFlag()
+                },
                 onSave: { profile in
                     guard ServerProfileRule.validate(profile).isValid else { return }
                     if model.saveDraftProfile(profile) {
                         self.draft = profile
                         self.lastLoaded = profile
                         self.showUnsavedBanner = false
+                        self.refreshStoredPasswordFlag()
                     }
                 },
                 onDiscard: {
@@ -125,6 +135,11 @@ struct ServerEditorView: View {
         }
         lastLoaded = draft
         showUnsavedBanner = false
+        refreshStoredPasswordFlag()
+    }
+
+    private func refreshStoredPasswordFlag() {
+        draftHasStoredPassword = draft.map { model.hasStoredPassword(for: $0.id) } ?? false
     }
 }
 
@@ -196,7 +211,7 @@ private struct SSHConfigImportSheet: View {
                 Spacer()
                 Button(L10n.t("取消")) { dismiss() }
                     .buttonStyle(.bordered)
-                Button(L10n.t("导入选中（") + "\(selected.count)") {
+                Button(L10n.t("导入选中（") + "\(selected.count)" + L10n.t("）")) {
                     let picked = entries.filter { selected.contains($0.alias) }
                     _ = model.importSSHConfigEntries(picked)
                     dismiss()
@@ -253,7 +268,7 @@ struct ServerEditorForm: View {
                         TextField(L10n.t("SSH 用户名"), text: $profile.username)
                             .autocorrectionDisabled()
                     }
-                    FormRow(label: "认证方式") {
+                    FormRow(label: L10n.t("认证方式")) {
                         Picker(L10n.t("认证方式"), selection: $profile.authMode) {
                             ForEach(AuthenticationMode.allCases, id: \.self) { mode in
                                 Text(mode.displayName).tag(mode)
@@ -307,7 +322,7 @@ struct ServerEditorForm: View {
 
             SectionCard(title: L10n.t("反向代理配置")) {
                 VStack(spacing: 14) {
-                    FormRow(label: "连接模式", help: "自动模式优先使用真实验证通过的本地代理，否则切换到 OpenSSH 动态 SOCKS5。") {
+                    FormRow(label: L10n.t("连接模式"), help: "自动模式优先使用真实验证通过的本地代理，否则切换到 OpenSSH 动态 SOCKS5。") {
                         Picker(L10n.t("连接模式"), selection: $profile.connectionMode) {
                             ForEach(ConnectionMode.allCases, id: \.self) { mode in
                                 Text(mode.displayName).tag(mode)
@@ -326,7 +341,7 @@ struct ServerEditorForm: View {
                             loopbackPortField($profile.remoteSocksPort, prompt: "SOCKS5 端口")
                         }
                     }
-                    FormRow(label: "HTTP 兼容入口", help: "默认在 Linux 127.0.0.1:7890 提供 Codex HTTP_PROXY/HTTPS_PROXY；由 App 在 Mac 侧实现 HTTP 代理语义，服务器零依赖（无需安装 Privoxy）。不会安装软件或修改系统配置。") {
+                    FormRow(label: L10n.t("HTTP 兼容入口"), help: "默认在 Linux 127.0.0.1:7890 提供 Codex HTTP_PROXY/HTTPS_PROXY；由 App 在 Mac 侧实现 HTTP 代理语义，服务器零依赖（无需安装 Privoxy）。不会安装软件或修改系统配置。") {
                         VStack(alignment: .leading, spacing: 7) {
                             Toggle(L10n.t("提供 HTTP 入口（Codex 继续使用 7890）"), isOn: $profile.httpAdapterEnabled)
                                 .controlSize(.small)
@@ -339,7 +354,7 @@ struct ServerEditorForm: View {
                             }
                         }
                     }
-                    FormRow(label: "本地代理") {
+                    FormRow(label: L10n.t("本地代理")) {
                         Text(proxySummary)
                             .font(.system(size: 12))
                             .foregroundStyle(Palette.ink)
@@ -355,7 +370,7 @@ struct ServerEditorForm: View {
                         }
                         }
                     }
-                    FormRow(label: "首选协议", help: "自动检测模式下优先采用该协议的实测结果；手动模式以手动端点为准。") {
+                    FormRow(label: L10n.t("首选协议"), help: "自动检测模式下优先采用该协议的实测结果；手动模式以手动端点为准。") {
                         Picker(L10n.t("首选协议"), selection: $profile.preferredProtocol) {
                             Text("HTTP").tag(ProxyProtocol.http)
                             Text("SOCKS5").tag(ProxyProtocol.socks5)

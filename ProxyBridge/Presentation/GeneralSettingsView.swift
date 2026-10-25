@@ -10,7 +10,7 @@ struct GeneralSettingsView: View {
             SectionCard(title: L10n.t("应用行为")) {
                 VStack(spacing: 0) {
                     settingRow(
-                        title: "登录时启动 ProxyBridge",
+                        title: L10n.t("登录时启动 ProxyBridge"),
                         subtitle: model.loginStatusDescription
                     ) {
                         Toggle(L10n.t("登录时启动"), isOn: launchBinding)
@@ -21,7 +21,7 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "显示连接异常通知",
+                        title: L10n.t("显示连接异常通知"),
                         subtitle: model.notificationStatusDescription
                     ) {
                         Toggle(L10n.t("通知"), isOn: notificationBinding)
@@ -31,8 +31,8 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "远端健康检查间隔",
-                        subtitle: "定期在服务器上通过 curl 验证代理，每次只运行一个探测。"
+                        title: L10n.t("远端健康检查间隔"),
+                        subtitle: L10n.t("定期在服务器上通过 curl 验证代理，每次只运行一个探测。")
                     ) {
                         Picker(L10n.t("间隔"), selection: remoteIntervalBinding) {
                             ForEach(AppSettings.allowedRemoteIntervals, id: \.self) { seconds in
@@ -43,8 +43,8 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "本地轻量检查间隔",
-                        subtitle: "定期验证当前隧道使用的本地代理，不登录远端。"
+                        title: L10n.t("本地轻量检查间隔"),
+                        subtitle: L10n.t("定期验证当前隧道使用的本地代理，不登录远端。")
                     ) {
                         Picker(L10n.t("间隔"), selection: localIntervalBinding) {
                             ForEach(AppSettings.allowedLocalIntervals, id: \.self) { seconds in
@@ -55,8 +55,8 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "复制日志时脱敏",
-                        subtitle: "遮挡内网 IP、用户@主机、密钥路径与凭据。"
+                        title: L10n.t("复制日志时脱敏"),
+                        subtitle: L10n.t("遮挡内网 IP、用户@主机、密钥路径与凭据。")
                     ) {
                         Toggle(L10n.t("脱敏"), isOn: redactBinding)
                             .toggleStyle(.switch)
@@ -65,8 +65,8 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "启动时检查更新",
-                        subtitle: "只读 GitHub 公开接口比对版本号，不上传任何数据；发现新版本时在菜单栏提示。"
+                        title: L10n.t("启动时检查更新"),
+                        subtitle: L10n.t("只读 GitHub 公开接口比对版本号，不上传任何数据；发现新版本时在菜单栏提示。")
                     ) {
                         Toggle(L10n.t("检查更新"), isOn: updateCheckBinding)
                             .toggleStyle(.switch)
@@ -75,8 +75,8 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "连接期间防止空闲休眠",
-                        subtitle: "有活跃隧道时阻止系统空闲休眠（合盖睡眠不受影响）。断开或退出后立即恢复系统默认。"
+                        title: L10n.t("连接期间防止空闲休眠"),
+                        subtitle: L10n.t("有活跃隧道时阻止系统空闲休眠（合盖睡眠不受影响）。断开或退出后立即恢复系统默认。")
                     ) {
                         Toggle(L10n.t("防止休眠"), isOn: keepAwakeBinding)
                             .toggleStyle(.switch)
@@ -85,8 +85,8 @@ struct GeneralSettingsView: View {
                     }
                     divider
                     settingRow(
-                        title: "界面语言",
-                        subtitle: "切换后立即生效；事件详情与日志文案保持中文。"
+                        title: L10n.t("界面语言"),
+                        subtitle: L10n.t("切换后立即生效；事件详情与日志文案保持中文。")
                     ) {
                         Picker(L10n.t("界面语言"), selection: languageBinding) {
                             ForEach(AppLanguage.allCases, id: \.self) { lang in
@@ -109,7 +109,7 @@ struct GeneralSettingsView: View {
                     Text(L10n.t("ProxyBridge · SSH 反向代理管理工具"))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
-                    Text("版本：" + AppViewModel.currentVersion)
+                    Text(L10n.t("版本：") + AppViewModel.currentVersion)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.muted)
                     if let update = model.updateInfo {

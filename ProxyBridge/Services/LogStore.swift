@@ -119,8 +119,13 @@ final class LogStore {
         }
         guard let handle = fileHandle else { return }
         let line = "\(fileDateFormatter.string(from: entry.timestamp)) [\(entry.level.displayName)] \(entry.message)\n"
-        try? handle.seekToEnd()
-        try? handle.write(contentsOf: Data(line.utf8))
+        do {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(line.utf8))
+        } catch {
+            // 写盘失败（如运行中删除 app.log）不能静默：至少在 OSLog 留痕
+            osLog.error("磁盘日志写入失败：\(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// 打开追加句柄；文件不存在时先创建（FileHandle(forWritingTo:) 不建文件）。
@@ -137,9 +142,21 @@ final class LogStore {
               size > fileSizeLimit else { return }
         fileHandle?.closeFile()
         fileHandle = nil
+        defer {
+            // 轮转失败（app.log.1 被占用等）也要把句柄补回来：否则磁盘审计日志
+            // 从此静默停写直到重启进程
+            if fileHandle == nil { fileHandle = openHandle(at: url) }
+        }
         let archived = url.deletingLastPathComponent().appendingPathComponent("app.log.1")
-        try? FileManager.default.removeItem(at: archived)
-        try? FileManager.default.moveItem(at: url, to: archived)
+        if FileManager.default.fileExists(atPath: archived.path) {
+            do { try FileManager.default.removeItem(at: archived) }
+            catch { osLog.error("删除旧归档 app.log.1 失败：\(error.localizedDescription, privacy: .public)") }
+        }
+        do {
+            try FileManager.default.moveItem(at: url, to: archived)
+        } catch {
+            osLog.error("日志轮转失败（保留原文件继续写入）：\(error.localizedDescription, privacy: .public)")
+        }
         fileHandle = openHandle(at: url)
     }
 

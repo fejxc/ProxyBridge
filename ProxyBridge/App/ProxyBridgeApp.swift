@@ -6,6 +6,17 @@ import Carbon
 @MainActor
 struct ProxyBridgeEntry {
     static func main() {
+        // 单实例锁必须在 App 装配之前获取：ProxyBridgeApp.init 会同步跑 bootstrap
+        // （恢复中断的更新换位、读盘、SCDynamicStore 注册、curl 探测），锁若等到
+        // applicationDidFinishLaunching 才获取，双开时第二个实例已完整执行过这些
+        // 副作用才退出，与首个实例产生竞态。
+        guard SingleInstanceGuard.acquire() else {
+            DistributedNotificationCenter.default().postNotificationName(
+                NSNotification.Name(SingleInstanceGuard.activateNotificationName),
+                object: nil, deliverImmediately: true
+            )
+            exit(0)
+        }
         ProxyBridgeApp.main()
     }
 }
@@ -50,15 +61,8 @@ final class ProxyBridgeAppDelegate: NSObject, NSApplicationDelegate {
     private var relaunchOnExit = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 单实例：已有实例 → 通知其激活（打开设置窗）并退出自身。
-        // 锁由 flock 持有，崩溃时内核自动释放，无需清理。
-        guard SingleInstanceGuard.acquire() else {
-            DistributedNotificationCenter.default().postNotificationName(
-                NSNotification.Name(SingleInstanceGuard.activateNotificationName),
-                object: nil, deliverImmediately: true
-            )
-            exit(0)
-        }
+        // 锁已在 ProxyBridgeEntry.main() 获取；这里只登记「第二个实例请求激活」，
+        // 打开设置窗把用户带回前台。
         DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name(SingleInstanceGuard.activateNotificationName),
             object: nil, queue: .main

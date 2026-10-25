@@ -635,7 +635,7 @@ final class AppViewModelFeatureTests: XCTestCase {
         XCTAssertFalse(LocalOrphanSweeper.isOrphan(pid: ProcessInfo.processInfo.processIdentifier, uid: getuid()))
     }
 
-    func testSHA256ParsingAndVerify() throws {
+    func testSHA256ParsingAndVerify() async throws {
         let temp = TempDirectory.make()
         defer { temp.removeAll() }
         let installer = DMGUpdateInstaller()
@@ -648,8 +648,10 @@ final class AppViewModelFeatureTests: XCTestCase {
         let file = temp.url.appendingPathComponent("payload.bin")
         try Data("proxybridge".utf8).write(to: file)
         let expected = SHA256.hash(data: Data("proxybridge".utf8)).map { String(format: "%02x", $0) }.joined()
-        XCTAssertTrue(installer.verify(file: file, expectedHex: expected))
-        XCTAssertFalse(installer.verify(file: file, expectedHex: String(repeating: "0", count: 64)))
+        let matches = await installer.verify(file: file, expectedHex: expected)
+        XCTAssertTrue(matches)
+        let mismatched = await installer.verify(file: file, expectedHex: String(repeating: "0", count: 64))
+        XCTAssertFalse(mismatched)
     }
 
     /// 应用内更新状态机：下载失败/拿不到校验值 → 绝不安装；成功链 → relaunch。
@@ -669,9 +671,9 @@ final class AppViewModelFeatureTests: XCTestCase {
                 return localFile
             }
             func fetchExpectedSHA256(url: URL) async -> String? { failSHA ? nil : expected }
-            func verify(file: URL, expectedHex: String) -> Bool { !failVerify }
+            func verify(file: URL, expectedHex: String) async -> Bool { !failVerify }
             func validateMountedApp(_ appURL: URL, expectedVersion: String) -> Bool { true }
-            func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool { installed.append(dmg); return true }
+            func installAndRelaunch(dmg: URL, expectedVersion: String) async -> Bool { installed.append(dmg); return true }
         }
         let temp = TempDirectory.make()
         defer { temp.removeAll() }

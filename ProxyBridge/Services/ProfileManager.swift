@@ -175,7 +175,10 @@ final class ProfileManager {
     }
 
     /// 新增或更新。若目标 profile 存在活跃连接，则按规范提示需要重连。
-    func upsert(_ profile: ServerProfile) {
+    /// - Parameter deferPersist: 置 true 时暂缓落盘（批量导入用）：UI/状态通知（onProfileAdded、
+    ///   重连偏好等）仍逐条触发，仅跳过本次 persist，由调用方在循环结束后统一落盘一次，
+    ///   避免导入 N 条就全量原子写 N 次 profiles.json。调用方必须保证最终恰好补一次 persist。
+    func upsert(_ profile: ServerProfile, deferPersist: Bool = false) {
         if let idx = profiles.firstIndex(where: { $0.id == profile.id }) {
             let old = profiles[idx]
             profiles[idx] = profile
@@ -205,6 +208,7 @@ final class ProfileManager {
             logStore.append(raw: "新增服务器「\(profile.name)」", level: .success, profileId: profile.id)
         }
         updateReconnectPreference(profile.id, profile.reconnectEnabled, profile.rememberPassword)
+        if deferPersist { return }
         persist()
     }
 
@@ -247,10 +251,13 @@ final class ProfileManager {
             guard !profiles.contains(where: {
                 $0.host == profile.host && $0.sshPort == profile.sshPort && $0.username == profile.username
             }) else { continue }
-            upsert(profile)
+            upsert(profile, deferPersist: true)
             imported += 1
         }
         if imported > 0 {
+            // 批量导入只在循环结束后落盘一次：每条 upsert 的通知/日志已逐条发出，
+            // 这里合并的仅是磁盘写入（N 次全量原子写 → 1 次），语义与逐条导入一致
+            persist()
             logStore.append(raw: "从 ~/.ssh/config 导入 \(imported) 台服务器（仅 HostName/Port/User/IdentityFile，不含其他指令）", level: .success)
         }
         return imported

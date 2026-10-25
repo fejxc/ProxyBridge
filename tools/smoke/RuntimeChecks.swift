@@ -315,9 +315,14 @@ extension SmokeMain {
 
         var policy = ConnectionNotificationPolicy()
         let now = Date()
-        check("D12", "通知按服务器去重并冷却", policy.shouldSend(profileID: profile.id, now: now)
-              && !policy.shouldSend(profileID: profile.id, now: now.addingTimeInterval(10))
-              && policy.shouldSend(profileID: profile.id, now: now.addingTimeInterval(301)))
+        // shouldSend 只判断不记账；markSent 由发送成功方调用（失败不消耗冷却）
+        let firstAllowed = policy.shouldSend(profileID: profile.id, now: now)
+        policy.markSent(profileID: profile.id, now: now)
+        let secondBlocked = !policy.shouldSend(profileID: profile.id, now: now.addingTimeInterval(10))
+        policy.markSent(profileID: profile.id, now: now.addingTimeInterval(301))
+        let thirdAllowed = policy.shouldSend(profileID: profile.id, now: now.addingTimeInterval(602))
+        check("D12", "通知按服务器去重并冷却，冷却在发送成功后记账",
+              firstAllowed && secondBlocked && thirdAllowed)
         check("D13", "通知不携带连接地址或身份", ConnectionNotificationPolicy.message(for: .authRequired)?.contains("test.invalid") == false
               && ConnectionNotificationPolicy.message(for: .connected) == nil)
 

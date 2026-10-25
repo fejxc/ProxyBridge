@@ -6,6 +6,8 @@ import Foundation
 // HTTP 入口，导致重连绑定失败。此前只能靠用户手动登录服务器 kill。
 // 原则：只读诊断随时可做；清理仅限两类「自家资源」——同用户、无客户端连接的 sshd 僵尸
 // 与带 ProxyBridge 配置目录（privoxy-<token>）的孤儿 Privoxy；别人的进程只报告，绝不触碰。
+// kill 前按 /proc/<pid>/comm 复核进程名仍匹配预期前缀，防 PID 复用误杀——inspect 与
+// clean 之间有时间窗，旧进程可能已退出、同用户新进程可能复用同一 PID。
 
 /// 一个远端端口的持有者。
 struct RemotePortHolding: Equatable, Identifiable, Sendable {
@@ -47,6 +49,16 @@ struct RemotePortHolding: Equatable, Identifiable, Sendable {
             case .residual, .busy, .thirdParty: return false
             }
         }
+
+        /// kill 前复核的预期进程名前缀（/proc/<pid>/comm 应以它开头）。仅 isCleanable
+        /// 的 kind 有值——随清理目标下发，供脚本防 PID 复用误杀。
+        var cleanableCommPrefix: String? {
+            switch self {
+            case .staleSSHD: return "sshd"
+            case .ownedPrivoxy: return "privoxy"
+            case .residual, .busy, .thirdParty: return nil
+            }
+        }
     }
 
     /// 分类（纯函数）：内核残留优先，其次活连接——宁可不清，不可误杀。
@@ -66,6 +78,17 @@ struct RemoteCleanOutcome: Equatable, Sendable {
     /// 仍被占用的端口。
     var stillHeldPorts: [Int]
     var allFreed: Bool { stillHeldPorts.isEmpty }
+}
+
+/// 单个清理目标：PID + 预期进程名前缀。inspect 与 clean 之间有时间窗，旧进程可能
+/// 已退出、同用户新进程可能复用同一 PID——脚本 kill 前按 /proc/<pid>/comm 复核，
+/// 名字不再匹配（或进程已死）就跳过该目标，宁不清不误杀。
+struct RemoteCleanTarget: Equatable, Sendable {
+    /// 待 kill 的进程号。
+    var pid: Int
+    /// /proc/<pid>/comm 应以它开头（由持有者 kind 推导：staleSSHD → "sshd"、
+    /// ownedPrivoxy → "privoxy"；用前缀而非全等，兼容 "sshd-session" 等变体）。
+    var expectedCommPrefix: String
 }
 
 /// 远端残留清理抽象（测试注入）。
@@ -93,6 +116,9 @@ final class SSHRemoteJanitor: RemoteJanitorProviding {
                                script: RemoteJanitorScript.inspectScript(ports: validPorts),
                                timeout: 25)
         guard let output else { return nil }
+        // 非零退出（认证失败 exit 255 / 网络问题）的 stdout 必然为空：若照常解析
+        // 会得到空 holdings，被上层误读为「占用已自愈」而撤卡。nil = 诊断不可用。
+        guard output.exitCode == 0 else { return nil }
         return RemoteJanitorScript.parseInspect(output.stdout)
     }
 
@@ -101,10 +127,17 @@ final class SSHRemoteJanitor: RemoteJanitorProviding {
         let safe = targets.filter { $0.kind.isCleanable && $0.pid > 1 }
         guard !safe.isEmpty else { return RemoteCleanOutcome(freedPorts: [], stillHeldPorts: []) }
         let ports = Array(Set(safe.map(\.port))).filter { (1...65_535).contains($0) }
+        // 每个目标由 kind 推导预期进程名前缀，供脚本 kill 前按 /proc/<pid>/comm 复核：
+        // comm 不匹配（PID 已被复用）或读不到（进程已死/非 Linux）则跳过——宁不清，不误杀。
+        let killTargets = safe.compactMap { (holding: RemotePortHolding) -> RemoteCleanTarget? in
+            holding.kind.cleanableCommPrefix.map { RemoteCleanTarget(pid: holding.pid, expectedCommPrefix: $0) }
+        }
         let output = await run(profile: profile, password: password,
-                               script: RemoteJanitorScript.cleanScript(pids: safe.map(\.pid), ports: ports),
+                               script: RemoteJanitorScript.cleanScript(targets: killTargets, ports: ports),
                                timeout: 25)
         guard let output else { return nil }
+        // 清理脚本失败同样不能当「已释放」：空 stdout 会解析成 allFreed 而误重连
+        guard output.exitCode == 0 else { return nil }
         return RemoteJanitorScript.parseClean(output.stdout)
     }
 
@@ -193,14 +226,22 @@ enum RemoteJanitorScript {
         """
     }
 
-    /// 清理：kill 指定 PID（仅 TERM，通常足够释放端口），sleep 后复查端口并输出
+    /// 清理：对每个目标先读 /proc/<pid>/comm 复核——内容以预期进程名前缀开头才 kill
+    /// （仅 TERM，通常足够释放端口）；读不到（进程已死/非 Linux）或不匹配（PID 已被
+    /// 同用户新进程复用）则跳过，宁不清不误杀。sleep 后复查端口并输出
     /// `PBJANITOR|FREED|<port>` / `PBJANITOR|STILL|<port>`。
-    static func cleanScript(pids: [Int], ports: [Int]) -> String {
-        let pidList = pids.map(String.init).joined(separator: " ")
+    static func cleanScript(targets: [RemoteCleanTarget], ports: [Int]) -> String {
+        let targetList = targets.map { "\($0.pid):\($0.expectedCommPrefix)" }.joined(separator: " ")
         let portList = ports.map(String.init).joined(separator: " ")
         return """
-        for pid in \(pidList); do
-          kill "$pid" 2>/dev/null || true
+        for target in \(targetList); do
+          pid=${target%%:*}
+          expected=${target#*:}
+          comm=$(cat "/proc/$pid/comm" 2>/dev/null)
+          case "$comm" in
+            "$expected"*) kill "$pid" 2>/dev/null || true ;;
+            *) ;; # comm 读不到（进程已死）或已不匹配（PID 被复用）→ 保守跳过
+          esac
         done
         sleep 1
         for port in \(portList); do

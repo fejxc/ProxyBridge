@@ -100,7 +100,14 @@ final class TCPRelay: TCPRelaying, @unchecked Sendable {
             timer.schedule(deadline: .now() + 1, repeating: 1, leeway: .milliseconds(50))
             timer.setEventHandler { [weak self] in self?.publishTick() }
             self.timer = timer; timer.resume(); onStatistics?(value)
-        case .failed(let error), .waiting(let error): fail("本地 Relay 监听失败：\(error.localizedDescription)")
+        case .failed(let error):
+            fail("本地 Relay 监听失败：\(error.localizedDescription)")
+        case .waiting(let error):
+            // .waiting 非终态（等待网络条件改善后可自行恢复，不应拆除整个 Relay）；
+            // 但端口被占用这类确定性失败必须立即报错，否则拖到 5 秒启动超时
+            if case .posix(.EADDRINUSE) = error {
+                fail("本地 Relay 监听失败：\(error.localizedDescription)")
+            }
         default: break
         }
     }
@@ -194,7 +201,11 @@ final class TCPRelay: TCPRelaying, @unchecked Sendable {
                         // A terminal state may precede delivery of buffered input.
                         // Established pumps drain receive completions before closing.
                         if !self.began { self.close() }
-                    case .waiting: self.close()
+                    case .waiting(let error):
+                        // macOS 对「连接被拒」经 .waiting(ECONNREFUSED) 上报且不会自行
+                        // 转为 failed：上游代理不可用必须立即关闭，不能等 10 秒期限。
+                        // 其余 .waiting（接口/路径等待）非终态，交给期限兜底。
+                        if case .posix(.ECONNREFUSED) = error { self.close() }
                     default: break
                     }
                 }

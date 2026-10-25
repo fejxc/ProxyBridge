@@ -118,24 +118,34 @@ final class FoundationSSHProcessHandle: SSHProcessHandle, @unchecked Sendable {
     }
 
     func start() throws {
+        // 可读回调与退出排空共用同一把锁：终止时的 readDataToEndOfFile 与在途
+        // availableData 并发读同一 FileHandle 既不线程安全，也会让最后一段
+        // stderr（恰是分类关键特征）在 onExit 派发后才到达而丢失。
         stderrPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            guard let self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
                 return
             }
-            self?.append(data, to: \.stderrData)
+            self.appendLocked(data, to: \.stderrData)
         }
         stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            guard let self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
             let data = handle.availableData
             if data.isEmpty {
                 handle.readabilityHandler = nil
                 return
             }
-            self?.append(data, to: \.stdoutData)
+            self.appendLocked(data, to: \.stdoutData)
         }
         process.terminationHandler = { [weak self] process in
             guard let self else { return }
+            self.lock.lock()
             // 先停掉异步读取，再【同步排空】管道中尚在缓冲的末段数据。
             // 若直接触发 onExit，进程退出前最后写入的 stderr（恰是分类关键特征）
             // 会被永久丢弃，导致分类间歇性退化为 genericFailure。
@@ -143,8 +153,9 @@ final class FoundationSSHProcessHandle: SSHProcessHandle, @unchecked Sendable {
             self.stdoutPipe.fileHandleForReading.readabilityHandler = nil
             let restErr = self.stderrPipe.fileHandleForReading.readDataToEndOfFile()
             let restOut = self.stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            if !restErr.isEmpty { self.append(restErr, to: \.stderrData) }
-            if !restOut.isEmpty { self.append(restOut, to: \.stdoutData) }
+            self.appendLocked(restErr, to: \.stderrData)
+            self.appendLocked(restOut, to: \.stdoutData)
+            self.lock.unlock()
             let code = process.terminationStatus
             if self.markExited() {
                 self.onExit?(code)
@@ -155,11 +166,16 @@ final class FoundationSSHProcessHandle: SSHProcessHandle, @unchecked Sendable {
 
     private func append(_ data: Data, to keyPath: ReferenceWritableKeyPath<FoundationSSHProcessHandle, Data>) {
         lock.lock()
+        defer { lock.unlock() }
+        appendLocked(data, to: keyPath)
+    }
+
+    /// 调用方已持有 lock。
+    private func appendLocked(_ data: Data, to keyPath: ReferenceWritableKeyPath<FoundationSSHProcessHandle, Data>) {
         var buffer = self[keyPath: keyPath]
         buffer.append(data)
         let limit = keyPath == \.stderrData ? stderrLimit : stdoutLimit
         self[keyPath: keyPath] = Data(buffer.suffix(limit))
-        lock.unlock()
     }
 
     private func markExited() -> Bool {

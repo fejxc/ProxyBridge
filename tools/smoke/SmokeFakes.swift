@@ -105,6 +105,7 @@ final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
 
 /// HTTP 入口替身：记录启动模式与端口（不监听真实端口）。
 final class SmokeHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
+    var onFailure: (@Sendable (String) -> Void)?
     private let lock = NSLock()
     private(set) var starts = 0
     private(set) var stopped = false
@@ -120,6 +121,7 @@ final class SmokeHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
 
 /// 始终失败的 HTTP 入口替身。
 final class SmokeFailingHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
+    var onFailure: (@Sendable (String) -> Void)?
     func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16 {
         throw NSError(domain: "Smoke.HTTPEntry", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "端口被占用（冒烟注入）"])

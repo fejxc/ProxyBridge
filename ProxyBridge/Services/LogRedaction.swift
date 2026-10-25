@@ -111,9 +111,15 @@ enum LogRedaction {
         }
         if options.contains(.tokens) {
             // Bearer/Basic token 与长十六进制/ssh-ed25519 形态
-            s = replace(pattern: #"(?i)(bearer|token)\s+[A-Za-z0-9._~+/=-]{8,}"#, in: s, with: "$1 [凭据]")
-            s = replace(pattern: #"ssh-(rsa|ed25519|dss|ecDSA) [A-Za-z0-9+/=]{20,}"#, in: s, with: "[公钥内容]")
+            s = replace(pattern: #"(?i)(bearer|basic|token)\s+[A-Za-z0-9._~+/=-]{8,}"#, in: s, with: "$1 [凭据]")
+            // key=value / key: value / 查询串形态（token=…、api_key=…、access_token: …、password=…）
+            s = replace(pattern: #"(?i)\b(access[_-]?token|api[_-]?key|apikey|client[_-]?secret|token|password)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"#, in: s, with: "$1=[凭据]")
+            // 常见 API key 前缀形态（sk-…、ghp_/gho_/ghu_/ghs_/ghr_…）
+            s = replace(pattern: #"(?i)\b(sk|gh[pousr])-[A-Za-z0-9_-]{16,}"#, in: s, with: "[凭据]")
+            // 32 位以上长十六进制（裸 API key / 会话 ID 形态的凭据；摘要被遮挡无损可读性）
+            s = replace(pattern: #"\b[0-9a-fA-F]{32,}\b"#, in: s, with: "[十六进制串]")
         }
+        s = replace(pattern: #"ssh-(rsa|ed25519|dss|ecDSA) [A-Za-z0-9+/=]{20,}"#, in: s, with: "[公钥内容]")
         return s
     }
 

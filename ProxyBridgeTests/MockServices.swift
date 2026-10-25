@@ -226,10 +226,12 @@ final class InMemoryPasswordStore: PasswordStoring, @unchecked Sendable {
 
     init() {}
 
-    func save(_ password: String, for profileID: UUID) {
+    @discardableResult
+    func save(_ password: String, for profileID: UUID) -> Bool {
         lock.lock()
         storage[profileID] = password
         lock.unlock()
+        return true
     }
 
     func load(for profileID: UUID) -> String? {

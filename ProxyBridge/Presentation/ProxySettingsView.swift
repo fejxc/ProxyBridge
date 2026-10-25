@@ -174,9 +174,15 @@ struct ProxySettingsView: View {
         )
     }
 
+    /// 时间格式化器创建开销高，进程内缓存复用（同 LogsView 的做法）。
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
     private var scannedAtText: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm:ss"
+        let formatter = Self.timeFormatter
         guard let date = model.detection.lastScanAt else { return "尚未完成检测" }
         return "最近检测 \(formatter.string(from: date)) · 各协议验证结果见下方"
     }

@@ -13,7 +13,7 @@ struct RemotePortConflictCard: View {
                     Image(systemName: "sparkles.and.bubbles")
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.orange)
-                    Text(L10n.t("「") + (model.portConflictProfileName ?? "服务器") + L10n.t("」远端端口被占用"))
+                    Text(L10n.t("「") + (model.portConflictProfileName ?? L10n.t("服务器")) + L10n.t("」远端端口被占用"))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }

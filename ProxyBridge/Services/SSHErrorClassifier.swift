@@ -35,7 +35,7 @@ enum SSHErrorClassifier {
             }
             return .authRequired(detail: "SSH 认证被拒绝：检查密钥/ssh-agent 与远端 authorized_keys")
         }
-        if lower.contains("remote port forwarding failed") || lower.contains("warning: remote port forwarding") {
+        if lower.contains("remote port forwarding failed") {
             return .error(detail: "远程监听端口建立失败：端口可能被占用或 sshd 限制转发（AllowTcpForwarding/PermitListen），请修改远端端口或联系服务器管理员")
         }
         if lower.contains("administratively prohibited") {

@@ -276,11 +276,13 @@ struct ConnectionNotificationPolicy {
     var degradedDelay: TimeInterval = 60
     var cooldown: TimeInterval = 300
     private var lastSent: [UUID: Date] = [:]
+    /// 仅判断是否允许发送；记账由调用方在发送成功后经 markSent 完成
+    /// （发送失败不应消耗冷却窗口）。
     mutating func shouldSend(profileID: UUID, now: Date) -> Bool {
         if let previous = lastSent[profileID], now.timeIntervalSince(previous) < cooldown { return false }
-        lastSent[profileID] = now
         return true
     }
+    mutating func markSent(profileID: UUID, now: Date) { lastSent[profileID] = now }
     mutating func reset(profileID: UUID) { lastSent[profileID] = nil }
     static func message(for phase: TunnelPhase) -> String? {
         switch phase {

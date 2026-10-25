@@ -74,9 +74,24 @@ final class RemoteJanitorTests: XCTestCase {
         XCTAssertFalse(inspect.contains("$4==\"0A\""), "只查 LISTEN 会漏掉旧转发连接")
         XCTAssertTrue(inspect.contains("TIME_WAIT×"), "内核残留应单独报告")
         XCTAssertFalse(inspect.contains("; rm"), "诊断脚本只读，不包含破坏性命令")
-        let clean = RemoteJanitorScript.cleanScript(pids: [111, 222], ports: [17890])
+        let clean = RemoteJanitorScript.cleanScript(
+            targets: [
+                RemoteCleanTarget(pid: 111, expectedCommPrefix: "sshd"),
+                RemoteCleanTarget(pid: 222, expectedCommPrefix: "privoxy"),
+            ],
+            ports: [17890])
         XCTAssertTrue(clean.contains("kill \"$pid\""))
+        XCTAssertTrue(clean.contains("/proc/$pid/comm"), "kill 前须按 /proc/<pid>/comm 复核，防 PID 复用误杀")
+        XCTAssertTrue(clean.contains("111:sshd") && clean.contains("222:privoxy"), "预期进程名前缀须随目标下发")
         XCTAssertTrue(clean.contains("PBJANITOR|FREED") || clean.contains("FREED"))
+    }
+
+    func testCleanableCommPrefixOnlyForCleanableKinds() {
+        XCTAssertEqual(RemotePortHolding.Kind.staleSSHD.cleanableCommPrefix, "sshd")
+        XCTAssertEqual(RemotePortHolding.Kind.ownedPrivoxy.cleanableCommPrefix, "privoxy")
+        XCTAssertNil(RemotePortHolding.Kind.busy.cleanableCommPrefix, "不可清的 kind 无前缀 → 脚本不会 kill")
+        XCTAssertNil(RemotePortHolding.Kind.residual.cleanableCommPrefix)
+        XCTAssertNil(RemotePortHolding.Kind.thirdParty.cleanableCommPrefix)
     }
 
     func testParseCleanOutcome() {

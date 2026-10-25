@@ -215,6 +215,7 @@ final class StubRemoteProber: RemoteProbeExecuting, @unchecked Sendable {
 
 /// 始终启动失败的 HTTP 入口工厂（验证入口故障不拖累主路径）。
 final class FailingHTTPEntry: HTTPEntryRelaying, @unchecked Sendable {
+    var onFailure: (@Sendable (String) -> Void)?
     func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16 {
         throw NSError(domain: "ProxyBridgeTest.HTTPEntry", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "端口被占用（测试注入）"])

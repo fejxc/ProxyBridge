@@ -175,12 +175,14 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         // working after upgrade. Users can still explicitly disable the adapter.
         httpAdapterEnabled = try c.decodeIfPresent(Bool.self, forKey: .httpAdapterEnabled) ?? true
         relayPort = try c.decodeIfPresent(Int.self, forKey: .relayPort)
-        proxySelectionMode = try c.decode(ProxySelectionMode.self, forKey: .proxySelectionMode)
+        // 以下四个键与上面的 v2 新增键同样按缺省值兼容：任何一枚必需键缺失都会
+        // 让整份 profiles.json 解码失败、被隔离成空配置（用户所有服务器“消失”）
+        proxySelectionMode = try c.decodeIfPresent(ProxySelectionMode.self, forKey: .proxySelectionMode) ?? .automatic
         manualEndpoint = try c.decodeIfPresent(LocalProxyEndpoint.self, forKey: .manualEndpoint)
-        preferredProtocol = try c.decode(ProxyProtocol.self, forKey: .preferredProtocol)
+        preferredProtocol = try c.decodeIfPresent(ProxyProtocol.self, forKey: .preferredProtocol) ?? .http
         probeTargetURL = Self.sanitizedProbeTarget(try c.decodeIfPresent(String.self, forKey: .probeTargetURL))
-        reconnectEnabled = try c.decode(Bool.self, forKey: .reconnectEnabled)
-        connectAtLaunch = try c.decode(Bool.self, forKey: .connectAtLaunch)
+        reconnectEnabled = try c.decodeIfPresent(Bool.self, forKey: .reconnectEnabled) ?? true
+        connectAtLaunch = try c.decodeIfPresent(Bool.self, forKey: .connectAtLaunch) ?? false
         rememberPassword = try c.decodeIfPresent(Bool.self, forKey: .rememberPassword) ?? false
     }
 }

@@ -66,19 +66,22 @@ struct TrafficStatsView: View {
                 direction(title: L10n.t("上传"), symbol: "arrow.up", rate: value.uploadRate, bytes: value.uploadBytes, color: uploadColor)
                 direction(title: L10n.t("下载"), symbol: "arrow.down", rate: value.downloadRate, bytes: value.downloadBytes, color: downloadColor)
             }
-            DisclosureGroup("流量详情", isExpanded: $expanded) {
+            DisclosureGroup(L10n.t("流量详情"), isExpanded: $expanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     if value.samples.isEmpty {
                         Text(L10n.t("建立连接后显示最近 60 秒速率")).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, minHeight: 90)
                     } else {
                         Canvas { context, size in
+                            // session 是 @Observable 类，此闭包在绘制期才重新读取快照，
+                            // 与外层 isEmpty 判断之间存在窗口；不能假设 samples 仍非空。
                             let points = value.samples
+                            guard let newest = points.last else { return }
                             let maximum = max(1, points.flatMap { [$0.upload, $0.download] }.max() ?? 1)
                             for (upload, color) in [(true, uploadColor), (false, downloadColor)] {
                                 var path = Path()
                                 for (index, sample) in points.enumerated() {
-                                    let age = points.last!.time.timeIntervalSince(sample.time)
+                                    let age = newest.time.timeIntervalSince(sample.time)
                                     let x = size.width * CGFloat(max(0, min(1, 1 - age / 60)))
                                     let rate = upload ? sample.upload : sample.download
                                     let point = CGPoint(x: x, y: 1 + (size.height - 2) * (1 - CGFloat(rate / maximum)))
@@ -118,7 +121,7 @@ struct TrafficStatsView: View {
 
     private func direction(title: String, symbol: String, rate: Double, bytes: UInt64, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Label(title + "速率", systemImage: symbol).foregroundStyle(color).font(.caption)
+            Label(title + L10n.t("速率"), systemImage: symbol).foregroundStyle(color).font(.caption)
             Text(live ? TrafficFormatting.rate(rate) : "—")
                 .font(.system(size: 17, weight: .semibold)).monospacedDigit()
             Text(L10n.t("累计") + title + L10n.t("：") + (value.sessionID == nil ? "—" : TrafficFormatting.total(bytes)))

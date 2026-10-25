@@ -47,6 +47,10 @@ final class LogStoreTests: XCTestCase {
         let settings = store.load()
         XCTAssertEqual(settings.remoteCheckIntervalSeconds, 60, "损坏 → 回退默认")
         XCTAssertTrue(store.lastLoadWasCorrupted, "损坏必须可被调用方感知（写日志）")
+        // 损坏文件必须保底留存（改名隔离），否则下一次 save 会覆盖掉人工排查现场
+        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: temp.url.path)) ?? []
+        XCTAssertTrue(leftovers.contains { $0.hasPrefix("settings.corrupt-") },
+                      "损坏文件应被改名隔离，实际目录内容：\(leftovers)")
 
         var custom = AppSettings.defaults()
         custom.redactLogsOnCopy = false

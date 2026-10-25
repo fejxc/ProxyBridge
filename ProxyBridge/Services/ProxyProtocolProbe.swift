@@ -105,23 +105,35 @@ final class CurlProxyProbe: ProxyProbeExecuting {
     }
 
     /// Task 取消 → 终止在途 curl 的桥接（线程安全持有 Process 引用）。
+    /// cancel() 先记账再终止：run() 与 set() 之间的取消窗口由 set 补杀，
+    /// 否则 curl 会占满整个 --max-time 窗口。
     final class ProcessBox: @unchecked Sendable {
         private let lock = NSLock()
         private var process: Process?
+        private var cancelled = false
 
         func set(_ process: Process) {
             lock.lock()
             self.process = process
+            let cancelled = self.cancelled
             lock.unlock()
+            if cancelled, process.isRunning {
+                process.terminate()
+            }
         }
 
-        func terminateIfRunning() {
+        func cancel() {
             lock.lock()
+            cancelled = true
             let process = self.process
             lock.unlock()
             if let process, process.isRunning {
                 process.terminate()
             }
+        }
+
+        func terminateIfRunning() {
+            cancel()
         }
     }
 

@@ -80,13 +80,13 @@ final class ProfileRepository: @unchecked Sendable {
         }
     }
 
-    /// 将无法解码的文件改名保底（附时间戳），返回新路径。失败时抛底层错误。
+    /// 将无法解码的文件改名保底（附时间戳 + 随机后缀防同秒碰撞），返回新路径。失败时抛底层错误。
     @discardableResult
     func quarantineCorruptFile() throws -> URL {
         try queue.sync {
             let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
             let side = fileURL.deletingLastPathComponent()
-                .appendingPathComponent("profiles.corrupt-\(stamp).json")
+                .appendingPathComponent("profiles.corrupt-\(stamp)-\(UUID().uuidString.prefix(8)).json")
             try fileManager.moveItem(at: fileURL, to: side)
             return side
         }

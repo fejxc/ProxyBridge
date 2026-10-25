@@ -78,14 +78,19 @@ enum LocalOrphanSweeper {
     }
 
     /// KERN_PROCARGS2 读取参数（同用户进程可读；失败返回 nil，跳过不杀）。
+    /// 只返回 argv[1:]：布局里 envp 紧跟 argv，不按 argc 截断会把环境变量
+    /// 一起带出来——一旦被写进日志或参与子串匹配就是环境变量泄露面。
     static func arguments(of pid: Int32) -> [String]? {
         var mib: [Int32] = [CTL_KERN, 49 /* KERN_PROCARGS2 */, pid]
         var buffer = [CChar](repeating: 0, count: 8192)
         var size = buffer.count
         guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0, size > Int32(MemoryLayout<Int32>.size) else { return nil }
         let raw = buffer[0..<Int(size)]
-        // 布局：argc(Int32) + execpath\0 + argv[0]\0 argv[1]\0 ...
-        // 以 NUL 切分取非空段，丢弃 execpath 与 argv[0]，其余即参数（空段是对齐填充）。
+        // 布局：argc(Int32) + execpath\0 + 填充 NUL + argv[0..argc)\0 + envp\0…
+        // 以 NUL 切分取非空段：segments[0]=argc 字节串、[1]=execpath、
+        // [2 ..< 2+argc)=argv、其后为环境变量（必须丢弃）。
+        let argc = raw.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
+        guard argc > 0 else { return nil }
         var segments: [String] = []
         var start = raw.startIndex
         for index in raw.indices where raw[index] == 0 {
@@ -95,7 +100,9 @@ enum LocalOrphanSweeper {
             }
             start = raw.index(after: index)
         }
-        guard segments.count >= 2 else { return nil }
-        return Array(segments.dropFirst(2))
+        let argvStart = 2
+        guard segments.count >= argvStart + Int(argc) else { return nil }
+        let argv = Array(segments[argvStart..<(argvStart + Int(argc))])
+        return Array(argv.dropFirst()) // 丢弃 argv[0]（程序自身路径）
     }
 }

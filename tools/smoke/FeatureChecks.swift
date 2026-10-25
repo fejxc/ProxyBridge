@@ -194,11 +194,11 @@ extension SmokeMain {
         defer { try? FileManager.default.removeItem(at: payloadFile) }
         let realDigest = SHA256.hash(data: Data("payload".utf8)).map { String(format: "%02x", $0) }.joined()
         let installer = DMGUpdateInstaller()
-        check("F21", "更新校验：官方 .sha256 解析 + 真实摘要匹配/拒绝",
-              DMGUpdateInstaller.parseSHA256Hex("\(hex)  ProxyBridge-x.dmg") == hex
-                && DMGUpdateInstaller.parseSHA256Hex("bad file") == nil
-                && installer.verify(file: payloadFile, expectedHex: realDigest)
-                && !installer.verify(file: payloadFile, expectedHex: hex))
+        let digestOK = DMGUpdateInstaller.parseSHA256Hex("\(hex)  ProxyBridge-x.dmg") == hex
+            && DMGUpdateInstaller.parseSHA256Hex("bad file") == nil
+        let verified = await installer.verify(file: payloadFile, expectedHex: realDigest)
+        let rejected = !(await installer.verify(file: payloadFile, expectedHex: hex))
+        check("F21", "更新校验：官方 .sha256 解析 + 真实摘要匹配/拒绝", digestOK && verified && rejected)
 
         // F22 业务探测目标清洗 + 传递到远端探测命令
         check("F22", "业务目标清洗：放行干净 http(s)，拒绝注入/非 http/超长",
@@ -305,16 +305,24 @@ extension SmokeMain {
             process.waitUntilExit()
             return process.terminationStatus == 0
         }
+        let cleanTargets = [
+            RemoteCleanTarget(pid: 111, expectedCommPrefix: "sshd"),
+            RemoteCleanTarget(pid: 222, expectedCommPrefix: "privoxy"),
+        ]
         check("F13", "远端诊断/清理脚本通过 POSIX shell 语法检查",
               shellParses(RemoteJanitorScript.inspectScript(ports: [17890, 7890]))
-                && shellParses(RemoteJanitorScript.cleanScript(pids: [111, 222], ports: [17890])))
+                && shellParses(RemoteJanitorScript.cleanScript(targets: cleanTargets, ports: [17890])))
         let inspectScript = RemoteJanitorScript.inspectScript(ports: [17890])
-        let cleanScript = RemoteJanitorScript.cleanScript(pids: [111], ports: [17890])
+        let cleanScript = RemoteJanitorScript.cleanScript(
+            targets: [RemoteCleanTarget(pid: 111, expectedCommPrefix: "sshd")], ports: [17890])
         check("F13c", "诊断与清理复查覆盖非 LISTEN socket 状态",
               inspectScript.contains("$10 \":\" $4")
                 && inspectScript.contains("TIME_WAIT×")
                 && !inspectScript.contains("$4==\"0A\"")
                 && !cleanScript.contains("$4==\"0A\""))
+        check("F13d", "清理脚本 kill 前按 /proc 复核 comm，防 PID 复用误杀",
+              cleanScript.contains("/proc/$pid/comm")
+                && cleanScript.contains("111:sshd"))
         check("F13b", "清理结果解析", RemoteJanitorScript.parseClean("PBJANITOR|FREED|17890\nPBJANITOR|STILL|7890")
                 == RemoteCleanOutcome(freedPorts: [17890], stillHeldPorts: [7890]))
 

@@ -197,6 +197,8 @@ enum RemoteProbeCommand {
     }
 
     /// 远端脚本：curl 缺失输出标记；否则经远端 127.0.0.1:<port> 实测一次 HTTPS 请求。
+    /// URL 以单引号包裹：sanitizedProbeTarget 保证其中不含单引号，因此查询串里的
+    /// `&` 不会被远端 shell 当作后台操作符截断，也无法拼接出第二条命令。
     static func script(remotePort: Int, protocol: ProxyProtocol, urlString: String) -> String {
         let proxyArg: String
         switch `protocol` {
@@ -207,6 +209,6 @@ enum RemoteProbeCommand {
         return "if ! command -v curl >/dev/null 2>&1; then echo \(noCurlMarker); exit 0; fi; "
             + "exec curl --noproxy \"\" \(proxyArg) "
             + "--connect-timeout 3 --max-time 8 --silent --show-error "
-            + "--output /dev/null --write-out '%{http_code}' \(urlString)"
+            + "--output /dev/null --write-out '%{http_code}' '\(urlString)'"
     }
 }

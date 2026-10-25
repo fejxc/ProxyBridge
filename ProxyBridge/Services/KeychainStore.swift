@@ -6,7 +6,10 @@ import OSLog
 /// 生产实现为 macOS Keychain（kSecClassGenericPassword，按 profile UUID 隔离）；
 /// 测试/冒烟注入内存实现。密码绝不明文进入 profiles.json 或日志。
 protocol PasswordStoring: AnyObject, Sendable {
-    func save(_ password: String, for profileID: UUID)
+    /// 返回是否写入成功（调用方可据此如实呈现；不抛错，避免把钥匙串状态
+    /// 泄露进异常路径）。
+    @discardableResult
+    func save(_ password: String, for profileID: UUID) -> Bool
     func load(for profileID: UUID) -> String?
     func delete(for profileID: UUID)
     func exists(for profileID: UUID) -> Bool
@@ -27,7 +30,8 @@ final class KeychainPasswordStore: PasswordStoring, @unchecked Sendable {
         ]
     }
 
-    func save(_ password: String, for profileID: UUID) {
+    @discardableResult
+    func save(_ password: String, for profileID: UUID) -> Bool {
         var add = baseQuery(for: profileID)
         add[kSecValueData as String] = Data(password.utf8)
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
@@ -35,10 +39,12 @@ final class KeychainPasswordStore: PasswordStoring, @unchecked Sendable {
         SecItemDelete(baseQuery(for: profileID) as CFDictionary)
         let status = SecItemAdd(add as CFDictionary, nil)
         if status != errSecSuccess {
-            // 绝不静默：写入失败必须留痕（不含密码内容）
+            // 绝不静默：写入失败必须留痕（不含密码内容）；返回值供调用方如实呈现，
+            // 避免界面上「已记住」与钥匙串实际状态不一致
             Logger(subsystem: "dev.sunyun.ProxyBridge", category: "keychain")
                 .error("钥匙串写入失败（status \(status)）：记住密码未生效")
         }
+        return status == errSecSuccess
     }
 
     func load(for profileID: UUID) -> String? {

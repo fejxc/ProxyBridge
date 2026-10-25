@@ -9,7 +9,8 @@ import CryptoKit
 // 下载通用 DMG → 对照官方 .sha256 校验 → hdiutil 挂载 → 替换 /Applications 内
 // 旧版本 → 自动重启。安全性不低于手动下载安装（同一资产、同一校验文件、同一 Gatekeeper 行为）。
 
-/// 更新安装抽象（测试注入）。
+/// 更新安装抽象（测试注入）。verify / installAndRelaunch 为 async：
+/// 整文件摘要与挂载/复制/切换都是秒级重活，绝不允许占住主线程。
 @MainActor
 protocol UpdateInstalling: AnyObject {
     /// 下载 DMG 到临时文件（流式落盘，不整读内存），返回本地路径（失败 nil）。
@@ -17,12 +18,12 @@ protocol UpdateInstalling: AnyObject {
     /// 拉取官方 .sha256 文本中的十六进制摘要（失败 nil）。
     func fetchExpectedSHA256(url: URL) async -> String?
     /// 本地文件流式摘要是否匹配。
-    func verify(file: URL, expectedHex: String) -> Bool
+    func verify(file: URL, expectedHex: String) async -> Bool
     /// 校验挂载卷内 App 的身份与完整性（bundle id + 版本 + codesign）。
     func validateMountedApp(_ appURL: URL, expectedVersion: String) -> Bool
     /// 挂载 → 校验 → 同卷原子替换 /Applications 中的应用，成功返回 true。
     /// App 不在 /Applications 时仅挂载并打开卷（用户手动拖入），同样返回 true。
-    func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool
+    func installAndRelaunch(dmg: URL, expectedVersion: String) async -> Bool
 }
 
 @MainActor
@@ -92,8 +93,15 @@ final class DMGUpdateInstaller: UpdateInstalling {
         return hex.lowercased()
     }
 
-    /// 文件流式摘要（分块读取，内存占用恒定，不整读大文件）。
-    func verify(file: URL, expectedHex: String) -> Bool {
+    /// 文件流式摘要是否匹配（重活在 detached 任务执行：整文件分块读取可达数秒，
+    /// 在 MainActor 上同步执行会冻结菜单栏与设置窗口）。
+    func verify(file: URL, expectedHex: String) async -> Bool {
+        await Task.detached(priority: .userInitiated) {
+            Self.verifyFileContents(file: file, expectedHex: expectedHex)
+        }.value
+    }
+
+    private nonisolated static func verifyFileContents(file: URL, expectedHex: String) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return false }
         defer { try? handle.close() }
         var hasher = SHA256()
@@ -111,7 +119,12 @@ final class DMGUpdateInstaller: UpdateInstalling {
     /// 挂载卷内 App 必须同时满足：bundle id 是本应用、版本等于声称版本、codesign 校验通过。
     /// 说明：ad-hoc 签名不含可独立验证的 Developer ID 身份（公证前的现实边界，见 KNOWN_LIMITATIONS），
     /// 但 codesign --verify 能证明 bundle 自发布以来未被篡改/损坏，版本与 id 核对能防张冠李戴。
+    /// 校验挂载卷内 App 的身份与完整性（bundle id + 版本 + codesign）。
     func validateMountedApp(_ appURL: URL, expectedVersion: String) -> Bool {
+        Self.validateAppBundle(appURL, expectedVersion: expectedVersion)
+    }
+
+    private nonisolated static func validateAppBundle(_ appURL: URL, expectedVersion: String) -> Bool {
         guard let info = Bundle(url: appURL),
               let identifier = info.bundleIdentifier,
               identifier == "dev.sunyun.ProxyBridge" else { return false }
@@ -129,16 +142,31 @@ final class DMGUpdateInstaller: UpdateInstalling {
 
     // MARK: - 安装（先完整复制并验证，再原子切换）
 
-    func installAndRelaunch(dmg: URL, expectedVersion: String) -> Bool {
+    /// 安装全流程在 detached 任务执行：hdiutil/codesign/整包复制都是秒级重活，
+    /// 同步跑在 MainActor 上会冻结 UI（异常 DMG 时甚至无限挂起）。
+    func installAndRelaunch(dmg: URL, expectedVersion: String) async -> Bool {
+        let stepLog = self.stepLog
+        return await Task.detached(priority: .userInitiated) { [stepLog] in
+            Self.performInstall(dmg: dmg, expectedVersion: expectedVersion) { message in
+                Task { @MainActor [stepLog] in stepLog?(message) }
+            }
+        }.value
+    }
+
+    private nonisolated static func performInstall(
+        dmg: URL,
+        expectedVersion: String,
+        onStep: @escaping @Sendable (String) -> Void
+    ) -> Bool {
         guard let volumePath = mount(dmg) else {
-            stepLog?("更新安装：hdiutil attach 失败（DMG 无法挂载）")
+            onStep("更新安装：hdiutil attach 失败（DMG 无法挂载）")
             return false
         }
-        stepLog?("更新安装：DMG 已挂载至 \(volumePath)")
+        onStep("更新安装：DMG 已挂载至 \(volumePath)")
         let mountedApp = URL(fileURLWithPath: volumePath).appendingPathComponent("ProxyBridge.app")
         guard FileManager.default.fileExists(atPath: mountedApp.path),
-              validateMountedApp(mountedApp, expectedVersion: expectedVersion) else {
-            stepLog?("更新安装：挂载卷内 App 校验未通过（id/版本/codesign）")
+              validateAppBundle(mountedApp, expectedVersion: expectedVersion) else {
+            onStep("更新安装：挂载卷内 App 校验未通过（id/版本/codesign）")
             detach(volumePath)
             return false
         }
@@ -147,7 +175,8 @@ final class DMGUpdateInstaller: UpdateInstalling {
         let installedURL = URL(fileURLWithPath: "/Applications/ProxyBridge.app")
         guard Bundle.main.bundleURL.path.hasPrefix("/Applications/") else {
             // 开发/便携位置运行：打开挂载卷让用户手动拖入，不自动替换
-            NSWorkspace.shared.open(URL(fileURLWithPath: volumePath))
+            onStep("更新安装：当前非 /Applications 运行，已打开挂载卷（请手动拖入）")
+            Task { @MainActor in NSWorkspace.shared.open(URL(fileURLWithPath: volumePath)) }
             return true
         }
 
@@ -156,12 +185,12 @@ final class DMGUpdateInstaller: UpdateInstalling {
         try? FileManager.default.removeItem(at: stagingURL)
         do { try FileManager.default.copyItem(at: mountedApp, to: stagingURL) }
         catch {
-            stepLog?("更新安装：复制到暂存目录失败：\(LogRedaction.sanitize(error.localizedDescription))")
+            onStep("更新安装：复制到暂存目录失败：\(LogRedaction.sanitize(error.localizedDescription))")
             return false
         }
         // 第二步：暂存副本再次验证（复制过程中的损坏在此拦截，绝不半写上线）
-        guard validateMountedApp(stagingURL, expectedVersion: expectedVersion) else {
-            stepLog?("更新安装：暂存副本校验未通过（复制损坏拦截）")
+        guard validateAppBundle(stagingURL, expectedVersion: expectedVersion) else {
+            onStep("更新安装：暂存副本校验未通过（复制损坏拦截）")
             try? FileManager.default.removeItem(at: stagingURL)
             return false
         }
@@ -172,7 +201,7 @@ final class DMGUpdateInstaller: UpdateInstalling {
         if hadOld {
             do { try FileManager.default.moveItem(at: installedURL, to: backupURL) }
             catch {
-                stepLog?("更新安装：旧版让位失败：\(LogRedaction.sanitize(error.localizedDescription))")
+                onStep("更新安装：旧版让位失败：\(LogRedaction.sanitize(error.localizedDescription))")
                 try? FileManager.default.removeItem(at: stagingURL)
                 return false
             }
@@ -180,7 +209,7 @@ final class DMGUpdateInstaller: UpdateInstalling {
         do { try FileManager.default.moveItem(at: stagingURL, to: installedURL) }
         catch {
             if hadOld { try? FileManager.default.moveItem(at: backupURL, to: installedURL) } // 回滚
-            stepLog?("更新安装：新版上位失败（已回滚）：\(LogRedaction.sanitize(error.localizedDescription))")
+            onStep("更新安装：新版上位失败（已回滚）：\(LogRedaction.sanitize(error.localizedDescription))")
             try? FileManager.default.removeItem(at: stagingURL)
             return false
         }
@@ -188,7 +217,30 @@ final class DMGUpdateInstaller: UpdateInstalling {
         return true
     }
 
-    private func mount(_ dmg: URL) -> String? {
+    /// 启动时恢复被中断的原子切换。进程若死在「旧版让位 → 新版上位」之间，
+    /// /Applications 内的应用会消失而备份藏在隐藏名下——无恢复逻辑时应用
+    /// 「凭空失踪」。幂等：应用健在时仅清理残留；应用缺失且备份存在时还原。
+    nonisolated static func recoverInterruptedSwap() -> (message: String, restored: Bool)? {
+        let fm = FileManager.default
+        let installed = URL(fileURLWithPath: "/Applications/ProxyBridge.app")
+        let backup = URL(fileURLWithPath: "/Applications/.ProxyBridge.app.old")
+        let staging = URL(fileURLWithPath: "/Applications/.ProxyBridge.app.new")
+        try? fm.removeItem(at: staging) // 暂存半成品是副本，任何时候都可安全清理
+        guard !fm.fileExists(atPath: installed.path) else {
+            // 应用健在：.old 是「新版已上位、旧备份未删」的中断残留
+            try? fm.removeItem(at: backup)
+            return nil
+        }
+        guard fm.fileExists(atPath: backup.path) else { return nil }
+        do {
+            try fm.moveItem(at: backup, to: installed)
+            return (message: "检测到上次更新在切换阶段被中断，已从备份恢复 /Applications/ProxyBridge.app（建议重启应用）", restored: true)
+        } catch {
+            return (message: "上次更新中断后恢复备份失败：\(LogRedaction.sanitize(error.localizedDescription))；备份保留在 /Applications/.ProxyBridge.app.old", restored: false)
+        }
+    }
+
+    private nonisolated static func mount(_ dmg: URL) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         process.arguments = ["attach", "-nobrowse", "-readonly", dmg.path]
@@ -196,7 +248,15 @@ final class DMGUpdateInstaller: UpdateInstalling {
         process.standardOutput = pipe
         process.standardError = Pipe()
         do { try process.run() } catch { return nil }
-        process.waitUntilExit()
+        // 有界等待：waitUntilExit 无超时，异常 DMG（如带 EULA 等 stdin 应答）会永久挂起
+        let deadline = Date().addingTimeInterval(60)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        if process.isRunning {
+            process.terminate()
+            return nil
+        }
         guard process.terminationStatus == 0 else { return nil }
         let output = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         // hdiutil 输出为三列制表符表（/dev/diskXsN ⟨tab⟩ Apple_HFS ⟨tab⟩ /Volumes/卷名），
@@ -208,7 +268,7 @@ final class DMGUpdateInstaller: UpdateInstalling {
         }.last
     }
 
-    private func detach(_ volumePath: String) {
+    private nonisolated static func detach(_ volumePath: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/hdiutil")
         process.arguments = ["detach", volumePath, "-force"]

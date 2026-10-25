@@ -16,6 +16,9 @@ import Network
 /// 业务字节（面板语义不变，文档如实说明）；SOCKS5 上游无认证（回环代理惯例，
 /// 与静态转发探测的假设一致）。
 protocol HTTPEntryRelaying: AnyObject, Sendable {
+    /// 监听器启动成功后死亡（端口被抢/系统回收）的上报通道：启动期失败经
+    /// start() 抛错感知，不走此回调（语义与 TCPRelaying.onFailure 一致）。
+    var onFailure: (@Sendable (String) -> Void)? { get set }
     func start(port: UInt16, mode: HTTPEntryMode) async throws -> UInt16
     /// 上游端点变化时切换模式/目标：只影响之后接受的连接（语义与主 Relay 一致）。
     func retarget(to mode: HTTPEntryMode)
@@ -38,12 +41,14 @@ struct HTTPEntryRelayFactory: Sendable {
 }
 
 final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
+    var onFailure: (@Sendable (String) -> Void)?
     private let queue = DispatchQueue(label: "ProxyBridge.http-entry-relay", qos: .utility)
     private var listener: NWListener?
     private var connections: [UUID: EntryConnection] = [:]
     private var startup: CheckedContinuation<UInt16, Error>?
     private var startupTimeout: DispatchWorkItem?
     private var stopped = false
+    private var started = false
     private var mode: HTTPEntryMode?
     private let connectionLimit = 256
 
@@ -51,7 +56,9 @@ final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 queue.async { [self] in
-                    guard !stopped else { continuation.resume(throwing: CancellationError()); return }
+                    // 二次启动防护（与 TCPRelay 一致）：重复 start 会创建第二个
+                    // NWListener 并覆盖 startup，前一个 continuation 永不恢复
+                    guard !stopped, !started else { continuation.resume(throwing: CancellationError()); return }
                     switch mode {
                     case .pipe(let endpoint), .socks5(let endpoint):
                         guard LocalProxyEndpointRule.isValid(host: endpoint.host, port: endpoint.port) else {
@@ -64,6 +71,7 @@ final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
                     case .direct:
                         break
                     }
+                    started = true
                     self.mode = mode
                     startup = continuation
                     do {
@@ -122,20 +130,32 @@ final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
             }
             startupTimeout?.cancel(); startupTimeout = nil
             startup?.resume(returning: port); startup = nil
-        case .failed(let error), .waiting(let error):
+        case .failed(let error):
             fail("HTTP 入口监听失败：\(error.localizedDescription)")
+        case .waiting(let error):
+            // .waiting 非终态（等待网络条件改善后可自行恢复）；但端口被占用
+            // 这类确定性失败必须立即报错，否则拖到 5 秒启动超时才失败
+            if case .posix(.EADDRINUSE) = error {
+                fail("HTTP 入口监听失败：\(error.localizedDescription)")
+            }
         default:
             break
         }
     }
 
     private func fail(_ detail: String) {
+        // 启动期失败经 continuation 抛错（调用方在 start() 处感知）；启动成功后
+        // 监听器死亡没有抛错通道，必须经 onFailure 立即上报，否则本地端口消失
+        // 最长要等一个健康检查周期才被发现（对齐 TCPRelay）。stop() 先摘除
+        // stateUpdateHandler 再 cancel 且全程未调用 fail()，主动停止不会误触。
+        let starting = startup != nil
         startup?.resume(throwing: NSError(
             domain: "ProxyBridge.HTTPEntry", code: 2,
             userInfo: [NSLocalizedDescriptionKey: detail]
         ))
         startup = nil
         stop()
+        if !starting { onFailure?(detail) }
     }
 
     private func accept(_ connection: NWConnection) {
@@ -177,6 +197,14 @@ private final class EntryConnection: @unchecked Sendable {
     private var incomingReady = false
     private var upstreamReady = false
     private var tunnelEstablished = false
+    /// 双向泵是否已启动（幂等）：completeTunnel 会被 send completion 与
+    /// establishTunnel 多次触发，重复启动会打破「每方向至多一个在途 receive」
+    /// 的背压设计（与 TCPRelay 同一约定）。
+    private var pumpingStarted = false
+    /// 半关闭语义（与 TCPRelay.Pair 一致）：单方向 EOF 只关该方向，
+    /// 两个方向各自观察到 EOF 才整体关闭，对向仍在传输的响应不被掐断。
+    private var incomingEnded = false
+    private var outgoingEnded = false
     private var outgoing: NWConnection?
     /// CONNECT 解析出的目标（socks5/direct 模式）。
     private var authority: (host: String, port: UInt16)?
@@ -207,8 +235,10 @@ private final class EntryConnection: @unchecked Sendable {
                 self.incomingReady = true
                 self.startReadingIfNeeded()
                 self.maybeStartTunnel()
-            case .failed, .cancelled, .waiting:
+            case .failed, .cancelled:
                 self.close()
+            case .waiting:
+                break // 非终态：等待路径恢复，10 秒建立期限兜底
             default:
                 break
             }
@@ -257,8 +287,12 @@ private final class EntryConnection: @unchecked Sendable {
                 case .direct:
                     self.completeTunnel()
                 }
-            case .failed, .cancelled, .waiting:
+            case .failed, .cancelled:
                 self.reject("502 Bad Gateway")
+            case .waiting(let error):
+                // 与主 Relay 同语义：ECONNREFUSED 经 .waiting 上报且不会自行转 failed，
+                // 必须立即拒绝；其余 .waiting（接口/路径等待）非终态，交给期限兜底
+                if case .posix(.ECONNREFUSED) = error { self.reject("502 Bad Gateway") }
             default:
                 break
             }
@@ -298,12 +332,12 @@ private final class EntryConnection: @unchecked Sendable {
             reject("400 Bad Request"); return
         }
         if parts[0].uppercased() == "CONNECT" {
-            // CONNECT（https_proxy 用法）：解析 authority，握手后回 200 并透传
-            let hostPort = parts[1].split(separator: ":").map(String.init)
-            guard hostPort.count == 2, let port = UInt16(hostPort[1]), !hostPort[0].isEmpty else {
+            // CONNECT（https_proxy 用法）：解析 authority（含 [IPv6]:port 形式），
+            // 握手后回 200 并透传
+            guard let parsed = Self.parseAuthority(parts[1]) else {
                 reject("400 Bad Request"); return
             }
-            authority = (hostPort[0], port)
+            authority = parsed
             isConnect = true
         } else {
             // 绝对格式明文请求（http_proxy 用法，如健康检查 GET）：翻译为源站请求——
@@ -311,8 +345,11 @@ private final class EntryConnection: @unchecked Sendable {
             guard let url = URL(string: parts[1]), let host = url.host, !host.isEmpty else {
                 reject("400 Bad Request"); return
             }
-            let port = UInt16(url.port ?? 80)
-            let originTarget = url.path.isEmpty ? "/" : url.path + (url.query.map { "?\($0)" } ?? "")
+            let defaultPort = url.scheme?.lowercased() == "https" ? 443 : 80
+            let port = UInt16(url.port ?? defaultPort)
+            // 空 path 带查询（GET http://host?x=1）的源站形式是 "/?x=1"，查询串不能丢
+            let path = url.path.isEmpty ? "/" : url.path
+            let originTarget = path + (url.query.map { "?\($0)" } ?? "")
             let headerTail = lines.dropFirst().joined(separator: "\r\n")
             plainRequestHead = "\(parts[0]) \(originTarget) \(parts[2])\r\n\(headerTail)\r\n\r\n"
             authority = (host, port)
@@ -326,6 +363,20 @@ private final class EntryConnection: @unchecked Sendable {
         case .pipe:
             reject("500 Internal Server Error") // pipe 模式不经过解析路径
         }
+    }
+
+    /// 解析 CONNECT 的 authority：`host:port` 或 `[IPv6]:port`（如 `[::1]:443`）。
+    private static func parseAuthority(_ target: String) -> (host: String, port: UInt16)? {
+        if target.hasPrefix("[") {
+            guard let close = target.firstIndex(of: "]") else { return nil }
+            let host = String(target[target.index(after: target.startIndex)..<close])
+            let rest = target[target.index(after: close)...]
+            guard rest.hasPrefix(":"), let port = UInt16(rest.dropFirst()), !host.isEmpty else { return nil }
+            return (host, port)
+        }
+        let hostPort = target.split(separator: ":").map(String.init)
+        guard hostPort.count == 2, let port = UInt16(hostPort[1]), !hostPort[0].isEmpty else { return nil }
+        return (hostPort[0], port)
     }
 
     // MARK: - SOCKS5 握手（无认证，回环上游）
@@ -404,9 +455,21 @@ private final class EntryConnection: @unchecked Sendable {
     private func completeTunnel() {
         guard !isClosing, !tunnelEstablished, let upstream = outgoing else { return }
         if isConnect {
-            incoming.send(content: Data("HTTP/1.1 200 Connection established\r\n\r\n".utf8), completion: .contentProcessed { [weak self] _ in
-                // 应答完成后可能两端已就绪，再补一次泵启动
-                self?.maybeStartTunnel()
+            // 先回 200，再把头部之后已读出的余量字节补发给上游——部分客户端
+            // 不等 200 应答就随 CONNECT 管线化发送（如 TLS ClientHello），这些
+            // 字节已从 socket 读出、缓存在 remainderAfterHead，不补发即永久丢失。
+            // 全部完成后再建立隧道启动泵，保证发往上游的字节序与客户端写入一致
+            incoming.send(content: Data("HTTP/1.1 200 Connection established\r\n\r\n".utf8), completion: .contentProcessed { [weak self] error in
+                guard let self, !self.isClosing else { return }
+                guard error == nil else { self.close(); return }
+                let remainder = self.remainderAfterHead
+                self.remainderAfterHead = Data()
+                guard !remainder.isEmpty else { self.establishTunnel(); return }
+                upstream.send(content: remainder, completion: .contentProcessed { [weak self] sendError in
+                    guard let self, !self.isClosing else { return }
+                    guard sendError == nil else { self.close(); return }
+                    self.establishTunnel()
+                })
             })
         } else {
             var request = Data((plainRequestHead ?? "").utf8)
@@ -418,12 +481,13 @@ private final class EntryConnection: @unchecked Sendable {
                 guard error == nil else { self.reject("502 Bad Gateway"); return }
                 self.maybeStartTunnel()
             })
+            establishTunnel()
         }
-        establishTunnel()
     }
 
     private func maybeStartTunnel() {
-        guard tunnelEstablished, incomingReady, upstreamReady, let upstream = outgoing else { return }
+        guard tunnelEstablished, incomingReady, upstreamReady, !pumpingStarted, let upstream = outgoing else { return }
+        pumpingStarted = true
         pump(from: incoming, to: upstream)
         pump(from: upstream, to: incoming)
     }
@@ -479,13 +543,21 @@ private final class EntryConnection: @unchecked Sendable {
     }
 
     private func pump(from source: NWConnection, to destination: NWConnection) {
+        let fromIncoming = source === incoming
         source.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, eof, error in
             guard let self, self.phase == .tunneling else { return }
             guard error == nil else { self.close(); return }
             destination.send(content: data, contentContext: eof ? .finalMessage : .defaultMessage, isComplete: true, completion: .contentProcessed { [weak self] sendError in
                 guard let self, self.phase == .tunneling else { return }
                 guard sendError == nil else { self.close(); return }
-                if eof { self.close() } else { self.pump(from: source, to: destination) }
+                if eof {
+                    // 单方向 EOF 只结束该方向（半关闭）：明文请求场景下客户端
+                    // shutdown(SHUT_WR) 后仍要等完整响应，整体关闭会截断在途数据
+                    if fromIncoming { self.incomingEnded = true } else { self.outgoingEnded = true }
+                    if self.incomingEnded && self.outgoingEnded { self.close() }
+                } else {
+                    self.pump(from: source, to: destination)
+                }
             })
         }
     }

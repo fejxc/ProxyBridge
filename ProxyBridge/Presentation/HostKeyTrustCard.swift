@@ -13,7 +13,7 @@ struct HostKeyTrustCard: View {
                     Image(systemName: "fingerprint")
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.orange)
-                    Text("「\(model.pendingHostKeyProfileName ?? "服务器")」是首次连接")
+                    Text(L10n.t("「") + (model.pendingHostKeyProfileName ?? L10n.t("服务器")) + L10n.t("」是首次连接"))
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(Palette.ink)
                 }

@@ -9,20 +9,27 @@ final class ManagedTunnelService: TunnelService {
     private let underlying: any TunnelService
     private var desired: [UUID: TunnelConfiguration] = [:]
     private var snapshots: [UUID: TunnelSnapshot] = [:]
-    private var retries: [UUID: Task<Void, Never>] = [:]
-    /// 业务连续失败触发的受控重建任务；与错误退避重试分开，避免语义混用。
-    private var recoveryTasks: [UUID: Task<Void, Never>] = [:]
-    /// 5 分钟滚动窗口内的业务失败重建时间。
-    private var businessRecoveryAttempts: [UUID: [Date]] = [:]
-    /// 最近一次业务失败重建时间，用于冷却。
-    private var lastBusinessRecoveryAt: [UUID: Date] = [:]
+    /// 每个 profile 的重连与健康检查策略状态：把此前十余个按 profileId 索引的平行字典
+    /// 收敛为一个对象——断开（performDisconnect）/休眠（prepareForSleep）/退出
+    /// （terminateAllSessions）的清理由「逐字典移除」变为整对象移除，结构上不可能再漏键。
+    /// `desired`（期望配置）、`snapshots`（面板快照）、`resumeIDs`（休眠期恢复集合）、
+    /// `recoveryHistory`（自愈轨迹，随快照展示）语义不同，保持独立形态。
+    private struct RecoveryPolicyState {
+        var retryTask: Task<Void, Never>?              // 错误退避重连排程
+        var recoveryTask: Task<Void, Never>?           // 业务失败受控重建排程；与错误退避重试分开，避免语义混用
+        var generation = UUID()                        // 会话代际（取消旧排程用）
+        var attempts = 0                               // 退避重试计数
+        var connectedAt: Date?                         // 连接稳定起点（60 秒后重置退避）
+        var localDue: Date?                            // 下次本地健康检查时点
+        var remoteDue: Date?                           // 下次远端健康检查时点
+        var conflictSince: Date?                       // 首次检测到端口冲突的时间（限时重试窗口起点）
+        var businessRecoveryAttempts: [Date] = []      // 5 分钟滚动窗口内的业务失败重建时间
+        var lastBusinessRecoveryAt: Date?              // 最近一次业务失败重建时间，用于冷却
+        var budgetExhaustedAnnounced = false           // 「重建预算用尽」提示只发一次（连接恢复/新连接意图时复位）
+    }
+    private var policies: [UUID: RecoveryPolicyState] = [:]
     /// 每台服务器的自愈状态迁移短历史；只存决策元数据，不存业务请求内容。
     private var recoveryHistory: [UUID: [TunnelRecoveryDecision]] = [:]
-    private var generations: [UUID: UUID] = [:]
-    private var attempts: [UUID: Int] = [:]
-    private var connectedAt: [UUID: Date] = [:]
-    private var localDue: [UUID: Date] = [:]
-    private var remoteDue: [UUID: Date] = [:]
     private var resumeIDs: Set<UUID> = []
     private var settings = AppSettings.defaults()
     private var monitor: Task<Void, Never>?
@@ -46,8 +53,6 @@ final class ManagedTunnelService: TunnelService {
     var businessRecoveryWindowSeconds: Double = 300
     /// 窗口内最多自动重建次数；超过后继续探测并提示需人工/等环境恢复。
     var maximumBusinessRecoveries = 2
-    /// 各 profile 首次检测到端口冲突的时间。
-    private var conflictSince: [UUID: Date] = [:]
 
     init(underlying: any TunnelService) {
         self.underlying = underlying
@@ -81,12 +86,13 @@ final class ManagedTunnelService: TunnelService {
         let id = configuration.profile.id
         guard !isActive(profileID: id) else { return }
         desired[id] = configuration
-        generations[id] = UUID()
-        attempts[id] = 0
-        connectedAt[id] = nil
-        localDue[id] = nil
-        remoteDue[id] = nil
-        conflictSince[id] = nil // 新的连接意图：端口冲突窗口重新计时
+        policies[id, default: .init()].generation = UUID()
+        policies[id, default: .init()].attempts = 0
+        policies[id]?.connectedAt = nil
+        policies[id]?.localDue = nil
+        policies[id]?.remoteDue = nil
+        policies[id]?.conflictSince = nil // 新的连接意图：端口冲突窗口重新计时
+        policies[id]?.budgetExhaustedAnnounced = false
         recoveryHistory[id] = nil // 新连接意图从干净轨迹开始
         resumeIDs.remove(id)
         if sleeping {
@@ -108,17 +114,12 @@ final class ManagedTunnelService: TunnelService {
 
     private func performDisconnect(profileID: UUID, systemReason: String?) {
         desired[profileID] = nil
-        generations[profileID] = nil
-        retries.removeValue(forKey: profileID)?.cancel()
-        recoveryTasks.removeValue(forKey: profileID)?.cancel()
-        businessRecoveryAttempts.removeValue(forKey: profileID)
-        lastBusinessRecoveryAt.removeValue(forKey: profileID)
+        // 先取消排程再整对象移除：等价于旧实现十余个字典的 removeValue/置 nil 总和，
+        // 且未来新增性质字段时不会再出现「清理漏键」
+        policies[profileID]?.retryTask?.cancel()
+        policies[profileID]?.recoveryTask?.cancel()
+        policies.removeValue(forKey: profileID)
         resumeIDs.remove(profileID)
-        localDue[profileID] = nil
-        remoteDue[profileID] = nil
-        connectedAt[profileID] = nil
-        attempts[profileID] = nil
-        conflictSince[profileID] = nil
         if let reason = systemReason {
             underlying.disconnectForSystemReason(profileID: profileID, reason: reason)
         } else {
@@ -138,8 +139,8 @@ final class ManagedTunnelService: TunnelService {
         self.settings = settings.sanitized
         let now = Date()
         for id in desired.keys {
-            localDue[id] = now.addingTimeInterval(localInterval)
-            remoteDue[id] = now.addingTimeInterval(remoteInterval)
+            policies[id, default: .init()].localDue = now.addingTimeInterval(localInterval)
+            policies[id, default: .init()].remoteDue = now.addingTimeInterval(remoteInterval)
         }
         startMonitor()
     }
@@ -151,9 +152,14 @@ final class ManagedTunnelService: TunnelService {
         desired[profileID] = configuration
         if !enabled {
             resumeIDs.remove(profileID)
-            if let task = retries.removeValue(forKey: profileID) {
+            // 排程中的受控重建一并取消：关闭自动重连后任务不应再醒来重建，
+            // 也不能留下孤儿条目让 isActive 永真
+            policies[profileID]?.recoveryTask?.cancel()
+            policies[profileID]?.recoveryTask = nil
+            if let task = policies[profileID]?.retryTask {
                 task.cancel()
-                generations[profileID] = UUID()
+                policies[profileID]?.retryTask = nil
+                policies[profileID]?.generation = UUID()
                 var snapshot = snapshots[profileID] ?? .idle(profileID)
                 snapshot.phase = .error
                 snapshot.humanReadableDetail = "自动重连已关闭，请手动连接"
@@ -165,8 +171,8 @@ final class ManagedTunnelService: TunnelService {
 
     func runHealthCheck(profileID: UUID) {
         guard !sleeping else { return }
-        localDue[profileID] = Date().addingTimeInterval(localInterval)
-        remoteDue[profileID] = Date().addingTimeInterval(remoteInterval)
+        policies[profileID, default: .init()].localDue = Date().addingTimeInterval(localInterval)
+        policies[profileID, default: .init()].remoteDue = Date().addingTimeInterval(remoteInterval)
         underlying.runHealthCheck(profileID: profileID)
     }
 
@@ -184,7 +190,7 @@ final class ManagedTunnelService: TunnelService {
     }
 
     func isActive(profileID: UUID) -> Bool {
-        retries[profileID] != nil || recoveryTasks[profileID] != nil
+        policies[profileID]?.retryTask != nil || policies[profileID]?.recoveryTask != nil
             || resumeIDs.contains(profileID) || underlying.isActive(profileID: profileID)
     }
     func submitPassword(profileID: UUID, password: String, remember: Bool) {
@@ -201,10 +207,22 @@ final class ManagedTunnelService: TunnelService {
             desired[$0]?.profile.reconnectEnabled == true && (isActive(profileID: $0)
                 || snapshots[$0]?.phase == .checking || snapshots[$0]?.phase == .connecting)
         })
-        for (id, task) in retries { task.cancel(); generations[id] = UUID() }
-        retries.removeAll()
-        for (id, task) in recoveryTasks { task.cancel(); generations[id] = UUID() }
-        recoveryTasks.removeAll()
+        // 取消全部重连/重建排程并换代：休眠期间旧任务不得醒来重建
+        for id in policies.keys {
+            policies[id]?.retryTask?.cancel()
+            policies[id]?.recoveryTask?.cancel()
+            policies[id]?.generation = UUID()
+        }
+        // 退避计数与冲突/业务重建预算一并归零：睡眠期间时间照走，跨睡眠携带的
+        // 窗口会让唤醒后的第一次冲突直接判「已过期」，连一次重试都不做
+        for id in desired.keys {
+            policies[id]?.attempts = 0
+            policies[id]?.connectedAt = nil
+            policies[id]?.conflictSince = nil
+            policies[id]?.businessRecoveryAttempts = []
+            policies[id]?.lastBusinessRecoveryAt = nil
+            policies[id]?.budgetExhaustedAnnounced = false
+        }
         suppressEvents = true
         underlying.terminateAllSessions()
         suppressEvents = false
@@ -236,7 +254,9 @@ final class ManagedTunnelService: TunnelService {
         guard !sleeping else { return }
         for id in desired.keys {
             guard desired[id]?.profile.reconnectEnabled == true else { continue }
-            if retries.removeValue(forKey: id) != nil {
+            if policies[id]?.retryTask != nil {
+                // 仅摘除不 cancel：reconnectNow 会换代，旧任务醒来撞上新代际自然终结
+                policies[id]?.retryTask = nil
                 reconnectNow(id: id, reason: "网络已恢复")
             } else if isActive(profileID: id) {
                 underlying.disconnectForSystemReason(profileID: id, reason: "网络已恢复")
@@ -251,11 +271,12 @@ final class ManagedTunnelService: TunnelService {
         guard !sleeping, var configuration = desired[id], configuration.profile.reconnectEnabled else { return }
         if let resolve = resolveEndpoint { configuration.localEndpoint = resolve(configuration.profile) }
         desired[id] = configuration
-        generations[id] = UUID()
-        attempts[id] = 0
-        connectedAt[id] = nil
-        localDue[id] = nil
-        remoteDue[id] = nil
+        policies[id, default: .init()].generation = UUID()
+        policies[id, default: .init()].attempts = 0
+        policies[id]?.connectedAt = nil
+        policies[id]?.localDue = nil
+        policies[id]?.remoteDue = nil
+        policies[id]?.budgetExhaustedAnnounced = false
         var snapshot = snapshots[id] ?? .idle(id)
         snapshot.phase = .reconnecting
         snapshot.sshProcessRunning = false
@@ -270,14 +291,14 @@ final class ManagedTunnelService: TunnelService {
 
     func terminateAllSessions() {
         monitor?.cancel(); monitor = nil
-        retries.values.forEach { $0.cancel() }
-        recoveryTasks.values.forEach { $0.cancel() }
-        retries.removeAll(); recoveryTasks.removeAll()
-        desired.removeAll(); generations.removeAll(); resumeIDs.removeAll()
-        snapshots.removeAll(); attempts.removeAll(); connectedAt.removeAll()
-        localDue.removeAll(); remoteDue.removeAll(); conflictSince.removeAll()
-        businessRecoveryAttempts.removeAll(); lastBusinessRecoveryAt.removeAll()
-        recoveryHistory.removeAll()
+        // 先取消全部排程，再整表移除：一次 removeAll 取代旧实现的十余个逐字典清空
+        for id in policies.keys {
+            policies[id]?.retryTask?.cancel()
+            policies[id]?.recoveryTask?.cancel()
+        }
+        policies.removeAll()
+        desired.removeAll(); resumeIDs.removeAll()
+        snapshots.removeAll(); recoveryHistory.removeAll()
         suppressEvents = true
         underlying.terminateAllSessions()
         suppressEvents = false
@@ -300,8 +321,9 @@ final class ManagedTunnelService: TunnelService {
         if decorated.lastRecoveryDecision == nil,
            let previous = snapshots[id]?.lastRecoveryDecision {
             if decorated.phase == .connected {
-                decorated.lastRecoveryDecision = previous.succeeded()
-                decorated.appendRecoveryDecision(decorated.lastRecoveryDecision!)
+                let succeeded = previous.succeeded()
+                decorated.lastRecoveryDecision = succeeded
+                decorated.appendRecoveryDecision(succeeded)
             } else if decorated.phase == .idle && previous.state == .executed {
                 // 系统重建会短暂经过 idle；保留“已执行”，等新连接给出最终结论。
                 decorated.lastRecoveryDecision = previous
@@ -314,10 +336,11 @@ final class ManagedTunnelService: TunnelService {
         onEvent?(.snapshot(decorated))
         guard let configuration = desired[id], !sleeping else { return }
         if snapshot.phase == .connected || (snapshot.phase == .degraded && snapshot.sshProcessRunning) {
-            if connectedAt[id] == nil { connectedAt[id] = Date() }
-            if localDue[id] == nil { localDue[id] = Date().addingTimeInterval(localInterval) }
-            if remoteDue[id] == nil { remoteDue[id] = Date().addingTimeInterval(remoteInterval) }
-            conflictSince[id] = nil // 连接成功：端口冲突跟踪复位
+            if policies[id]?.connectedAt == nil { policies[id, default: .init()].connectedAt = Date() }
+            if policies[id]?.localDue == nil { policies[id, default: .init()].localDue = Date().addingTimeInterval(localInterval) }
+            if policies[id]?.remoteDue == nil { policies[id, default: .init()].remoteDue = Date().addingTimeInterval(remoteInterval) }
+            policies[id]?.conflictSince = nil // 连接成功：端口冲突跟踪复位
+            if snapshot.phase == .connected { policies[id]?.budgetExhaustedAnnounced = false }
         }
         // 端口冲突（远端旧 sshd 未释放 / 本地 Relay 端口被占，通常 1–3 分钟内可自愈）：
         // 窗口内自动重试，窗口过后仍冲突 → 视为真实占用/禁转发，保持终态指引（不再无限重试）。
@@ -328,33 +351,38 @@ final class ManagedTunnelService: TunnelService {
                 || Self.isLocalRelayConflict(snapshot.humanReadableDetail))
         if bindConflict {
             let now = Date()
-            if let since = conflictSince[id] {
+            if let since = policies[id]?.conflictSince {
                 if now.timeIntervalSince(since) >= remoteBindConflictWindowSeconds {
                     return
                 }
             } else {
-                conflictSince[id] = now
+                policies[id, default: .init()].conflictSince = now
             }
-        } else if snapshot.phase != .error {
-            conflictSince[id] = nil
+        } else if snapshot.phase == .error {
+            // 只有「非冲突的错误」才终结冲突跟踪；checking/reconnecting/degraded
+            // 等中间快照不得清零窗口——重试周期里协调器必发 checking，若在此清零，
+            // 下一次冲突会重开 180 秒窗口，真实占用将无限重试、永不进入终态
+            policies[id]?.conflictSince = nil
         }
         if snapshot.phase == .degraded, snapshot.sshProcessRunning {
             maybeScheduleBusinessRecovery(id: id, snapshot: snapshot)
-            if recoveryTasks[id] != nil || businessFailureBudgetExhausted(snapshot) { return }
+            if policies[id]?.recoveryTask != nil || businessFailureBudgetExhausted(snapshot) { return }
         }
         let unavailableLocal = snapshot.phase == .degraded && !snapshot.sshProcessRunning
         guard configuration.profile.reconnectEnabled, Self.shouldRetry(snapshot) || unavailableLocal || bindConflict else { return }
-        if let connected = connectedAt[id], Date().timeIntervalSince(connected) >= 60 { attempts[id] = 0 }
-        connectedAt[id] = nil
-        let attempt = attempts[id] ?? 0
-        attempts[id] = min(attempt + 1, 20)
+        if let connected = policies[id]?.connectedAt, Date().timeIntervalSince(connected) >= 60 {
+            policies[id, default: .init()].attempts = 0
+        }
+        policies[id]?.connectedAt = nil
+        let attempt = policies[id]?.attempts ?? 0
+        policies[id, default: .init()].attempts = min(attempt + 1, 20)
         scheduleRetry(id: id, delay: Self.retryDelay(attempt: attempt, base: retryBaseSeconds, maximum: maximumRetrySeconds), reason: snapshot.humanReadableDetail)
     }
 
     private func scheduleRetry(id: UUID, delay: Double, reason: String) {
-        guard !sleeping, retries[id] == nil, desired[id]?.profile.reconnectEnabled == true else { return }
-        let generation = generations[id] ?? UUID()
-        generations[id] = generation
+        guard !sleeping, policies[id]?.retryTask == nil, desired[id]?.profile.reconnectEnabled == true else { return }
+        let generation = policies[id]?.generation ?? UUID()
+        policies[id, default: .init()].generation = generation
         var snapshot = snapshots[id] ?? .idle(id)
         snapshot.phase = .reconnecting
         snapshot.sshProcessRunning = false
@@ -363,15 +391,15 @@ final class ManagedTunnelService: TunnelService {
         snapshot.consecutiveRemoteFailures = 0
         snapshot.humanReadableDetail = "\(reason)；\(String(format: "%.1f", delay)) 秒后重连"
         snapshots[id] = snapshot
-        retries[id] = Task { @MainActor [weak self] in
+        policies[id, default: .init()].retryTask = Task { @MainActor [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000)) }
             catch { return }
-            guard let self, !self.sleeping, self.generations[id] == generation,
+            guard let self, !self.sleeping, self.policies[id]?.generation == generation,
                   var configuration = self.desired[id], configuration.profile.reconnectEnabled else { return }
-            self.retries[id] = nil
+            self.policies[id]?.retryTask = nil
             if let resolve = self.resolveEndpoint { configuration.localEndpoint = resolve(configuration.profile) }
             self.desired[id] = configuration
-            self.localDue[id] = nil; self.remoteDue[id] = nil
+            self.policies[id]?.localDue = nil; self.policies[id]?.remoteDue = nil
             self.underlying.connect(configuration: configuration)
         }
         onEvent?(.snapshot(snapshot))
@@ -380,13 +408,17 @@ final class ManagedTunnelService: TunnelService {
     /// SSH 进程还活着、但业务通路连续明确失败：受控重建。
     /// 只统计 connectionFailure/notProxy；探测超时或缺 curl 是不确定结论，不触发。
     private func maybeScheduleBusinessRecovery(id: UUID, snapshot: TunnelSnapshot) {
-        guard recoveryTasks[id] == nil,
+        guard policies[id]?.recoveryTask == nil,
               snapshot.sshProcessRunning,
               snapshot.consecutiveRemoteFailures >= businessFailureThreshold else { return }
 
         let now = Date()
-        businessRecoveryAttempts[id]?.removeAll { now.timeIntervalSince($0) >= businessRecoveryWindowSeconds }
-        if (businessRecoveryAttempts[id]?.count ?? 0) >= maximumBusinessRecoveries {
+        policies[id]?.businessRecoveryAttempts.removeAll { now.timeIntervalSince($0) >= businessRecoveryWindowSeconds }
+        if (policies[id]?.businessRecoveryAttempts.count ?? 0) >= maximumBusinessRecoveries {
+            // 预算用尽的提示只发一次：每个 degraded 健康快照都会走到这里，
+            // 重复追加决策事件会把自愈轨迹刷成「预算用尽」复读机
+            guard policies[id]?.budgetExhaustedAnnounced != true else { return }
+            policies[id, default: .init()].budgetExhaustedAnnounced = true
             var budgetSnapshot = snapshot
             budgetSnapshot.humanReadableDetail += "；已连续失败，自动重建窗口预算用尽，将继续探测"
             let decision = TunnelRecoveryDecision(
@@ -405,16 +437,16 @@ final class ManagedTunnelService: TunnelService {
             return
         }
 
-        let last = lastBusinessRecoveryAt[id]
+        let last = policies[id]?.lastBusinessRecoveryAt
         let delay = last.map { max(0, businessRecoveryCooldownSeconds - now.timeIntervalSince($0)) } ?? 0.05
-        businessRecoveryAttempts[id, default: []].append(now)
-        lastBusinessRecoveryAt[id] = now
+        policies[id, default: .init()].businessRecoveryAttempts.append(now)
+        policies[id, default: .init()].lastBusinessRecoveryAt = now
         scheduleBusinessRecovery(
             id: id,
             delay: delay,
             reason: snapshot.humanReadableDetail,
             consecutiveFailures: snapshot.consecutiveRemoteFailures,
-            remainingRecoveries: maximumBusinessRecoveries - (businessRecoveryAttempts[id]?.count ?? 0)
+            remainingRecoveries: maximumBusinessRecoveries - (policies[id]?.businessRecoveryAttempts.count ?? 0)
         )
     }
 
@@ -423,8 +455,8 @@ final class ManagedTunnelService: TunnelService {
         guard snapshot.phase == .degraded, snapshot.sshProcessRunning,
               snapshot.consecutiveRemoteFailures >= businessFailureThreshold else { return false }
         let now = Date()
-        businessRecoveryAttempts[id]?.removeAll { now.timeIntervalSince($0) >= businessRecoveryWindowSeconds }
-        return (businessRecoveryAttempts[id]?.count ?? 0) >= maximumBusinessRecoveries
+        policies[id]?.businessRecoveryAttempts.removeAll { now.timeIntervalSince($0) >= businessRecoveryWindowSeconds }
+        return (policies[id]?.businessRecoveryAttempts.count ?? 0) >= maximumBusinessRecoveries
     }
 
     private func scheduleBusinessRecovery(
@@ -434,9 +466,9 @@ final class ManagedTunnelService: TunnelService {
         consecutiveFailures: Int,
         remainingRecoveries: Int
     ) {
-        guard !sleeping, recoveryTasks[id] == nil, desired[id]?.profile.reconnectEnabled == true else { return }
-        let generation = generations[id] ?? UUID()
-        generations[id] = generation
+        guard !sleeping, policies[id]?.recoveryTask == nil, desired[id]?.profile.reconnectEnabled == true else { return }
+        let generation = policies[id]?.generation ?? UUID()
+        policies[id, default: .init()].generation = generation
         var snapshot = snapshots[id] ?? .idle(id)
         snapshot.phase = .reconnecting
         snapshot.sshProcessRunning = false
@@ -458,16 +490,19 @@ final class ManagedTunnelService: TunnelService {
         snapshots[id] = snapshot
         onEvent?(.snapshot(snapshot))
 
-        recoveryTasks[id] = Task { @MainActor [weak self] in
+        policies[id, default: .init()].recoveryTask = Task { @MainActor [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(max(0, delay) * 1_000_000_000)) }
             catch { return }
-            guard let self, !self.sleeping, self.generations[id] == generation,
+            guard let self else { return }
+            // 醒来即摘除条目：无论后续守卫是否通过，本次排程都已终结——
+            // 否则孤儿条目会让 isActive 永真，该 profile 的 connect() 被永久拒绝
+            self.policies[id]?.recoveryTask = nil
+            guard !self.sleeping, self.policies[id]?.generation == generation,
                   var configuration = self.desired[id], configuration.profile.reconnectEnabled else { return }
-            self.recoveryTasks[id] = nil
             if let resolve = self.resolveEndpoint { configuration.localEndpoint = resolve(configuration.profile) }
             self.desired[id] = configuration
-            self.localDue[id] = nil
-            self.remoteDue[id] = nil
+            self.policies[id]?.localDue = nil
+            self.policies[id]?.remoteDue = nil
             // 系统断开会经过 idle；先把排程改为“已执行”，避免面板闪回旧计划。
             if var snapshot = self.snapshots[id],
                let decision = snapshot.lastRecoveryDecision,
@@ -500,13 +535,15 @@ final class ManagedTunnelService: TunnelService {
         for id in desired.keys {
             guard let snapshot = snapshots[id], snapshot.sshProcessRunning,
                   snapshot.phase == .connected || snapshot.phase == .degraded else { continue }
-            if let connected = connectedAt[id], now.timeIntervalSince(connected) >= 60 { attempts[id] = 0 }
-            if now >= remoteDue[id] ?? .distantFuture {
-                remoteDue[id] = now.addingTimeInterval(remoteInterval)
-                localDue[id] = now.addingTimeInterval(localInterval)
+            if let connected = policies[id]?.connectedAt, now.timeIntervalSince(connected) >= 60 {
+                policies[id, default: .init()].attempts = 0
+            }
+            if now >= policies[id]?.remoteDue ?? .distantFuture {
+                policies[id, default: .init()].remoteDue = now.addingTimeInterval(remoteInterval)
+                policies[id, default: .init()].localDue = now.addingTimeInterval(localInterval)
                 underlying.runHealthCheck(profileID: id)
-            } else if now >= localDue[id] ?? .distantFuture {
-                localDue[id] = now.addingTimeInterval(localInterval)
+            } else if now >= policies[id]?.localDue ?? .distantFuture {
+                policies[id, default: .init()].localDue = now.addingTimeInterval(localInterval)
                 underlying.runLocalHealthCheck(profileID: id)
             }
         }

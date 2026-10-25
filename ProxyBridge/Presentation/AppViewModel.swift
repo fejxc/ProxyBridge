@@ -113,20 +113,36 @@ final class AppViewModel {
     }
 
     // MARK: - 动态→静态回升（P1）
-    /// 升回静态的冷却记录（防抖：代理不稳时避免模式反复横跳）。
-    private var upgradeAttempts: [UUID: Date] = [:]
-    /// 上一次扫描看到的已验证端点（要求连续两次扫描一致才升级）。
-    private var lastSeenVerifiedEndpoint: [UUID: String] = [:]
+    /// 升回静态的冷却时长（防抖：代理不稳时避免模式反复横跳）。
     private static let upgradeRetryCooldown: TimeInterval = 60
 
-    // MARK: - 防休眠/会话时长（P1/P2）
-    /// 各 profile 当前连接建立时间（展示会话时长用）。
-    private(set) var connectedSince: [UUID: Date] = [:]
+    /// 每个 profile 的运行期私有状态：把此前十余个按 profileId 索引的平行字典
+    /// 收敛为一个对象。收敛的结构性收益是删除 profile 时整对象移除即可——
+    /// 不会再出现「tearDown 漏清某个键」一类遗漏（平行字典时代实际漏过八个键）。
+    /// 仅收内部字段；`snapshots` 保持独立字典（视图逐键观测），`connectedSince`
+    /// 虽被视图读取但经下方投影 facade 暴露，访问路径不变。
+    private struct ProfileRuntimeState {
+        var connectionEndpoint: LocalProxyEndpoint?      // 最近一次连接使用的本地端点（复制命令等展示跟随）
+        var connectedSince: Date?                        // 会话时长展示起点
+        var upgradeAttemptAt: Date?                      // 动态→静态回升冷却
+        var lastSeenVerifiedEndpointID: String?          // 连续两次扫描验证同一端点才升级
+        var retargetAttempt: (endpointID: String, at: Date)?  // 端点切换尝试冷却
+        var lastHealthyCheckLogAt: Date?                 // 成功健康检查日志节流
+        var reconnectHintShown = false                   // 「未开自动重连」失败提示一次
+        var upgradeHintShown = false                     // 未记住密码不自动回升提示一次
+        var notificationGeneration: UUID?                // 连接异常通知代际（防旧任务抹掉新登记）
+        var notificationTask: Task<Void, Never>?
+    }
+    private var profileStates: [UUID: ProfileRuntimeState] = [:]
+
+    /// 视图观测面保持不变（MenuBarView 读取会话时长）：从状态对象投影，缺省即无会话。
+    var connectedSince: [UUID: Date] {
+        profileStates.compactMapValues(\.connectedSince)
+    }
+
+    // MARK: - 防休眠（P1/P2）
     private var keepAwakeFailureLogged = false
-    /// 已提示过「未开自动重连」的失败 profile（成功后复位，可再次提示）。
-    private var reconnectHintShown: Set<UUID> = []
-    /// 各 profile 上次记录「成功健康检查」日志的时间（节流用）。
-    private var lastHealthyCheckLogAt: [UUID: Date] = [:]
+    /// 成功健康检查日志的节流窗口（稳定期 5 分钟一条，异常快照不受限）。
     private static let healthyCheckLogInterval: TimeInterval = 300
 
     // MARK: - 系统服务（登录项 / 通知 / 睡眠唤醒）
@@ -139,12 +155,7 @@ final class AppViewModel {
     var degradedNotificationDelaySeconds: Double = 60
     private var pendingStartupProfiles: Set<UUID> = []
     private var loginErrorMessage: String?
-    private var notificationGenerations: [UUID: UUID] = [:]
-    private var notificationTasks: [UUID: Task<Void, Never>] = [:]
     private var notificationPolicy = ConnectionNotificationPolicy()
-    private var connectionEndpoints: [UUID: LocalProxyEndpoint] = [:]
-    /// 端点切换尝试的冷却记录（profile → 端点 id + 时间），避免重复扫描反复触发。
-    private var retargetAttempts: [UUID: (endpointID: String, at: Date)] = [:]
     /// 上次因本地验证失败触发主动重扫的时间（代理波动场景闭环）。
     private var lastFailureRescanAt: Date?
     /// 上一次观测到的代理出口 IP（节点切换指纹比对）。
@@ -257,10 +268,15 @@ final class AppViewModel {
     }
 
     private func bootstrap() {
+        // 上次更新若在「旧版让位 → 新版上位」之间被中断，/Applications 里的应用
+        // 会失踪：启动时做一次幂等恢复（应用健在时只清理暂存/备份残留）
+        if let recovery = DMGUpdateInstaller.recoverInterruptedSwap() {
+            logStore.append(raw: recovery.message, level: recovery.restored ? .warning : .error)
+        }
         settings = settingsStore.load()
         L10n.apply(settings.language)
         if settingsStore.lastLoadWasCorrupted {
-            logStore.append(raw: "settings.json 无法解析，已回退默认设置（文件保留原样，便于人工排查）", level: .error)
+            logStore.append(raw: "settings.json 无法解析，已回退默认设置（原文件已改名隔离为 settings.corrupt-*.json，便于人工排查）", level: .error)
         }
 
         profileManager.loadFromDisk()
@@ -290,7 +306,7 @@ final class AppViewModel {
             runtime.resolveEndpoint = { [weak self] profile in
                 guard let self else { return nil }
                 let endpoint = self.endpointValue(of: EndpointResolver.resolve(profile: profile, detection: self.detection))
-                self.connectionEndpoints[profile.id] = endpoint
+                self.profileStates[profile.id, default: .init()].connectionEndpoint = endpoint
                 return endpoint
             }
         }
@@ -371,15 +387,15 @@ final class AppViewModel {
             guard tunnel.isActive(profileID: profile.id),
                   resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .staticForward else { continue }
             guard let endpoint = endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection)) else { continue }
-            if let current = connectionEndpoints[profile.id],
+            if let current = profileStates[profile.id]?.connectionEndpoint,
                current.host == endpoint.host, current.port == endpoint.port {
                 continue // 物理端点未变：仅协议结论翻转，无需切换
             }
             let now = Date()
-            if let last = retargetAttempts[profile.id], last.endpointID == endpoint.id,
+            if let last = profileStates[profile.id]?.retargetAttempt, last.endpointID == endpoint.id,
                now.timeIntervalSince(last.at) < Self.retargetRetryCooldown { continue }
-            retargetAttempts[profile.id] = (endpoint.id, now)
-            let oldDescription = connectionEndpoints[profile.id]
+            profileStates[profile.id, default: .init()].retargetAttempt = (endpoint.id, now)
+            let oldDescription = profileStates[profile.id]?.connectionEndpoint
                 .map { "\($0.displayEndpoint)（\($0.protocol.displayName)）" } ?? "未知"
             logStore.append(
                 raw: "本地代理端点变化：\(oldDescription) → \(endpoint.displayEndpoint)（\(endpoint.protocol.displayName)）；正在无缝切换活跃隧道",
@@ -431,22 +447,22 @@ final class AppViewModel {
                   resolvedConnectionMode(profile: profile, snapshot: snapshots[profile.id]) == .reverseDynamic,
                   let verified = detection.bestVerifiedEndpoint(preferred: profile.preferredProtocol) else {
                 if !detection.candidates.isEmpty {
-                    lastSeenVerifiedEndpoint[profile.id] = nil
+                    profileStates[profile.id]?.lastSeenVerifiedEndpointID = nil
                 }
                 continue
             }
             // 连续两次扫描看到同一已验证端点才升级（防瞬时恢复引起模式横跳）
-            let seenBefore = lastSeenVerifiedEndpoint[profile.id] == verified.id
-            lastSeenVerifiedEndpoint[profile.id] = verified.id
+            let seenBefore = profileStates[profile.id]?.lastSeenVerifiedEndpointID == verified.id
+            profileStates[profile.id, default: .init()].lastSeenVerifiedEndpointID = verified.id
             guard seenBefore else { continue }
             if profile.authMode == .password && !profile.rememberPassword {
-                logOncePerCooldown(profileID: profile.id, key: &upgradeHintsShown,
+                logOncePerCooldown(profileID: profile.id,
                                    message: "本地代理已恢复，但「\(profile.name)」使用未记住的密码，为避免反复询问不自动切回静态；可手动重连升级")
                 continue
             }
             let now = Date()
-            if let last = upgradeAttempts[profile.id], now.timeIntervalSince(last) < Self.upgradeRetryCooldown { continue }
-            upgradeAttempts[profile.id] = now
+            if let last = profileStates[profile.id]?.upgradeAttemptAt, now.timeIntervalSince(last) < Self.upgradeRetryCooldown { continue }
+            profileStates[profile.id, default: .init()].upgradeAttemptAt = now
             logStore.append(
                 raw: "本地代理已恢复验证（\(verified.displayEndpoint)）：把「\(profile.name)」从动态 SOCKS5 切回静态转发，正在重建连接",
                 level: .info, profileId: profile.id
@@ -456,15 +472,15 @@ final class AppViewModel {
         }
     }
 
-    /// 每 profile 冷却一次的提示（防日志刷屏）。
-    private var upgradeHintsShown: Set<UUID> = []
-    private func logOncePerCooldown(profileID: UUID, key: inout Set<UUID>, message: String) {
-        guard !key.contains(profileID) else { return }
-        key.insert(profileID)
+    /// 每 profile 冷却一次的提示（防日志刷屏）。复位经 `?.` 写入：profile 已删除
+    /// 时不重新创建状态条目。
+    private func logOncePerCooldown(profileID: UUID, message: String) {
+        guard profileStates[profileID]?.upgradeHintShown != true else { return }
+        profileStates[profileID, default: .init()].upgradeHintShown = true
         logStore.append(raw: message, level: .info, profileId: profileID)
         Task { @MainActor [weak self, profileID] in
             try? await Task.sleep(nanoseconds: UInt64(Self.upgradeRetryCooldown * 1_000_000_000))
-            self?.upgradeHintsShown.remove(profileID)
+            self?.profileStates[profileID]?.upgradeHintShown = false
         }
     }
 
@@ -676,9 +692,11 @@ final class AppViewModel {
         secrets.delete(for: id) // 清掉可能记住的密码
         snapshots[id] = nil
         trafficStore.remove(id)
+        // 运行期私有状态整对象移除：升级冷却、端点记录、通知任务、提示标记等
+        // 全部键由结构保证一次清空（平行字典时代这里先后漏清过八个键）
+        profileStates[id]?.notificationTask?.cancel()
+        profileStates[id] = nil
         pendingStartupProfiles.remove(id)
-        notificationTasks.removeValue(forKey: id)?.cancel()
-        notificationGenerations[id] = nil
         notificationPolicy.reset(profileID: id)
         finishPasswordPrompt(profileID: id)
         clearHostKeyPrompt(profileID: id)
@@ -726,7 +744,7 @@ final class AppViewModel {
             logStore.append(raw: message, level: level, profileId: profile.id)
         }
         let config = TunnelConfiguration(profile: profile, localEndpoint: endpointValue(of: resolved))
-        connectionEndpoints[profile.id] = config.localEndpoint
+        profileStates[profile.id, default: .init()].connectionEndpoint = config.localEndpoint
         logStore.append(
             raw: "请求连接「\(profile.name)」",
             level: .info,
@@ -742,16 +760,15 @@ final class AppViewModel {
         tunnel.disconnect(profileID: profile.id)
     }
 
-    /// 用户提交 SSH 密码（转发给隧道服务；勾选记住时存入本机钥匙串）。
+    /// 用户提交 SSH 密码（转发给隧道服务）。勾选「记住」只登记意图：
+    /// 钥匙串写入由协调器在认证成功后执行，错密码不会污染持久化存储。
     func submitPassword(_ password: String, remember: Bool) {
         guard let id = pendingPasswordProfileId else { return }
         finishPasswordPrompt(profileID: id)
-        if remember {
-            secrets.save(password, for: id)
-            if var p = profiles.first(where: { $0.id == id }), !p.rememberPassword {
-                p.rememberPassword = true
-                upsertProfile(p)
-            }
+        if remember,
+           var p = profiles.first(where: { $0.id == id }), !p.rememberPassword {
+            p.rememberPassword = true
+            upsertProfile(p)
         }
         tunnel.submitPassword(profileID: id, password: password, remember: remember)
     }
@@ -761,9 +778,11 @@ final class AppViewModel {
         secrets.exists(for: profileID)
     }
 
-    /// 忘记密码：清除钥匙串并关闭记住开关。
-    func forgetStoredPassword() {
-        guard let profile = currentProfile else { return }
+    /// 忘记密码：清除指定服务器的钥匙串记录并关闭记住开关。
+    /// 必须显式传入目标：编辑器操作的是草稿，「当前选中」与「正在编辑」可能是
+    /// 两台服务器（未保存横幅状态），按 currentProfile 删会删错凭据。
+    func forgetStoredPassword(for profileID: UUID) {
+        guard let profile = profiles.first(where: { $0.id == profileID }) else { return }
         secrets.delete(for: profile.id)
         var p = profile
         if p.rememberPassword {
@@ -875,9 +894,11 @@ final class AppViewModel {
         tunnel.updateRuntimeSettings(settings)
         updateKeepAwakeAssertion()
         if !settings.showNotifications {
-            notificationTasks.values.forEach { $0.cancel() }
-            notificationTasks.removeAll()
-            notificationGenerations.removeAll()
+            for id in profileStates.keys {
+                profileStates[id]?.notificationTask?.cancel()
+                profileStates[id]?.notificationTask = nil
+                profileStates[id]?.notificationGeneration = nil
+            }
             systemServices?.clearNotifications()
         }
         do {
@@ -891,8 +912,11 @@ final class AppViewModel {
     /// 端口与系统设置不变、现有检测无感——此处主动发现并立即重验活跃隧道，
     /// 用户无需任何手动操作即可拿到新节点下的真实结论。
     private func handleEgressIPChange(_ egress: String?) {
+        // 探测失败（nil）时保持上一次基线不动——注释语义是「如实不动，不猜测」，
+        // 若把基线覆盖为 nil，跨越一次探测失败的真实节点切换会被误判为首次观测，
+        // 不触发活跃隧道的远端重验
+        guard let egress else { return }
         defer { lastEgressIP = egress }
-        guard let egress else { return } // 探测失败：如实不动，不猜测
         guard let previous = lastEgressIP else {
             logStore.append(raw: "已观测本地代理出口 IP：\(egress)", level: .info)
             return
@@ -909,8 +933,9 @@ final class AppViewModel {
 
     /// 无本地端口模式的出口变化线索：触发复测；nil 保持不确定，不触发修复。
     private func handleDirectEgressIPChange(_ egress: String?) {
-        defer { lastDirectEgressIP = egress }
+        // 与 handleEgressIPChange 同语义：探测失败保持基线，不清空
         guard let egress else { return }
+        defer { lastDirectEgressIP = egress }
         guard let previous = lastDirectEgressIP else {
             logStore.append(raw: "已观测当前网络出口 IP：\(egress)", level: .info)
             return
@@ -971,7 +996,7 @@ final class AppViewModel {
             return nil
         }
         let activeEndpoint = snapshot?.sshProcessRunning == true
-            ? connectionEndpoints[profile.id] : nil
+            ? profileStates[profile.id]?.connectionEndpoint : nil
         let endpoint = activeEndpoint ?? endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection))
         let proto = endpoint?.protocol ?? profile.preferredProtocol
         return RemoteCommandTemplate.clipboardText(
@@ -1064,11 +1089,11 @@ final class AppViewModel {
             finishPasswordPrompt(profileID: snap.profileId)
         }
         if !snap.sshProcessRunning && [.idle, .error, .authRequired].contains(snap.phase) {
-            connectionEndpoints[snap.profileId] = nil
+            profileStates[snap.profileId]?.connectionEndpoint = nil
         }
         // 活跃会话上报的端点是权威值（含无缝切换后的新端点）：复制命令等展示跟随
         if snap.sshProcessRunning, let active = snap.activeLocalEndpoint {
-            connectionEndpoints[snap.profileId] = active
+            profileStates[snap.profileId, default: .init()].connectionEndpoint = active
         }
         if snap.phase == .degraded, snap.localProxyVerified == false, snap.sshProcessRunning {
             scheduleProxyRescanAfterLocalFailure()
@@ -1093,18 +1118,21 @@ final class AppViewModel {
         }
         // 会话时长（动态模式流量不可用时的诚实展示）
         if snap.sshProcessRunning, [.connected, .degraded].contains(snap.phase) {
-            if connectedSince[snap.profileId] == nil { connectedSince[snap.profileId] = Date() }
+            if profileStates[snap.profileId]?.connectedSince == nil {
+                profileStates[snap.profileId, default: .init()].connectedSince = Date()
+            }
         } else {
-            connectedSince[snap.profileId] = nil
+            profileStates[snap.profileId]?.connectedSince = nil
         }
         // 失败终态且未开启自动重连：明确指出可开启（每次失败提示一次，成功后复位）
         if snap.phase == .connected {
-            reconnectHintShown.remove(snap.profileId)
+            profileStates[snap.profileId]?.reconnectHintShown = false
         } else if [.error, .authRequired].contains(snap.phase),
                   !tunnel.isActive(profileID: snap.profileId),
                   let profile = profiles.first(where: { $0.id == snap.profileId }),
                   !profile.reconnectEnabled,
-                  reconnectHintShown.insert(snap.profileId).inserted {
+                  profileStates[snap.profileId]?.reconnectHintShown != true {
+            profileStates[snap.profileId, default: .init()].reconnectHintShown = true
             logStore.append(
                 raw: "「\(profile.name)」连接已失败且未开启自动重连；需要自动恢复请在服务器配置中打开「网络波动时自动恢复 SSH 连接」",
                 level: .info, profileId: snap.profileId
@@ -1118,14 +1146,14 @@ final class AppViewModel {
             && snap.humanReadableDetail.contains("完成")
             && !snap.humanReadableDetail.contains("未通过")
         if isHealthyCheck {
-            if let last = lastHealthyCheckLogAt[snap.profileId],
+            if let last = profileStates[snap.profileId]?.lastHealthyCheckLogAt,
                Date().timeIntervalSince(last) < Self.healthyCheckLogInterval {
-                lastHealthyCheckLogAt[snap.profileId] = Date() // 顺延窗口，稳定期保持静默
+                profileStates[snap.profileId, default: .init()].lastHealthyCheckLogAt = Date() // 顺延窗口，稳定期保持静默
                 return
             }
-            lastHealthyCheckLogAt[snap.profileId] = Date()
+            profileStates[snap.profileId, default: .init()].lastHealthyCheckLogAt = Date()
         } else {
-            lastHealthyCheckLogAt[snap.profileId] = nil
+            profileStates[snap.profileId]?.lastHealthyCheckLogAt = nil
         }
         let name = profiles.first { $0.id == snap.profileId }?.name ?? "?"
         let level: LogLevel
@@ -1184,44 +1212,67 @@ final class AppViewModel {
     private func considerNotification(_ snapshot: TunnelSnapshot) {
         let id = snapshot.profileId
         if snapshot.phase == .idle || snapshot.phase == .connected {
-            notificationTasks.removeValue(forKey: id)?.cancel()
-            notificationGenerations[id] = nil
+            profileStates[id]?.notificationTask?.cancel()
+            profileStates[id]?.notificationTask = nil
+            profileStates[id]?.notificationGeneration = nil
             if snapshot.phase == .idle { notificationPolicy.reset(profileID: id) }
             return
         }
         if snapshot.phase == .error || snapshot.phase == .authRequired {
-            notificationTasks.removeValue(forKey: id)?.cancel()
-            notificationGenerations[id] = nil
+            profileStates[id]?.notificationTask?.cancel()
+            profileStates[id]?.notificationTask = nil
+            profileStates[id]?.notificationGeneration = nil
         }
         guard settings.showNotifications, let services = systemServices,
               let message = ConnectionNotificationPolicy.message(for: snapshot.phase),
-              !snapshot.humanReadableDetail.contains("自动重连已关闭"), notificationTasks[id] == nil else { return }
-        let delay = snapshot.phase == .degraded ? degradedNotificationDelaySeconds : 0
+              !snapshot.humanReadableDetail.contains("自动重连已关闭"),
+              profileStates[id]?.notificationTask == nil else { return }
+        // max(0,)：延迟是可注入的测试参数，负值转 nanoseconds 会下溢崩溃
+        let delay = max(0, snapshot.phase == .degraded ? degradedNotificationDelaySeconds : 0)
         let generation = UUID()
-        notificationGenerations[id] = generation
-        notificationTasks[id] = Task { @MainActor [weak self] in
+        let task = Task { @MainActor [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             catch { return }
-            guard let self, self.notificationGenerations[id] == generation else { return }
-            defer { self.notificationTasks[id] = nil; self.notificationGenerations[id] = nil }
+            guard let self, self.profileStates[id]?.notificationGeneration == generation else { return }
+            // defer 只在登记仍是本任务（generation 未被更新任务取代）时清理：
+            // 否则旧任务迟到的 defer 会抹掉新任务的登记，吞掉其通知
+            defer {
+                if self.profileStates[id]?.notificationGeneration == generation {
+                    self.profileStates[id]?.notificationTask = nil
+                    self.profileStates[id]?.notificationGeneration = nil
+                }
+            }
             guard !Task.isCancelled, self.settings.showNotifications,
                   let current = self.snapshots[id], current.phase != .idle && current.phase != .connected,
                   (snapshot.phase != .degraded || current.phase == .degraded) else { return }
             guard self.notificationPolicy.shouldSend(profileID: id, now: Date()) else { return }
-            do { try await services.postNotification(profileID: id, body: message) }
+            do {
+                try await services.postNotification(profileID: id, body: message)
+                // 冷却在发送成功后才记账：发送失败不消耗 300 秒冷却窗口
+                self.notificationPolicy.markSent(profileID: id, now: Date())
+            }
             catch { self.logStore.append(raw: "发送连接异常通知失败：\(error.localizedDescription)", level: .warning, profileId: id) }
         }
+        profileStates[id, default: .init()].notificationGeneration = generation
+        profileStates[id]?.notificationTask = task
     }
 
+    /// 退出清理只执行一次：willTerminate 通知与 AppDelegate 回调可能先后到达，
+    /// 双份清理不应依赖各子系统「碰巧幂等」的未声明约束。
+    private var shutdownCompleted = false
     func shutdown() {
-        notificationTasks.values.forEach { $0.cancel() }
-        notificationTasks.removeAll()
-        notificationGenerations.removeAll()
+        guard !shutdownCompleted else { return }
+        shutdownCompleted = true
+        for id in profileStates.keys {
+            profileStates[id]?.notificationTask?.cancel()
+        }
+        profileStates.removeAll()
         pendingStartupProfiles.removeAll()
         pendingPasswordProfileId = nil
         passwordPromptQueue.removeAll()
-        clearHostKeyPrompt(profileID: pendingHostKeyProfileId ?? UUID())
-        connectedSince.removeAll()
+        if let pending = pendingHostKeyProfileId {
+            clearHostKeyPrompt(profileID: pending)
+        }
         conflicts.reset()
         powerAssertion?.release()
         systemServices?.stopObserving()
