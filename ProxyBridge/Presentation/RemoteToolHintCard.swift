@@ -16,11 +16,11 @@ struct RemoteToolHintCard: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("远端缺少 ") + tool.displayName)
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                 }
                 Text("端到端验证需要在服务器上运行 curl；缺少它时连接只能显示「未验证 ≠ 可用」。复制下方指引安装后重试验证。")
-                    .font(.system(size: 10.5))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {

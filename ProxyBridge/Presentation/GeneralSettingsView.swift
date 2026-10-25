@@ -107,18 +107,18 @@ struct GeneralSettingsView: View {
             SectionCard(title: L10n.t("关于")) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L10n.t("ProxyBridge · SSH 反向代理管理工具"))
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                     Text(L10n.t("版本：") + AppViewModel.currentVersion)
-                        .font(.system(size: 11.5))
+                        .font(.subheadline)
                         .foregroundStyle(Palette.muted)
                     if let update = model.updateInfo {
                         Text(L10n.t("有新版本 ") + "v\(update.latestVersion)" + L10n.t(" 可用"))
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Palette.blue)
                     }
                     Text(L10n.t("通过 SSH 将 Mac 本地代理转发至服务器的回环端口。"))
-                        .font(.system(size: 11.5))
+                        .font(.subheadline)
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     HStack {
@@ -130,7 +130,7 @@ struct GeneralSettingsView: View {
                             ProgressView()
                                 .controlSize(.small)
                             Text(L10n.t("正在检查…"))
-                                .font(.system(size: 11))
+                                .font(.subheadline)
                                 .foregroundStyle(Palette.muted)
                         }
                         if model.updateInfo != nil {
@@ -142,17 +142,17 @@ struct GeneralSettingsView: View {
                     switch model.updateCheckUIState {
                     case .failed(let reason):
                         Text(reason)
-                            .font(.system(size: 11))
+                            .font(.subheadline)
                             .foregroundStyle(Palette.red)
                             .fixedSize(horizontal: false, vertical: true)
                     case .idle:
                         if let update = model.updateInfo {
                             Text(L10n.t("发现新版本 v") + update.latestVersion + L10n.t("（当前 v") + AppViewModel.currentVersion + L10n.t("）"))
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(Palette.blue)
                         } else {
                             Text(L10n.t("已是最新版本（v") + AppViewModel.currentVersion + L10n.t("）"))
-                                .font(.system(size: 11))
+                                .font(.subheadline)
                                 .foregroundStyle(Palette.muted)
                         }
                     case .checking:
@@ -178,10 +178,10 @@ struct GeneralSettingsView: View {
         HStack(alignment: .center, spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(.subheadline)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }

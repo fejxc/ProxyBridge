@@ -53,10 +53,10 @@ struct ServerEditorView: View {
         SectionCard {
             VStack(alignment: .leading, spacing: 12) {
                 Text(L10n.t("未选择服务器"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Text(L10n.t("添加一台服务器开始使用：填写名称、SSH 主机、端口、用户名即可（首次连接时可在应用内核对并信任主机指纹，也可在终端先 ssh 一次）。"))
-                    .font(.system(size: 11.5))
+                    .font(.subheadline)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 8) {
@@ -162,10 +162,10 @@ private struct SSHConfigImportSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(L10n.t("从 ~/.ssh/config 导入"))
-                .font(.system(size: 14, weight: .bold))
+                .font(.title3.bold())
                 .foregroundStyle(Palette.ink)
             Text(L10n.t("仅读取 HostName / Port / User / IdentityFile；导入后可再编辑。与既有配置同主机、同端口、同用户名的条目自动跳过。"))
-                .font(.system(size: 11))
+                .font(.subheadline)
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             ScrollView {
@@ -180,7 +180,7 @@ private struct SSHConfigImportSheet: View {
                                     .foregroundStyle(selected.contains(entry.alias) ? Palette.blue : Palette.muted)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(entry.alias)
-                                        .font(.system(size: 12, weight: .semibold))
+                                        .font(.callout.weight(.semibold))
                                         .foregroundStyle(Palette.ink)
                                     MonoText(
                                         text: "\(entry.hostName ?? entry.alias):\(entry.port ?? 22)" +
@@ -288,17 +288,17 @@ struct ServerEditorForm: View {
                                     }
                                 ))
                                 .toggleStyle(.checkbox)
-                                .font(.system(size: 11))
+                                .font(.subheadline)
                                 if hasStoredPassword {
                                     HStack(spacing: 8) {
                                         Label(L10n.t("已记住密码（本机钥匙串）"), systemImage: "checkmark.seal.fill")
-                                            .font(.system(size: 11))
+                                            .font(.subheadline)
                                             .foregroundStyle(Palette.green)
                                         Button(L10n.t("忘记密码")) {
                                             onForgetStoredPassword()
                                         }
                                         .buttonStyle(.link)
-                                        .font(.system(size: 11))
+                                        .font(.subheadline)
                                     }
                                 }
                             }
@@ -348,7 +348,7 @@ struct ServerEditorForm: View {
                             if profile.httpAdapterEnabled {
                                 loopbackPortField($profile.remoteHTTPPort, prompt: "HTTP 端口")
                                 Text(L10n.t("主路径验证通过后立即实测 HTTP CONNECT；入口异常时主路径不受影响。"))
-                                    .font(.system(size: 10.5))
+                                    .font(.footnote)
                                     .foregroundStyle(Palette.muted)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -356,7 +356,7 @@ struct ServerEditorForm: View {
                     }
                     FormRow(label: L10n.t("本地代理")) {
                         Text(proxySummary)
-                            .font(.system(size: 12))
+                            .font(.callout)
                             .foregroundStyle(Palette.ink)
                             .textSelection(.enabled)
                     }
@@ -404,7 +404,7 @@ struct ServerEditorForm: View {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(validation.errors, id: \.self) { err in
                         Label(err, systemImage: "xmark.circle.fill")
-                            .font(.system(size: 11.5))
+                            .font(.subheadline)
                             .foregroundStyle(Palette.red)
                     }
                 }
@@ -415,7 +415,7 @@ struct ServerEditorForm: View {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(validation.warnings, id: \.self) { warn in
                         Label(warn, systemImage: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11.5))
+                            .font(.subheadline)
                             .foregroundStyle(Palette.orange)
                     }
                 }
@@ -478,7 +478,7 @@ struct ServerEditorForm: View {
             MonoText(text: "127.0.0.1 :", size: 12)
                 .foregroundStyle(Palette.muted)
             PortField(value: value, prompt: prompt)
-            MiniBadge(text: "仅本机回环", tone: .green)
+            MetaLine(text: "仅本机回环")
         }
     }
 

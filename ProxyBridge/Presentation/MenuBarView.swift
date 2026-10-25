@@ -94,7 +94,7 @@ struct MenuBarView: View {
         }
         .padding(16)
         .frame(width: 368)
-        .background(Palette.background)
+        .background(.regularMaterial)
         .onDisappear { cancelQuit() }
     }
 
@@ -105,10 +105,10 @@ struct MenuBarView: View {
                 .foregroundStyle(Palette.red)
             VStack(alignment: .leading, spacing: 2) {
                 Text(String(format: L10n.t("退出将断开 %d 条活跃隧道"), activeTunnelCount))
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Text(L10n.t("SSH 进程会被终止，不会遗留。"))
-                    .font(.system(size: 10))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 4)
@@ -128,7 +128,7 @@ struct MenuBarView: View {
             .buttonStyle(.bordered)
         }
         .padding(10)
-        .background(Palette.red.opacity(0.08))
+        .background(Palette.softFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .accessibilityElement(children: .contain)
         .accessibilityLabel(L10n.t("退出确认"))
@@ -145,10 +145,10 @@ struct MenuBarView: View {
                         .foregroundStyle(Palette.blue)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(L10n.t("新版本 ") + "v\(update.latestVersion) " + L10n.t("可用"))
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(Palette.ink)
                         Text("v\(Self.currentVersion) → v\(update.latestVersion)")
-                            .font(.system(size: 10))
+                            .font(.footnote)
                             .foregroundStyle(Palette.muted)
                             .monospacedDigit()
                     }
@@ -170,7 +170,7 @@ struct MenuBarView: View {
                         model.downloadAndInstallUpdate()
                     } label: {
                         Label(L10n.t("自动更新（下载 · 校验 · 安装）"), systemImage: "arrow.down.circle")
-                            .font(.system(size: 11))
+                            .font(.subheadline)
                             .frame(maxWidth: .infinity)
                     }
                     .controlSize(.regular)
@@ -180,23 +180,23 @@ struct MenuBarView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
                     Text(L10n.t("正在下载更新…") + " \(Int(progress * 100))%")
-                        .font(.system(size: 10))
+                        .font(.footnote)
                         .foregroundStyle(Palette.muted)
                 }
             case .verifying:
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(L10n.t("正在校验 SHA-256…")).font(.system(size: 10.5))
+                    Text(L10n.t("正在校验 SHA-256…")).font(.footnote)
                 }
             case .installing:
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
-                    Text(L10n.t("正在安装并重启…")).font(.system(size: 10.5))
+                    Text(L10n.t("正在安装并重启…")).font(.footnote)
                 }
             case .failed(let reason):
                 VStack(alignment: .leading, spacing: 6) {
                     Text(reason)
-                        .font(.system(size: 10))
+                        .font(.footnote)
                         .foregroundStyle(Palette.red)
                         .fixedSize(horizontal: false, vertical: true)
                     Button(L10n.t("重试下载")) { model.downloadAndInstallUpdate() }
@@ -206,7 +206,7 @@ struct MenuBarView: View {
             }
         }
         .padding(10)
-        .background(Palette.blue.opacity(0.06))
+        .background(Palette.softFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
@@ -226,10 +226,10 @@ struct MenuBarView: View {
             .frame(width: 38, height: 38)
             VStack(alignment: .leading, spacing: 2) {
                 Text("ProxyBridge")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.title3.bold())
                     .foregroundStyle(Palette.ink)
                 Text(L10n.t("SSH 反向代理管理"))
-                    .font(.system(size: 11))
+                    .font(.subheadline)
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 0)
@@ -262,10 +262,10 @@ struct MenuBarView: View {
         SectionCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text(L10n.t("尚未配置服务器"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Text(L10n.t("第一步：在设置中确认本地代理；第二步：添加服务器并填写 SSH 信息。"))
-                    .font(.system(size: 11))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 Button {
@@ -296,7 +296,7 @@ struct MenuBarView: View {
                     .frame(width: 38, height: 38)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.currentProfile?.name ?? "—")
-                            .font(.system(size: 13.5, weight: .bold))
+                            .font(.body.weight(.semibold))
                             .foregroundStyle(Palette.ink)
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -322,26 +322,26 @@ struct MenuBarView: View {
                 Divider()
 
                 Text(model.overallPresentation.detail)
-                    .font(.system(size: 10.5))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
                 HStack(alignment: .top, spacing: 8) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(isDynamicMode ? L10n.t("Mac 网络出口") : L10n.t("本地上游 · Mac"))
-                            .font(.system(size: 10.5))
+                            .font(.footnote)
                             .foregroundStyle(Palette.muted)
                         MonoText(text: localEndpointDisplay)
-                        MiniBadge(text: L10n.t("模式 · ") + connectionModeLabel, tone: .blue)
-                        MiniBadge(text: localRouteBadge, tone: isDynamicMode ? .orange : .blue)
+                        MetaLine(text: L10n.t("模式 · ") + connectionModeLabel)
+                        MetaLine(text: localRouteBadge, tone: isDynamicMode ? .orange : nil)
                         if let egress = model.detection.egressIP {
-                            MiniBadge(text: L10n.t("出口 ") + egress, tone: .blue)
+                            MetaLine(text: L10n.t("出口 ") + egress)
                                 .help(L10n.t("经本地代理观测到的出口 IP；变化即代表节点切换，应用会自动重新验证"))
                         }
                     }
                     Spacer(minLength: 0)
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 15))
+                        .font(.callout)
                         .foregroundStyle(Palette.muted.opacity(0.7))
                         .padding(.top, 12)
                     Spacer(minLength: 0)
@@ -349,13 +349,13 @@ struct MenuBarView: View {
                         Text(isDynamicMode
                              ? (model.currentProfile?.httpAdapterEnabled == true ? L10n.t("Linux Codex HTTP") : L10n.t("Linux SOCKS5"))
                              : L10n.t("Linux 远端代理"))
-                            .font(.system(size: 10.5))
+                            .font(.footnote)
                             .foregroundStyle(Palette.muted)
                         MonoText(text: remoteEndpointDisplay)
-                        MiniBadge(text: L10n.t("仅 127.0.0.1 · TCP"), tone: .green)
+                        MetaLine(text: L10n.t("仅 127.0.0.1 · TCP"), tone: .green)
                         if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
                             MonoText(text: "SOCKS5 \(model.currentProfile?.remoteSocksListenDisplay ?? "—")", size: 10)
-                            MiniBadge(text: adapterBadgeText, tone: adapterBadgeTone)
+                            MetaLine(text: adapterBadgeText, tone: adapterBadgeTone)
                         }
                     }
                 }
@@ -441,13 +441,27 @@ struct MenuBarView: View {
                 separator
                 HealthCheckRow(title: recovery.title, display: recovery.display, detail: recovery.detail)
             }
+            separator
+            // 显式入口（原为整块隐性点击，可发现性差）：次级链接 + chevron
+            HStack {
+                Spacer(minLength: 0)
+                Button {
+                    openSettingsFront(tab: .logs)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text(L10n.t("点击查看日志定位原因"))
+                        Image(systemName: "chevron.right")
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(Palette.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.t("查看日志"))
+            }
+            .padding(.vertical, 7)
+            .padding(.trailing, 2)
         }
         .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            model.openSettings(tab: .logs)
-        }
-        .help(L10n.t("点击查看日志定位原因"))
     }
 
     /// magpie Routing 面板的 SwiftUI 版迁移：最近决策 + 可展开原因 + 主动复测。
@@ -466,12 +480,14 @@ struct MenuBarView: View {
                             .fill(Palette.tone(recoveryTone))
                             .frame(width: 7, height: 7)
                         Text(L10n.t("自愈轨迹"))
-                            .font(.system(size: 12.5, weight: .semibold))
+                            .font(.callout.weight(.semibold))
                             .foregroundStyle(Palette.ink)
-                        MiniBadge(text: String(format: L10n.t("最近 %d 条"), history.count), tone: recoveryTone)
+                        Text(String(format: L10n.t("最近 %d 条"), history.count))
+                            .font(.caption2)
+                            .foregroundStyle(Palette.muted)
                         Spacer(minLength: 4)
                         Image(systemName: showRecoveryTrace ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
+                            .font(.footnote.weight(.semibold))
                             .foregroundStyle(Palette.muted)
                     }
                     .contentShape(Rectangle())
@@ -501,7 +517,7 @@ struct MenuBarView: View {
                         model.runHealthCheck()
                     } label: {
                         Label(L10n.t("立即复测"), systemImage: "arrow.clockwise")
-                            .font(.system(size: 10.5))
+                            .font(.footnote)
                     }
                     .controlSize(.small)
                     .buttonStyle(.bordered)
@@ -510,20 +526,16 @@ struct MenuBarView: View {
                         openSettingsFront(tab: .logs)
                     } label: {
                         Label(L10n.t("查看日志"), systemImage: "list.bullet.rectangle")
-                            .font(.system(size: 10.5))
+                            .font(.footnote)
                     }
                     .controlSize(.small)
                     .buttonStyle(.bordered)
                     Spacer(minLength: 0)
                 }
             }
-            .padding(10)
+            .padding(12)
             .background(Palette.surface)
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(Palette.border, lineWidth: 1)
-            )
             .accessibilityElement(children: .contain)
         }
     }
@@ -536,26 +548,26 @@ struct MenuBarView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(decision.state.displayName)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(Palette.tone(Palette.recoveryTone(decision)))
                 Text(decision.action.displayName)
-                    .font(.system(size: 10.5))
+                    .font(.caption2)
                     .foregroundStyle(Palette.muted)
                 Spacer(minLength: 4)
                 Text(decision.decidedAt.formatted(date: .omitted, time: .standard))
-                    .font(.system(size: 10))
+                    .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(Palette.muted)
             }
             if let next = decision.nextActionAt, decision.state == .scheduled {
                 Text(L10n.t("下次执行 ") + next.formatted(date: .omitted, time: .standard))
-                    .font(.system(size: 10))
+                    .font(.caption2)
                     .monospacedDigit()
                     .foregroundStyle(Palette.muted)
             }
             if !decision.reason.isEmpty {
                 Text(decision.reason)
-                    .font(.system(size: 10))
+                    .font(.caption2)
                     .foregroundStyle(Palette.muted.opacity(0.9))
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
@@ -670,12 +682,11 @@ struct MenuBarView: View {
             }
             .controlSize(.large)
             .buttonStyle(.bordered)
-            .tint(Palette.red)
         case .busy(let text):
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text(text).font(.system(size: 12))
+                Text(text).font(.callout)
             }
             .frame(maxWidth: .infinity)
             .controlSize(.large)
@@ -694,7 +705,7 @@ struct MenuBarView: View {
                 }
             } label: {
                 Label(L10n.t("复制 Linux 命令"), systemImage: "doc.on.doc")
-                    .font(.system(size: 11.5))
+                    .font(.footnote)
             }
             .menuStyle(.borderlessButton)
             .help(L10n.t("复制 Linux SOCKS5 或 HTTP_PROXY 验收命令；不修改服务器配置"))
@@ -704,7 +715,7 @@ struct MenuBarView: View {
                     model.openReleasePage()
                 } label: {
                     Label(L10n.t("新版本 ") + "v\(update.latestVersion)", systemImage: "arrow.up.circle.fill")
-                        .font(.system(size: 11.5, weight: .semibold))
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(Palette.blue)
                 }
                 .buttonStyle(.link)
@@ -714,7 +725,7 @@ struct MenuBarView: View {
                 openSettingsFront(tab: .logs)
             } label: {
                 Label(L10n.t("查看日志"), systemImage: "list.bullet.rectangle")
-                    .font(.system(size: 11.5))
+                    .font(.footnote)
             }
             .buttonStyle(.link)
         }
@@ -722,27 +733,8 @@ struct MenuBarView: View {
 
     private var footer: some View {
         Text(L10n.t("产品重点：随时知道本地代理、SSH 隧道、远端代理各自是否正常，而不是只看到「SSH 已连接」。"))
-            .font(.system(size: 10.5))
+            .font(.caption2)
             .foregroundStyle(Palette.muted.opacity(0.85))
             .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// 小徽标（原型 mini-qual）。
-@MainActor
-struct MiniBadge: View {
-    let text: String
-    let tone: StatusTone
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 9.5, weight: .semibold))
-            .foregroundStyle(Palette.tone(tone))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(Palette.tone(tone).opacity(0.1))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .lineLimit(1)
-            .truncationMode(.tail)
     }
 }

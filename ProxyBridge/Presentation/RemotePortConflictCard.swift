@@ -14,7 +14,7 @@ struct RemotePortConflictCard: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("「") + (model.portConflictProfileName ?? L10n.t("服务器")) + L10n.t("」远端端口被占用"))
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                 }
 
@@ -22,12 +22,12 @@ struct RemotePortConflictCard: View {
                 case .inspecting:
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(L10n.t("正在经 SSH 诊断端口占用…")).font(.system(size: 11))
+                        Text(L10n.t("正在经 SSH 诊断端口占用…")).font(.subheadline)
                     }
                 case .unavailable(let reason):
                     VStack(alignment: .leading, spacing: 8) {
                         Text(reason)
-                            .font(.system(size: 10.5))
+                            .font(.footnote)
                             .foregroundStyle(Palette.red)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 8) {
@@ -40,7 +40,7 @@ struct RemotePortConflictCard: View {
                 case .cleaning:
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(L10n.t("正在清理远端残留…")).font(.system(size: 11))
+                        Text(L10n.t("正在清理远端残留…")).font(.subheadline)
                     }
                 case .report(let holdings):
                     report(holdings)
@@ -63,13 +63,13 @@ struct RemotePortConflictCard: View {
                     Text(holding.pid > 0
                          ? "PID \(holding.pid) · \(holding.comm)"
                          : L10n.t("内核残留（无进程）"))
-                        .font(.system(size: 10))
+                        .font(.footnote)
                         .foregroundStyle(Palette.muted)
-                    MiniBadge(text: badgeText(for: holding.kind), tone: badgeTone(for: holding.kind))
+                    MetaLine(text: badgeText(for: holding.kind), tone: badgeTone(for: holding.kind))
                 }
             }
             Text(L10n.t("仅清理同用户的僵尸 sshd 与本 App 的孤儿 Privoxy；其他进程不会被触碰。"))
-                .font(.system(size: 10))
+                .font(.footnote)
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {

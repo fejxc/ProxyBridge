@@ -22,7 +22,7 @@ struct SettingsView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(L10n.t("设置"))
-                .font(.system(size: 10.5, weight: .bold))
+                .font(.footnote.weight(.bold))
                 .foregroundStyle(Palette.muted)
                 .padding(.horizontal, 12)
                 .padding(.top, 16)
@@ -42,11 +42,11 @@ struct SettingsView: View {
 
             HStack {
                 Text(L10n.t("我的服务器"))
-                    .font(.system(size: 10.5, weight: .bold))
+                    .font(.footnote.weight(.bold))
                     .foregroundStyle(Palette.muted)
                 Spacer()
                 Text("\(model.profiles.count)")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(Palette.muted)
             }
             .padding(.horizontal, 12)
@@ -72,7 +72,7 @@ struct SettingsView: View {
                         model.requestCreateProfile()
                     } label: {
                         Label(L10n.t("添加服务器"), systemImage: "plus")
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.subheadline.weight(.semibold))
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -119,10 +119,10 @@ struct SettingsView: View {
         HStack(alignment: .top) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(model.settingsTab.title)
-                    .font(.system(size: 19, weight: .bold))
+                    .font(.title2.bold())
                     .foregroundStyle(Palette.ink)
                 Text(model.settingsTab.subtitle)
-                    .font(.system(size: 12))
+                    .font(.callout)
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 12)
@@ -173,10 +173,10 @@ struct SidebarButton: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
-                    .font(.system(size: 13))
+                    .font(.callout)
                     .frame(width: 18)
                 Text(title)
-                    .font(.system(size: 12.5, weight: isActive ? .semibold : .regular))
+                    .font(.callout.weight(isActive ? .semibold : .regular))
                 Spacer(minLength: 0)
             }
             .foregroundStyle(isActive ? Palette.blue : Palette.muted)
@@ -205,7 +205,7 @@ struct SidebarProfileRow: View {
                     .fill(isConnected ? Palette.green : Palette.muted.opacity(0.6))
                     .frame(width: 7, height: 7)
                 Text(name)
-                    .font(.system(size: 11.5, weight: isCurrent ? .semibold : .regular))
+                    .font(.subheadline.weight(isCurrent ? .semibold : .regular))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 0)

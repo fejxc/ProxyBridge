@@ -89,7 +89,7 @@ struct LogsView: View {
                 }
                 .help("在 Finder 中打开 ~/Library/Logs/ProxyBridge/app.log；完整历史记录在磁盘上，重启不丢失")
 
-                Button {
+                Button(role: .destructive) {
                     model.logStore.removeAll()
                 } label: {
                     Label(L10n.t("清空"), systemImage: "trash")
@@ -117,13 +117,13 @@ struct LogsView: View {
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Palette.muted.opacity(0.8))
             Text(entry.message)
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(Palette.ink)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
             Spacer(minLength: 0)
             Text(entry.level.displayName)
-                .font(.system(size: 10, weight: .semibold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(levelColor(entry.level))
         }
         .padding(.horizontal, 14)

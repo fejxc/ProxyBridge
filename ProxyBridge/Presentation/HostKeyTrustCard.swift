@@ -14,11 +14,11 @@ struct HostKeyTrustCard: View {
                         .font(.system(size: 13))
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("「") + (model.pendingHostKeyProfileName ?? L10n.t("服务器")) + L10n.t("」是首次连接"))
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                 }
                 Text(L10n.t("本机尚无该服务器的主机密钥记录。请在下方获取指纹，并通过可信渠道（服务器管理员、云控制台）核对一致后再信任；不匹配说明连接可能被劫持，请勿继续。"))
-                    .font(.system(size: 10.5))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
@@ -42,12 +42,12 @@ struct HostKeyTrustCard: View {
                 case .scanning:
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text(L10n.t("正在获取主机指纹…")).font(.system(size: 11))
+                        Text(L10n.t("正在获取主机指纹…")).font(.subheadline)
                     }
                 case .failed(let reason):
                     VStack(alignment: .leading, spacing: 8) {
                         Text(reason)
-                            .font(.system(size: 10.5))
+                            .font(.footnote)
                             .foregroundStyle(Palette.red)
                             .fixedSize(horizontal: false, vertical: true)
                         HStack(spacing: 8) {
@@ -66,7 +66,7 @@ struct HostKeyTrustCard: View {
                         ForEach(records, id: \.keyType) { record in
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(record.keyType)
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.footnote.weight(.semibold))
                                     .foregroundStyle(Palette.muted)
                                 MonoText(text: record.fingerprint, size: 10.5)
                             }

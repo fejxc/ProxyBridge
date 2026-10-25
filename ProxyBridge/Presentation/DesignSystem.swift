@@ -1,32 +1,29 @@
 import SwiftUI
 import AppKit
 
-// MARK: - 设计令牌（03-UI-SPEC §1；深浅色自适应）
+// MARK: - 设计令牌（Apple 原生语义：系统语义色 + 语义字阶）
+//
+// 颜色全部映射到系统语义色：自动跟随浅色/深色外观、增强对比度设置与系统强调色，
+// 不再手工维护两套 hex。状态色用系统四色，与系统控件视觉一致；中性色对应
+// label / secondaryLabel / separator / controlBackgroundColor 等系统语义。
+//
+// 字阶使用语义字阶（title3 / body / callout / subheadline / footnote / caption2），
+// 不再手工指定字号——原生应用的字号是离散有节奏的，且语义字阶免费获得文本大小
+// 偏好缩放。等宽数据（IP/端口）经 MonoText 保留参数化字号，属数据表格惯例。
 
 enum Palette {
-    /// 动态 NSColor：浅色/深色分别提供。
-    static func dynamic(light: NSColor, dark: NSColor) -> NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        }
-    }
-
-    static func color(light: UInt32, dark: UInt32) -> Color {
-        Color(nsColor: dynamic(light: NSColor(rgb: light), dark: NSColor(rgb: dark)))
-    }
-
-    // 状态色（浅 / 深）
-    static let blue = color(light: 0x2563EB, dark: 0x5B8DEF)
-    static let green = color(light: 0x159A64, dark: 0x2FB886)
-    static let orange = color(light: 0xD58A28, dark: 0xE0A34E)
-    static let red = color(light: 0xC84646, dark: 0xE06161)
-    // 中性色
-    static let ink = color(light: 0x172338, dark: 0xE6EBF2)
-    static let muted = color(light: 0x64748B, dark: 0x93A0B4)
-    static let background = color(light: 0xF6F8FB, dark: 0x1C2230)
-    static let surface = color(light: 0xFFFFFF, dark: 0x242B3A)
-    static let border = color(light: 0xE3E8EF, dark: 0x333C4D)
-    static let softFill = color(light: 0xF8FAFC, dark: 0x2A3244)
+    // 状态色（系统四色）
+    static let blue = Color(nsColor: .systemBlue)
+    static let green = Color(nsColor: .systemGreen)
+    static let orange = Color(nsColor: .systemOrange)
+    static let red = Color(nsColor: .systemRed)
+    // 中性色（系统语义色）
+    static let ink = Color.primary
+    static let muted = Color(nsColor: .secondaryLabelColor)
+    static let background = Color(nsColor: .windowBackgroundColor)
+    static let surface = Color(nsColor: .controlBackgroundColor)
+    static let border = Color(nsColor: .separatorColor)
+    static let softFill = Color(nsColor: .quaternaryLabelColor)
 
     /// 状态色调 → 颜色。
     static func tone(_ tone: StatusTone) -> Color {
@@ -49,46 +46,32 @@ enum Palette {
     }
 }
 
-extension NSColor {
-    convenience init(rgb: UInt32) {
-        self.init(
-            red: CGFloat((rgb >> 16) & 0xFF) / 255.0,
-            green: CGFloat((rgb >> 8) & 0xFF) / 255.0,
-            blue: CGFloat(rgb & 0xFF) / 255.0,
-            alpha: 1
-        )
-    }
-}
-
 // MARK: - 复用组件
 
-/// 卡片容器（圆角 10、细描边）。
+/// 分区卡（系统设置的分组样式：控件底色 + 圆角，无描边——
+/// 分组层次靠底色与间距表达，不靠线框叠加）。
 @MainActor
 struct SectionCard<Content: View>: View {
     var title: String?
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             if let title {
                 Text(title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Palette.ink)
             }
             content
         }
-        .padding(16)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.surface)
         .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(Palette.border, lineWidth: 1)
-        )
     }
 }
 
-/// 状态胶囊标签（颜色 + 文本，永远成对出现）。
+/// 状态胶囊（颜色 + 文本，永远成对出现）。面板内只保留顶部一个。
 @MainActor
 struct StatusTag: View {
     let text: String
@@ -100,7 +83,7 @@ struct StatusTag: View {
                 .fill(Palette.tone(tone))
                 .frame(width: 7, height: 7)
             Text(text)
-                .font(.system(size: 11, weight: .bold))
+                .font(.footnote.weight(.semibold))
                 .foregroundStyle(Palette.tone(tone))
         }
         .padding(.horizontal, 9)
@@ -109,6 +92,29 @@ struct StatusTag: View {
         .clipShape(Capsule())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("状态：\(text)")
+    }
+}
+
+/// 元信息行（原 MiniBadge 胶囊的极简替代）：仅次级文本，状态语义由可选色点表达。
+@MainActor
+struct MetaLine: View {
+    let text: String
+    var tone: StatusTone? = nil
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let tone {
+                Circle()
+                    .fill(Palette.tone(tone))
+                    .frame(width: 5, height: 5)
+            }
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(Palette.muted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -129,12 +135,12 @@ struct HealthCheckRow: View {
                     .foregroundStyle(.white)
             }
             .frame(width: 22, height: 22)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Text(detail)
-                    .font(.system(size: 11))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
             }
             Spacer(minLength: 0)
@@ -162,15 +168,15 @@ struct FormRow<Control: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text(label)
-                .font(.system(size: 12))
+                .font(.callout)
                 .foregroundStyle(Palette.muted)
                 .frame(width: 110, alignment: .leading)
             VStack(alignment: .leading, spacing: 5) {
                 control
                 if let help {
                     Text(help)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Palette.muted.opacity(0.9))
+                        .font(.caption2)
+                        .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -179,7 +185,7 @@ struct FormRow<Control: View>: View {
     }
 }
 
-/// 等宽数字文本（IP/端口）。
+/// 等宽数字文本（IP/端口）。数据保留参数化字号（表格惯例），非展示文本。
 @MainActor
 struct MonoText: View {
     let text: String
@@ -196,7 +202,7 @@ struct MonoText: View {
     }
 }
 
-/// 提示信息块（原型 infoBlock）。
+/// 提示信息块（原型 infoBlock；柔和底色，无描边）。
 @MainActor
 struct InfoBlock: View {
     let text: String
@@ -204,9 +210,9 @@ struct InfoBlock: View {
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
+                .font(.footnote)
             Text(text)
-                .font(.system(size: 11))
+                .font(.footnote)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .foregroundStyle(Palette.muted)
@@ -214,10 +220,6 @@ struct InfoBlock: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.softFill)
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Palette.border, lineWidth: 1)
-        )
         .accessibilityElement(children: .combine)
     }
 }

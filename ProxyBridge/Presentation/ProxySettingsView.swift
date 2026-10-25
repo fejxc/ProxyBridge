@@ -37,7 +37,7 @@ struct ProxySettingsView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(model.detection.limitations, id: \.self) { limit in
                             Label(limit, systemImage: "exclamationmark.circle")
-                                .font(.system(size: 11.5))
+                                .font(.subheadline)
                                 .foregroundStyle(Palette.orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -78,17 +78,13 @@ struct ProxySettingsView: View {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
                     Text(L10n.t("正在检测本地代理…"))
-                        .font(.system(size: 12.5, weight: .semibold))
+                        .font(.callout.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Palette.green.opacity(0.06))
+                .background(Palette.softFill)
                 .clipShape(RoundedRectangle(cornerRadius: 9))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9)
-                        .strokeBorder(Palette.green.opacity(0.3), lineWidth: 1)
-                )
             } else if model.detection.candidates.isEmpty {
                 emptyDetectionCard
             } else {
@@ -112,16 +108,16 @@ struct ProxySettingsView: View {
             ZStack {
                 Circle().fill(Palette.orange.opacity(0.15))
                 Image(systemName: "questionmark")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.callout.weight(.bold))
                     .foregroundStyle(Palette.orange)
             }
             .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 4) {
                 Text(L10n.t("未发现可用的本地代理候选"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.body.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Text(L10n.t("未发现可验证的本地代理端口。可手动指定入口；若代理使用 TUN/Network Extension，也可以使用动态 SOCKS5。"))
-                    .font(.system(size: 11))
+                    .font(.subheadline)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -130,10 +126,6 @@ struct ProxySettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.softFill)
         .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .strokeBorder(Palette.border, lineWidth: 1)
-        )
     }
 
     private var detectedCard: some View {
@@ -142,20 +134,20 @@ struct ProxySettingsView: View {
                 ZStack {
                     Circle().fill(Palette.green.opacity(0.15))
                     Image(systemName: "checkmark")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.callout.weight(.bold))
                         .foregroundStyle(Palette.green)
                 }
                 .frame(width: 28, height: 28)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(L10n.t("检测到本地代理端点"))
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(Palette.ink)
                     Text(scannedAtText)
-                        .font(.system(size: 11))
+                        .font(.subheadline)
                         .foregroundStyle(Palette.muted)
                 }
                 Spacer()
-                MiniBadge(text: "系统检测", tone: .gray)
+                MetaLine(text: "系统检测")
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
@@ -166,12 +158,8 @@ struct ProxySettingsView: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Palette.green.opacity(0.05))
+        .background(Palette.softFill)
         .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .strokeBorder(Palette.green.opacity(0.25), lineWidth: 1)
-        )
     }
 
     /// 时间格式化器创建开销高，进程内缓存复用（同 LogsView 的做法）。
@@ -191,7 +179,7 @@ struct ProxySettingsView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(candidate.endpoint.protocol.displayName + L10n.t(" 代理"))
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
                 Spacer()
                 capabilityBadge(candidate.capability)
@@ -199,11 +187,11 @@ struct ProxySettingsView: View {
             MonoText(text: candidate.endpoint.displayEndpoint, size: 11.5)
                 .foregroundStyle(Palette.muted)
             Text(L10n.t("来源：") + candidate.endpoint.origin.displayName)
-                .font(.system(size: 10.5))
+                .font(.footnote)
                 .foregroundStyle(Palette.muted.opacity(0.9))
             if let note = candidate.note {
                 Text(note)
-                    .font(.system(size: 10.5))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -212,23 +200,19 @@ struct ProxySettingsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Palette.surface)
         .clipShape(RoundedRectangle(cornerRadius: 9))
-        .overlay(
-            RoundedRectangle(cornerRadius: 9)
-                .strokeBorder(Palette.border, lineWidth: 1)
-        )
     }
 
     @ViewBuilder
     private func capabilityBadge(_ capability: ProxyCandidate.Capability) -> some View {
         switch capability {
         case .verified:
-            MiniBadge(text: "已验证", tone: .green)
+            MetaLine(text: "已验证", tone: .green)
         case .reachable:
-            MiniBadge(text: "端口可达 · 不可用作代理", tone: .orange)
+            MetaLine(text: "端口可达 · 不可用作代理", tone: .orange)
         case .failed:
-            MiniBadge(text: "验证失败", tone: .red)
+            MetaLine(text: "验证失败", tone: .red)
         case .untested:
-            MiniBadge(text: "未测试", tone: .gray)
+            MetaLine(text: "未测试")
         }
     }
 
@@ -263,7 +247,7 @@ struct ProxySettingsView: View {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(manualErrors, id: \.self) { err in
                         Label(err, systemImage: "xmark.circle.fill")
-                            .font(.system(size: 11.5))
+                            .font(.subheadline)
                             .foregroundStyle(Palette.red)
                     }
                 }
@@ -271,7 +255,7 @@ struct ProxySettingsView: View {
 
             HStack {
                 Text(L10n.t("手动指定的优先级高于自动检测结果；连接前仍会实测验证。"))
-                    .font(.system(size: 10.5))
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                 Spacer()
                 Button {
