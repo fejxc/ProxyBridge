@@ -15,7 +15,7 @@ struct ProxySettingsView: View {
             if model.currentProfile?.connectionMode == .reverseDynamic {
                 InfoBlock(text: "当前使用动态 SOCKS5：不需要 Mac 本地 HTTP/SOCKS 端口。此页的本地代理入口仅在切换到静态或自动模式时使用。")
             }
-            SectionCard(title: L10n.t("代理来源")) {
+            GroupBox(L10n.t("代理来源")) {
                 VStack(alignment: .leading, spacing: 14) {
                     Picker(L10n.t("模式"), selection: modeBinding) {
                         Text(L10n.t("自动检测")).tag(ProxySelectionMode.automatic)
@@ -33,7 +33,7 @@ struct ProxySettingsView: View {
             }
 
             if !model.detection.limitations.isEmpty {
-                SectionCard(title: L10n.t("限制与说明")) {
+                GroupBox(L10n.t("限制与说明")) {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(model.detection.limitations, id: \.self) { limit in
                             Label(limit, systemImage: "exclamationmark.circle")
@@ -220,26 +220,25 @@ struct ProxySettingsView: View {
 
     private var manualCard: some View {
         VStack(alignment: .leading, spacing: 14) {
-            SectionCard(title: nil) {
-                VStack(spacing: 14) {
-                    FormRow(label: "代理地址", help: "MVP 仅支持本机回环地址") {
-                        TextField("127.0.0.1", text: $manualHost)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 180)
-                            .autocorrectionDisabled()
+            // 外层已是 GroupBox 分组，表单行不再套第二层容器（避免双重装箱）
+            VStack(spacing: 14) {
+                FormRow(label: "代理地址", help: "MVP 仅支持本机回环地址") {
+                    TextField("127.0.0.1", text: $manualHost)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                        .autocorrectionDisabled()
+                }
+                FormRow(label: "代理端口") {
+                    PortField(value: $manualPort, prompt: "端口")
+                }
+                FormRow(label: "协议", help: "以连接时的实测验证为准") {
+                    Picker(L10n.t("协议"), selection: $manualProtocol) {
+                    Text("HTTP").tag(ProxyProtocol.http)
+                    Text("SOCKS5").tag(ProxyProtocol.socks5)
+                    Text("Mixed").tag(ProxyProtocol.mixed)
                     }
-                    FormRow(label: "代理端口") {
-                        PortField(value: $manualPort, prompt: "端口")
-                    }
-                    FormRow(label: "协议", help: "以连接时的实测验证为准") {
-                        Picker(L10n.t("协议"), selection: $manualProtocol) {
-                        Text("HTTP").tag(ProxyProtocol.http)
-                        Text("SOCKS5").tag(ProxyProtocol.socks5)
-                        Text("Mixed").tag(ProxyProtocol.mixed)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 220)
-                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 220)
                 }
             }
 

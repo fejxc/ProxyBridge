@@ -252,7 +252,7 @@ struct ServerEditorForm: View {
                 InfoBlock(text: "此服务器当前有活跃连接：修改主机 / 端口 / 认证 / 远程监听端口后，需断开并重连才能生效（旧隧道仍按旧配置运行）。")
             }
 
-            SectionCard(title: L10n.t("基本信息")) {
+            GroupBox(L10n.t("基本信息")) {
                 VStack(spacing: 14) {
                     FormRow(label: "服务器名称", help: "1–40 字符，用于识别") {
                         TextField(L10n.t("例如：实验室 GPU 服务器"), text: $profile.name)
@@ -320,7 +320,7 @@ struct ServerEditorForm: View {
                 }
             }
 
-            SectionCard(title: L10n.t("反向代理配置")) {
+            GroupBox(L10n.t("反向代理配置")) {
                 VStack(spacing: 14) {
                     FormRow(label: L10n.t("连接模式"), help: "自动模式优先使用真实验证通过的本地代理，否则切换到 OpenSSH 动态 SOCKS5。") {
                         Picker(L10n.t("连接模式"), selection: $profile.connectionMode) {

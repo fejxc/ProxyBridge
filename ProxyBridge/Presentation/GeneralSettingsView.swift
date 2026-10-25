@@ -7,29 +7,29 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SectionCard(title: L10n.t("应用行为")) {
+            // GroupBox + LabeledContent：系统设置分组行的原生构建块（不自带滚动，
+            // 与宿主 ScrollView 兼容；Form 会产生嵌套滚动故不用）
+            GroupBox(L10n.t("应用行为")) {
                 VStack(spacing: 0) {
                     settingRow(
                         title: L10n.t("登录时启动 ProxyBridge"),
                         subtitle: model.loginStatusDescription
                     ) {
-                        Toggle(L10n.t("登录时启动"), isOn: launchBinding)
+                        Toggle(isOn: launchBinding) { EmptyView() }
                             .toggleStyle(.switch)
-                            .controlSize(.small)
                             .labelsHidden()
                             .disabled(model.changingLoginState)
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("显示连接异常通知"),
                         subtitle: model.notificationStatusDescription
                     ) {
-                        Toggle(L10n.t("通知"), isOn: notificationBinding)
+                        Toggle(isOn: notificationBinding) { EmptyView() }
                             .toggleStyle(.switch)
-                            .controlSize(.small)
                             .labelsHidden()
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("远端健康检查间隔"),
                         subtitle: L10n.t("定期在服务器上通过 curl 验证代理，每次只运行一个探测。")
@@ -39,9 +39,10 @@ struct GeneralSettingsView: View {
                                 Text("\(seconds) " + L10n.t("秒")).tag(seconds)
                             }
                         }
+                        .labelsHidden()
                         .frame(width: 110)
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("本地轻量检查间隔"),
                         subtitle: L10n.t("定期验证当前隧道使用的本地代理，不登录远端。")
@@ -51,39 +52,37 @@ struct GeneralSettingsView: View {
                                 Text("\(seconds) " + L10n.t("秒")).tag(seconds)
                             }
                         }
+                        .labelsHidden()
                         .frame(width: 110)
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("复制日志时脱敏"),
                         subtitle: L10n.t("遮挡内网 IP、用户@主机、密钥路径与凭据。")
                     ) {
-                        Toggle(L10n.t("脱敏"), isOn: redactBinding)
+                        Toggle(isOn: redactBinding) { EmptyView() }
                             .toggleStyle(.switch)
-                            .controlSize(.small)
                             .labelsHidden()
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("启动时检查更新"),
                         subtitle: L10n.t("只读 GitHub 公开接口比对版本号，不上传任何数据；发现新版本时在菜单栏提示。")
                     ) {
-                        Toggle(L10n.t("检查更新"), isOn: updateCheckBinding)
+                        Toggle(isOn: updateCheckBinding) { EmptyView() }
                             .toggleStyle(.switch)
-                            .controlSize(.small)
                             .labelsHidden()
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("连接期间防止空闲休眠"),
                         subtitle: L10n.t("有活跃隧道时阻止系统空闲休眠（合盖睡眠不受影响）。断开或退出后立即恢复系统默认。")
                     ) {
-                        Toggle(L10n.t("防止休眠"), isOn: keepAwakeBinding)
+                        Toggle(isOn: keepAwakeBinding) { EmptyView() }
                             .toggleStyle(.switch)
-                            .controlSize(.small)
                             .labelsHidden()
                     }
-                    divider
+                    Divider()
                     settingRow(
                         title: L10n.t("界面语言"),
                         subtitle: L10n.t("切换后立即生效；事件详情与日志文案保持中文。")
@@ -93,9 +92,11 @@ struct GeneralSettingsView: View {
                                 Text(lang.displayName).tag(lang)
                             }
                         }
+                        .labelsHidden()
                         .frame(width: 140)
                     }
                 }
+                .padding(.vertical, 4)
             }
 
             HStack {
@@ -104,7 +105,7 @@ struct GeneralSettingsView: View {
             }
             InfoBlock(text: "自动重连由各服务器配置控制。网络故障按 1、2、4 秒逐步退避，最多等待 60 秒；网络路径恢复（Wi-Fi 重连等）会立即重建允许自动重连的连接，不再等 SSH 存活超时。认证或指纹错误不会自动重试。手动断开会停止恢复，睡眠后仅恢复此前允许自动重连的连接。")
 
-            SectionCard(title: L10n.t("关于")) {
+            GroupBox(L10n.t("关于")) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(L10n.t("ProxyBridge · SSH 反向代理管理工具"))
                         .font(.callout.weight(.semibold))
@@ -159,24 +160,22 @@ struct GeneralSettingsView: View {
                         EmptyView()
                     }
                 }
+                .padding(.vertical, 2)
             }
         }
         .onAppear { model.refreshSystemStatus() }
     }
 
-    private var divider: some View {
-        Rectangle()
-            .fill(Palette.border.opacity(0.6))
-            .frame(height: 1)
-    }
-
+    /// 设置行（系统 LabeledContent：左标题+副标题，右控件）。
     private func settingRow<Control: View>(
         title: String,
         subtitle: String,
         @ViewBuilder control: () -> Control
     ) -> some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 5) {
+        LabeledContent {
+            control()
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
@@ -184,11 +183,10 @@ struct GeneralSettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.leading)
             }
-            Spacer()
-            control()
         }
-        .padding(.vertical, 13)
+        .padding(.vertical, 9)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)。\(subtitle)")
     }
