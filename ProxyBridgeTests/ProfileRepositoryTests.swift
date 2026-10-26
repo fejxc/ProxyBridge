@@ -160,6 +160,32 @@ final class ProfileRepositoryTests: XCTestCase {
         XCTAssertEqual(doc.currentProfileId, real, "悬空的 currentProfileId 应回退到首个 profile")
     }
 
+    // MARK: 默认服务器
+
+    func testDefaultProfileIdRoundTripsAndLegacyFilesDecodeAsNil() throws {
+        let fileURL = temp.url.appendingPathComponent("profiles.json")
+        let real = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-000000000002")!
+        let json = """
+        {"schemaVersion":1,"currentProfileId":"\(real.uuidString)","defaultProfileId":"\(real.uuidString)","profiles":[
+          {"id":"\(real.uuidString)","name":"A","host":"a.example.com","sshPort":22,"username":"u","authMode":"agent","remotePort":7890,"proxySelectionMode":"automatic","preferredProtocol":"http","reconnectEnabled":true,"connectAtLaunch":false}
+        ]}
+        """
+        try json.data(using: .utf8)!.write(to: fileURL)
+        let saved = try makeRepo().load()
+        XCTAssertEqual(saved.defaultProfileId, real)
+
+        // 重新落盘再读：字段在 round-trip 中不丢
+        try makeRepo().save(saved)
+        XCTAssertEqual(try makeRepo().load().defaultProfileId, real)
+
+        // 旧格式文件没有该字段 → 解码为 nil，不报错
+        let legacy = """
+        {"schemaVersion":1,"currentProfileId":"\(real.uuidString)","profiles":[]}
+        """
+        try legacy.data(using: .utf8)!.write(to: fileURL)
+        XCTAssertNil(try makeRepo().load().defaultProfileId, "旧文件缺 defaultProfileId 必须解码为 nil")
+    }
+
     // MARK: 存储 URL
 
     func testDefaultDirectoryIsInApplicationSupport() {

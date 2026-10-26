@@ -5,6 +5,8 @@ struct ProfilesDocument: Codable, Equatable {
     var schemaVersion: Int
     var profiles: [ServerProfile]
     var currentProfileId: UUID?
+    /// 默认服务器（启动时选中）；nil = 恢复上次使用的服务器。可选字段向后兼容旧文件。
+    var defaultProfileId: UUID? = nil
 
     static let currentSchemaVersion = 1
 

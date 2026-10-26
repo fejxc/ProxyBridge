@@ -252,15 +252,22 @@ struct SmokeMain {
             preferredProtocol: .socks5, reconnectEnabled: false, connectAtLaunch: true
         )
         p.id = UUID()
-        let doc = ProfilesDocument(schemaVersion: 1, profiles: [p], currentProfileId: p.id)
+        var doc = ProfilesDocument(schemaVersion: 1, profiles: [p], currentProfileId: p.id)
+        doc.defaultProfileId = p.id
 
         do {
             try repo.save(doc)
             let reloaded = try ProfileRepository(directoryURL: dir).load()
-            check("S08", "profile JSON round-trip 全字段一致", reloaded.profiles == doc.profiles && reloaded.currentProfileId == p.id)
+            check("S08", "profile JSON round-trip 全字段一致", reloaded.profiles == doc.profiles && reloaded.currentProfileId == p.id && reloaded.defaultProfileId == p.id)
         } catch {
             check("S08", "profile JSON round-trip 全字段一致（异常：\(error)）", false)
         }
+
+        // 旧格式文件无 defaultProfileId 字段 → 解码为 nil（向后兼容）
+        try? "{\"schemaVersion\":1,\"currentProfileId\":null,\"profiles\":[]}".data(using: .utf8)!
+            .write(to: dir.appendingPathComponent("profiles.json"))
+        let legacyDoc = try? ProfileRepository(directoryURL: dir).load()
+        check("S08b", "旧格式 profiles.json 解码 defaultProfileId 为 nil", legacyDoc != nil && legacyDoc?.defaultProfileId == nil)
 
         // 损坏恢复
         let fileURL = dir.appendingPathComponent("profiles.json")

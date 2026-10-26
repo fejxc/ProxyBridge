@@ -182,6 +182,39 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.settingsTab, .servers)
     }
 
+    // MARK: 默认服务器（启动时选中）
+
+    func testLaunchSelectsDefaultServerOverLastUsedAndDeleteClearsIt() throws {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let a = validProfile(name: "A")
+        var b = validProfile(name: "B")
+        b.id = UUID()
+        // 上次使用 B，默认 A → 启动装载应选中 A
+        var doc = ProfilesDocument(schemaVersion: 1, profiles: [a, b], currentProfileId: b.id)
+        doc.defaultProfileId = a.id
+        try ProfileRepository(directoryURL: temp.url).save(doc)
+
+        let (model, _, _) = makeModel(directory: temp.url)
+        pinChineseForTesting()
+        XCTAssertEqual(model.currentProfileId, a.id, "启动时应选中默认服务器而非上次使用")
+        XCTAssertEqual(model.defaultServerProfileId, a.id)
+
+        // 删除默认服务器 → 默认位清空并持久化，选择回退到剩余服务器
+        model.deleteProfile(a.id)
+        XCTAssertNil(model.defaultServerProfileId)
+        XCTAssertEqual(model.currentProfileId, b.id)
+        XCTAssertNil(try ProfileRepository(directoryURL: temp.url).load().defaultProfileId)
+
+        // 重新指定与恢复「上次使用」
+        model.setDefaultServerProfile(b.id)
+        XCTAssertEqual(model.defaultServerProfileId, b.id)
+        model.setDefaultServerProfile(nil)
+        XCTAssertNil(model.defaultServerProfileId)
+        XCTAssertNil(try ProfileRepository(directoryURL: temp.url).load().defaultProfileId)
+        XCTAssertEqual(model.currentProfileId, b.id, "设置默认不改变当前选择，只影响下次启动")
+    }
+
     // MARK: 保存 / 删除
 
     func testSaveDraftProfilePersistsAndSelects() throws {

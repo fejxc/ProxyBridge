@@ -751,6 +751,13 @@ final class AppViewModel {
         profileManager.selectProfile(id)
     }
 
+    /// 默认服务器（启动时选中）；nil = 恢复「上次使用的服务器」。
+    var defaultServerProfileId: UUID? { profileManager.defaultProfileId }
+
+    func setDefaultServerProfile(_ id: UUID?) {
+        profileManager.setDefaultProfile(id)
+    }
+
     /// 新 profile 的编辑初值。不含真实服务器默认值（约束：示例不得内置为默认）。
     func makeNewProfileDraft() -> ServerProfile {
         profileManager.makeNewProfileDraft()

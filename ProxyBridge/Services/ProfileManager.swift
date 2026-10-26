@@ -42,6 +42,8 @@ final class ProfileManager {
 
     private(set) var profiles: [ServerProfile] = []
     private(set) var currentProfileId: UUID?
+    /// 默认服务器（启动时选中）；nil = 恢复上次使用的服务器。
+    private(set) var defaultProfileId: UUID?
     /// 侧栏「添加服务器」置位的「新草稿」信号；编辑器据此本地建立未保存草稿。
     private(set) var editorIsNewDraft = false
     private var document: ProfilesDocument = .empty()
@@ -76,14 +78,23 @@ final class ProfileManager {
             document = .empty()
         }
         profiles = document.profiles
-        currentProfileId = document.currentProfileId ?? profiles.first?.id
+        // 默认服务器优先：在册时启动选中它，否则恢复上次使用的服务器；
+        // 默认指向已删除的服务器（手改文件等）时按无默认处理并丢弃
+        if let def = document.defaultProfileId, profiles.contains(where: { $0.id == def }) {
+            currentProfileId = def
+            defaultProfileId = def
+        } else {
+            currentProfileId = document.currentProfileId ?? profiles.first?.id
+            defaultProfileId = nil
+        }
     }
 
     private func persist() {
         document = ProfilesDocument(
             schemaVersion: ProfilesDocument.currentSchemaVersion,
             profiles: profiles,
-            currentProfileId: currentProfileId
+            currentProfileId: currentProfileId,
+            defaultProfileId: defaultProfileId
         )
         do {
             try profileStore.save(document)
@@ -101,6 +112,19 @@ final class ProfileManager {
         currentProfileId = id
         persist()
         logStore.append(raw: "切换当前服务器：\(profiles.first { $0.id == id }?.name ?? "?")", level: .info, profileId: id)
+    }
+
+    /// 设置默认服务器（nil = 恢复「上次使用的服务器」）。立即持久化；不改变当前选择，
+    /// 默认只在下次启动装载时生效。
+    func setDefaultProfile(_ id: UUID?) {
+        if let id, !profiles.contains(where: { $0.id == id }) { return }
+        defaultProfileId = id
+        persist()
+        if let id {
+            logStore.append(raw: "已设为默认服务器：\(profiles.first { $0.id == id }?.name ?? "?")", level: .info, profileId: id)
+        } else {
+            logStore.append(raw: "默认服务器已恢复为「上次使用的服务器」", level: .info)
+        }
     }
 
     /// 新 profile 的编辑初值。不含真实服务器默认值（约束：示例不得内置为默认）。
@@ -219,6 +243,9 @@ final class ProfileManager {
         profiles.removeAll { $0.id == id }
         if currentProfileId == id {
             currentProfileId = profiles.first?.id
+        }
+        if defaultProfileId == id {
+            defaultProfileId = nil
         }
         logStore.append(raw: "已删除服务器「\(name)」", level: .warning, profileId: id)
         persist()

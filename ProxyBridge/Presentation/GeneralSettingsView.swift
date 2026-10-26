@@ -22,6 +22,20 @@ struct GeneralSettingsView: View {
                     }
                     Divider()
                     settingRow(
+                        title: L10n.t("默认服务器"),
+                        subtitle: L10n.t("App 启动时选中的服务器；是否自动连接仍由各服务器的「启动后连接」决定。")
+                    ) {
+                        Picker(L10n.t("默认服务器"), selection: defaultServerBinding) {
+                            Text(L10n.t("上次使用的服务器")).tag(UUID?.none)
+                            ForEach(model.profiles) { p in
+                                Text(p.name).tag(UUID?.some(p.id))
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 180)
+                    }
+                    Divider()
+                    settingRow(
                         title: L10n.t("显示连接异常通知"),
                         subtitle: model.notificationStatusDescription
                     ) {
@@ -193,6 +207,13 @@ struct GeneralSettingsView: View {
     }
 
     // MARK: 绑定
+
+    private var defaultServerBinding: Binding<UUID?> {
+        Binding(
+            get: { model.defaultServerProfileId },
+            set: { model.setDefaultServerProfile($0) }
+        )
+    }
 
     private var launchBinding: Binding<Bool> {
         Binding(
