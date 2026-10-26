@@ -26,6 +26,7 @@ struct SmokeMain {
         await viewModelChecks()
         await retargetWiringChecks()
         logStoreChecks()
+        diagnosticsChecks()
         await liveProxyChecks()
         sshChecks()
         await askpassChecks()
@@ -357,6 +358,47 @@ struct SmokeMain {
             let t = TunnelStatusPresentation.healthTriad(for: snap(.connected, local: true, ssh: false, remote: true))
             return t.ssh == .failed
         }())
+        check("S19d", "健康摘要：全过 → 绿「3 项检查通过」+ 刚刚验证", {
+            let now = Date()
+            let s = TunnelStatusPresentation.healthSummary(
+                checks: [(title: "a", display: .ok), (title: "b", display: .ok), (title: "c", display: .ok)],
+                lastVerifiedAt: now.addingTimeInterval(-10),
+                now: now
+            )
+            return s.title == "3 项检查通过" && s.detail == "刚刚验证" && s.tone == .green && !s.shouldExpandDetails
+        }())
+        check("S19e", "健康摘要：unknown 如实计数，绝不并入通过", {
+            let s = TunnelStatusPresentation.healthSummary(
+                checks: [(title: "a", display: .ok), (title: "b", display: .ok), (title: "c", display: .unknown)]
+            )
+            return s.title == "2/3 项已验证" && s.tone == .orange && !s.shouldExpandDetails
+        }())
+        check("S19f", "健康摘要：失败 → 红、置位展开、点名失败行", {
+            let s = TunnelStatusPresentation.healthSummary(
+                checks: [
+                    (title: "本地代理", display: .ok),
+                    (title: "SSH 隧道", display: .failed),
+                    (title: "远端代理", display: .failed),
+                    (title: "HTTP 入口", display: .unknown)
+                ]
+            )
+            return s.title == "2 项检查未通过" && s.tone == .red && s.shouldExpandDetails
+                && s.failedTitles == ["SSH 隧道", "远端代理"]
+                && s.detail == "SSH 隧道、远端代理；另 1 项未验证"
+        }())
+        check("S19g", "健康摘要：空列表 → 灰占位", TunnelStatusPresentation.healthSummary(checks: []).tone == .gray)
+    }
+
+    // MARK: LD 日志修复建议
+
+    static func diagnosticsChecks() {
+        let auth = LogDiagnostics.hint(for: "SSH 失败: Permission denied (publickey)")
+        check("LD01", "认证失败 → 建议核对凭据并重新输入", auth?.title == "SSH 认证失败" && (auth?.suggestion.contains("重新输入") ?? false))
+        let port = LogDiagnostics.hint(for: "bind 127.0.0.1:17891: Address already in use")
+        check("LD02", "端口占用 → 建议换远程监听端口", port?.title == "远端端口冲突")
+        check("LD03", "普通信息日志不硬造建议", LogDiagnostics.hint(for: "ProxyBridge 启动") == nil)
+        check("LD04", "多行/超长消息判定为默认折叠",
+              LogDiagnostics.needsCollapse("a\nb") && LogDiagnostics.needsCollapse(String(repeating: "x", count: 121)) && !LogDiagnostics.needsCollapse("短"))
     }
 
     // MARK: S20 复制模板

@@ -86,4 +86,40 @@ final class LogStoreTests: XCTestCase {
         memoryOnly.append(raw: "仅内存", level: .info)
         XCTAssertNil(memoryOnly.fileURL)
     }
+
+    // MARK: LogDiagnostics（修复建议纯函数）
+
+    func testHintMatchesAuthFailureCaseInsensitively() {
+        pinChineseForTesting()
+        let hint = LogDiagnostics.hint(for: "SSH 连接失败: permission denied (publickey,password)")
+        XCTAssertEqual(hint?.title, "SSH 认证失败")
+        XCTAssertTrue(hint?.suggestion.contains("核对用户名") ?? false)
+
+        let zh = LogDiagnostics.hint(for: "认证失败，已自动清除已存密码")
+        XCTAssertEqual(zh?.title, "SSH 认证失败")
+    }
+
+    func testHintForHostKeyChangePortConflictTimeoutAndRefused() {
+        pinChineseForTesting()
+        XCTAssertEqual(LogDiagnostics.hint(for: "REMOTE HOST IDENTIFICATION HAS CHANGED")?.title, "主机指纹变化")
+        XCTAssertEqual(LogDiagnostics.hint(for: "bind 127.0.0.1:17891: Address already in use")?.title, "远端端口冲突")
+        XCTAssertEqual(LogDiagnostics.hint(for: "Connection timed out")?.title, "连接超时")
+        XCTAssertEqual(
+            LogDiagnostics.hint(for: "ssh: connect to host 127.0.0.1 port 1: Connection refused")?.title,
+            "SSH 端口拒连"
+        )
+    }
+
+    func testHintNilForPlainMessages() {
+        pinChineseForTesting()
+        XCTAssertNil(LogDiagnostics.hint(for: "ProxyBridge 启动"))
+        XCTAssertNil(LogDiagnostics.hint(for: "已保存服务器「测试机」"))
+        XCTAssertNil(LogDiagnostics.hint(for: ""), "空消息不给建议")
+    }
+
+    func testNeedsCollapseRules() {
+        XCTAssertTrue(LogDiagnostics.needsCollapse("第一行\n第二行"), "多行原始输出默认折叠")
+        XCTAssertTrue(LogDiagnostics.needsCollapse(String(repeating: "长", count: 121)))
+        XCTAssertFalse(LogDiagnostics.needsCollapse("短消息"))
+    }
 }

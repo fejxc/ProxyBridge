@@ -214,6 +214,19 @@ struct RecoveryDecisionPresentation: Equatable {
     var display: HealthCheckDisplay
 }
 
+/// 健康检查的折叠摘要（菜单栏摘要行 / 概览页共用）。
+/// 折叠规则是三态语义红线的呈现延伸：
+/// - 全部通过 → 一行「N 项检查通过」；
+/// - 含未验证（unknown）→ 必须如实计入「已验证 x/N」，绝不并入「通过」；
+/// - 含失败 → `shouldExpandDetails` 置位并点名失败行，由调用方展开对应行。
+struct HealthSummaryPresentation: Equatable, Sendable {
+    var title: String
+    var detail: String?
+    var tone: StatusTone
+    var shouldExpandDetails: Bool
+    var failedTitles: [String]
+}
+
 struct StatusPresentation: Equatable, Sendable {
     var title: String
     var detail: String
@@ -296,6 +309,67 @@ enum TunnelStatusPresentation {
         case .some(false): return .failed
         case .none: return .unknown
         }
+    }
+
+    /// 把若干已渲染的健康检查行折叠成一行摘要。
+    /// `checks` 顺序与 UI 展示顺序一致；`lastVerifiedAt` 通常传 `lastRemoteProbeAt`。
+    static func healthSummary(
+        checks: [(title: String, display: HealthCheckDisplay)],
+        lastVerifiedAt: Date? = nil,
+        now: Date = Date()
+    ) -> HealthSummaryPresentation {
+        let total = checks.count
+        guard total > 0 else {
+            return HealthSummaryPresentation(
+                title: L10n.t("暂无检查结果"), detail: nil, tone: .gray,
+                shouldExpandDetails: false, failedTitles: []
+            )
+        }
+        let failed = checks.filter { $0.display == .failed }
+        let unverified = checks.filter { $0.display == .unknown }
+
+        if !failed.isEmpty {
+            var details = [failed.map(\.title).joined(separator: "、")]
+            if !unverified.isEmpty {
+                details.append(String(format: L10n.t("另 %d 项未验证"), unverified.count))
+            }
+            return HealthSummaryPresentation(
+                title: String(format: L10n.t("%d 项检查未通过"), failed.count),
+                detail: details.joined(separator: "；"),
+                tone: .red,
+                shouldExpandDetails: true,
+                failedTitles: failed.map(\.title)
+            )
+        }
+
+        if !unverified.isEmpty {
+            return HealthSummaryPresentation(
+                title: String(format: L10n.t("%d/%d 项已验证"), total - unverified.count, total),
+                detail: String(format: L10n.t("%d 项尚未验证（未验证 ≠ 可用）"), unverified.count),
+                tone: .orange,
+                shouldExpandDetails: false,
+                failedTitles: []
+            )
+        }
+
+        return HealthSummaryPresentation(
+            title: String(format: L10n.t("%d 项检查通过"), total),
+            detail: verificationAgeText(lastVerifiedAt, now: now),
+            tone: .green,
+            shouldExpandDetails: false,
+            failedTitles: []
+        )
+    }
+
+    /// 「刚刚验证 / N 分钟前验证」；超过一小时回退绝对时间，不硬造相对描述。
+    private static func verificationAgeText(_ date: Date?, now: Date) -> String? {
+        guard let date else { return nil }
+        let seconds = max(0, now.timeIntervalSince(date))
+        if seconds < 60 { return L10n.t("刚刚验证") }
+        if seconds < 3600 {
+            return String(format: L10n.t("%d 分钟前验证"), max(1, Int(seconds / 60)))
+        }
+        return date.formatted(date: .omitted, time: .shortened) + " " + L10n.t("验证")
     }
 
     /// 把自愈决策翻译成面板行；无决策时返回 nil，面板不占位。

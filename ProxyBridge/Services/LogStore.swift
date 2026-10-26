@@ -174,3 +174,50 @@ final class LogStore {
             .joined(separator: "\n")
     }
 }
+
+// MARK: - 日志修复建议（纯函数，便于单测）
+
+/// 把常见失败关键词翻译成「下一步动作」。只做提示、不下诊断结论；
+/// SSH stderr 的精确分类仍以 SSHErrorClassifier 为准，这里覆盖日志页的轻量引导。
+enum LogDiagnostics {
+    struct Hint: Equatable, Sendable {
+        let title: String
+        let suggestion: String
+    }
+
+    /// 长消息或多行原始输出默认折叠（提案：复杂原始日志不直接铺开）。
+    static func needsCollapse(_ message: String) -> Bool {
+        message.contains("\n") || message.count > 120
+    }
+
+    /// 按关键词给出修复建议；无匹配返回 nil，不硬造建议。首条命中即返回。
+    static func hint(for message: String) -> Hint? {
+        let lowered = message.lowercased()
+        let rules: [([String], Hint)] = [
+            (["permission denied", "authentication failed", "认证失败"],
+             Hint(title: L10n.t("SSH 认证失败"),
+                  suggestion: L10n.t("核对用户名与密码 / 密钥；认证失败会自动清除已存密码，重新输入即可。"))),
+            (["host key", "remote host identification has changed", "指纹"],
+             Hint(title: L10n.t("主机指纹变化"),
+                  suggestion: L10n.t("在应用内核对指纹后选择信任；若不是你操作的服务器，请勿信任。"))),
+            (["connection refused", "拒绝连接"],
+             Hint(title: L10n.t("SSH 端口拒连"),
+                  suggestion: L10n.t("确认服务器 sshd 正在运行，SSH 端口与防火墙放行正确。"))),
+            (["timed out", "timeout", "连接超时"],
+             Hint(title: L10n.t("连接超时"),
+                  suggestion: L10n.t("检查本机网络可达性（VPN / 代理），确认主机地址与端口。"))),
+            (["address already in use", "端口冲突", "端口被占用"],
+             Hint(title: L10n.t("远端端口冲突"),
+                  suggestion: L10n.t("换一个远程监听端口，或清理占用端口的旧进程；应用会自动检测并提示。"))),
+            (["curl"],
+             Hint(title: L10n.t("远端缺少依赖"),
+                  suggestion: L10n.t("按提示在服务器安装 curl，或改用 HTTP 兼容入口。"))),
+            (["exit=255", "exit status 255", "kex exchange", "banner exchange", "connection reset"],
+             Hint(title: L10n.t("SSH 连接中断"),
+                  suggestion: L10n.t("多为网络抖动；开启「自动重连」后应用会自动恢复隧道。"))),
+        ]
+        return rules.first { keywords, _ in
+            keywords.contains { lowered.contains($0.lowercased()) }
+        }?.1
+    }
+}

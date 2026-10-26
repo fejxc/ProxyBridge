@@ -142,6 +142,108 @@ final class TunnelStatusTests: XCTestCase {
         XCTAssertEqual(triad.remote, .unknown)
     }
 
+    // MARK: 健康摘要（折叠规则：全过摘要 / 未验证如实 / 失败展开）
+
+    func testHealthSummaryAllPassIsGreenCountWithFreshVerification() {
+        pinChineseForTesting()
+        let now = Date()
+        let summary = TunnelStatusPresentation.healthSummary(
+            checks: [
+                (title: "Mac 网络出口", display: .ok),
+                (title: "SSH 隧道", display: .ok),
+                (title: "远端 SOCKS5", display: .ok)
+            ],
+            lastVerifiedAt: now.addingTimeInterval(-10),
+            now: now
+        )
+        XCTAssertEqual(summary.title, "3 项检查通过")
+        XCTAssertEqual(summary.detail, "刚刚验证")
+        XCTAssertEqual(summary.tone, .green)
+        XCTAssertFalse(summary.shouldExpandDetails)
+        XCTAssertTrue(summary.failedTitles.isEmpty)
+    }
+
+    func testHealthSummaryKeepsUnverifiedHonestNeverMergedIntoPassed() {
+        pinChineseForTesting()
+        let summary = TunnelStatusPresentation.healthSummary(
+            checks: [
+                (title: "Mac 网络出口", display: .ok),
+                (title: "SSH 隧道", display: .ok),
+                (title: "远端 SOCKS5", display: .unknown)
+            ]
+        )
+        XCTAssertEqual(summary.title, "2/3 项已验证", "unknown 绝不能并入「通过」")
+        XCTAssertEqual(summary.detail, "1 项尚未验证（未验证 ≠ 可用）")
+        XCTAssertEqual(summary.tone, .orange)
+        XCTAssertFalse(summary.shouldExpandDetails)
+    }
+
+    func testHealthSummaryFailureExpandsAndNamesFailedRows() {
+        pinChineseForTesting()
+        let summary = TunnelStatusPresentation.healthSummary(
+            checks: [
+                (title: "本地代理", display: .ok),
+                (title: "SSH 隧道", display: .failed),
+                (title: "远端代理", display: .failed),
+                (title: "HTTP 兼容入口", display: .unknown)
+            ]
+        )
+        XCTAssertEqual(summary.title, "2 项检查未通过")
+        XCTAssertEqual(summary.tone, .red)
+        XCTAssertTrue(summary.shouldExpandDetails, "含失败必须置位自动展开")
+        XCTAssertEqual(summary.failedTitles, ["SSH 隧道", "远端代理"])
+        XCTAssertEqual(summary.detail, "SSH 隧道、远端代理；另 1 项未验证")
+    }
+
+    func testHealthSummaryVerificationAgeSteps() {
+        pinChineseForTesting()
+        let now = Date()
+        XCTAssertEqual(
+            TunnelStatusPresentation.healthSummary(
+                checks: [(title: "SSH 隧道", display: .ok)],
+                lastVerifiedAt: now.addingTimeInterval(-5 * 60),
+                now: now
+            ).detail,
+            "5 分钟前验证"
+        )
+        XCTAssertNil(
+            TunnelStatusPresentation.healthSummary(
+                checks: [(title: "SSH 隧道", display: .ok)],
+                lastVerifiedAt: nil,
+                now: now
+            ).detail,
+            "没有验证时间就不硬造一条"
+        )
+        let old = TunnelStatusPresentation.healthSummary(
+            checks: [(title: "SSH 隧道", display: .ok)],
+            lastVerifiedAt: now.addingTimeInterval(-2 * 3600),
+            now: now
+        )
+        XCTAssertNotNil(old.detail)
+        XCTAssertNotEqual(old.detail, "刚刚验证", "超过一小时回退绝对时间而非「刚刚」")
+    }
+
+    func testHealthSummaryAllUnknownCountsEverythingUnverified() {
+        pinChineseForTesting()
+        let summary = TunnelStatusPresentation.healthSummary(
+            checks: [
+                (title: "本地代理", display: .unknown),
+                (title: "SSH 隧道", display: .unknown),
+                (title: "远端代理", display: .unknown)
+            ]
+        )
+        XCTAssertEqual(summary.title, "0/3 项已验证")
+        XCTAssertEqual(summary.tone, .orange)
+    }
+
+    func testHealthSummaryEmptyChecksIsGrayPlaceholder() {
+        pinChineseForTesting()
+        let summary = TunnelStatusPresentation.healthSummary(checks: [])
+        XCTAssertEqual(summary.title, "暂无检查结果")
+        XCTAssertEqual(summary.tone, .gray)
+        XCTAssertFalse(summary.shouldExpandDetails)
+    }
+
     // MARK: Idle 快照初值
 
     func testIdleSnapshotDefaults() {
