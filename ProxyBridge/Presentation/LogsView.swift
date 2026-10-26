@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// 「连接日志」Tab：按时间/级别/服务器筛选，复制（默认脱敏）日志。
+/// 「连接日志」Tab：按时间/级别/服务器筛选 + 关键词搜索；
+/// 错误/警告行可展开查看完整内容与修复建议（长消息默认折叠）。
 @MainActor
 struct LogsView: View {
     @Environment(AppViewModel.self) private var model
@@ -8,6 +9,9 @@ struct LogsView: View {
     @State private var levelFilter: LogLevel?
     @State private var profileFilter: UUID?
     @State private var timeScope: TimeScope = .all
+    @State private var searchText = ""
+    /// 展开查看完整内容 / 修复建议的行（会话级视图状态，不持久化）。
+    @State private var expandedIDs: Set<UUID> = []
 
     enum TimeScope: String, CaseIterable, Identifiable {
         case all, lastHour, last24Hours
@@ -40,6 +44,7 @@ struct LogsView: View {
             if let levelFilter, entry.level != levelFilter { return false }
             if let profileFilter, entry.profileId != profileFilter { return false }
             if let cutoff = timeScope.cutoff, entry.timestamp < cutoff { return false }
+            if !searchText.isEmpty, !entry.message.localizedCaseInsensitiveContains(searchText) { return false }
             return true
         }
     }
@@ -69,6 +74,29 @@ struct LogsView: View {
                     }
                 }
                 .frame(width: 150)
+
+                HStack(spacing: 5) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.footnote)
+                        .foregroundStyle(Palette.muted)
+                    TextField(L10n.t("搜索日志…"), text: $searchText)
+                        .textFieldStyle(.plain)
+                        .autocorrectionDisabled()
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(Palette.muted)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(L10n.t("清除搜索"))
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Palette.softFill, in: RoundedRectangle(cornerRadius: 6))
+                .frame(width: 190)
 
                 Spacer()
 
@@ -112,19 +140,42 @@ struct LogsView: View {
     }
 
     private func logRow(_ entry: LogEntry) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        let expanded = expandedIDs.contains(entry.id)
+        let hint = entry.level == .error || entry.level == .warning
+            ? LogDiagnostics.hint(for: entry.message)
+            : nil
+        let collapsible = LogDiagnostics.needsCollapse(entry.message) || hint != nil
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(Self.timeFormatter.string(from: entry.timestamp))
                 .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Palette.muted.opacity(0.8))
-            Text(entry.message)
-                .font(.callout)
-                .foregroundStyle(Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(entry.message)
+                    .font(.callout)
+                    .foregroundStyle(Palette.ink)
+                    .lineLimit(expanded ? nil : 3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                if expanded, let hint {
+                    hintBlock(hint, tone: levelColor(entry.level))
+                }
+            }
             Spacer(minLength: 0)
             Text(entry.level.displayName)
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(levelColor(entry.level))
+            if collapsible {
+                Button {
+                    if expanded { expandedIDs.remove(entry.id) } else { expandedIDs.insert(entry.id) }
+                } label: {
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Palette.muted)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? L10n.t("收起详情") : L10n.t("查看详情与修复建议"))
+            }
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
@@ -134,6 +185,30 @@ struct LogsView: View {
                 .frame(height: 1)
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// 结论先行：一句标题 + 下一步动作，再谈细节。
+    private func hintBlock(_ hint: LogDiagnostics.Hint, tone: Color) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "wrench.and.screwdriver")
+                .font(.caption)
+                .foregroundStyle(tone)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(hint.title)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(tone)
+                Text(hint.suggestion)
+                    .font(.footnote)
+                    .foregroundStyle(Palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Palette.softFill.opacity(0.6))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(hint.title)，\(hint.suggestion)")
     }
 
     private func levelColor(_ level: LogLevel) -> Color {
