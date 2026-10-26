@@ -114,10 +114,11 @@ final class AppViewModelTests: XCTestCase {
     // MARK: 健康摘要装配（菜单栏折叠行，概览页将共用）
 
     func testHealthSummaryStaticRowsAndHonestUnverified() {
-        pinChineseForTesting()
         let temp = withTempDir()
         defer { temp.removeAll() }
         let (model, spy, _) = makeModel(directory: temp.url)
+        // pin 必须在 makeModel 之后：AppViewModel 初始化会把语言切回跟随系统（CI=en）
+        pinChineseForTesting()
         let p = validProfile()
         model.saveDraftProfile(p)
 
@@ -140,10 +141,11 @@ final class AppViewModelTests: XCTestCase {
     }
 
     func testHealthSummaryDynamicModeRenamesRowsAndAddsHTTPAdapter() {
-        pinChineseForTesting()
         let temp = withTempDir()
         defer { temp.removeAll() }
         let (model, spy, _) = makeModel(directory: temp.url)
+        // pin 必须在 makeModel 之后：AppViewModel 初始化会把语言切回跟随系统（CI=en）
+        pinChineseForTesting()
         var p = validProfile(name: "动态机")
         p.connectionMode = .reverseDynamic
         model.saveDraftProfile(p)
@@ -155,11 +157,13 @@ final class AppViewModelTests: XCTestCase {
             "动态模式改用出口语义标题，且 HTTP 兼容入口默认计入"
         )
 
-        // 全部已验证 → 绿「N 项检查通过」并带验证时间
+        // 动态模式本地层走 networkReachability（快照生效 reverseDynamic 后）；
+        // HTTP 入口 notRequested → 未验证，摘要 3/4 不得全绿
         spy.emit(TunnelSnapshot(
             profileId: p.id, phase: .connected,
             localProxyVerified: nil, sshProcessRunning: true, remoteProbeVerified: true,
-            lastRemoteProbeAt: Date(), humanReadableDetail: "t"
+            lastRemoteProbeAt: Date(), humanReadableDetail: "t",
+            effectiveMode: .reverseDynamic, networkReachability: true
         ))
         XCTAssertEqual(model.healthSummary.title, "3/4 项已验证", "HTTP 入口未验证（notRequested）时不得全绿")
         XCTAssertEqual(model.healthSummary.tone, .orange)
@@ -168,10 +172,10 @@ final class AppViewModelTests: XCTestCase {
     // MARK: 导航（概览为首页：先看状态，再进配置）
 
     func testSettingsOpenOnOverviewTabFirst() {
-        pinChineseForTesting()
         let temp = withTempDir()
         defer { temp.removeAll() }
         let (model, _, _) = makeModel(directory: temp.url)
+        pinChineseForTesting() // 与其他测试一致：pin 在 makeModel 之后
         XCTAssertEqual(SettingsTab.allCases.first, .overview, "概览必须是第一个分区")
         XCTAssertEqual(model.settingsTab, .overview, "设置窗口默认落在概览页")
         model.openSettings(tab: .servers)
