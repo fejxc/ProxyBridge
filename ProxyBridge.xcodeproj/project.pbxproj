@@ -585,7 +585,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
 				INFOPLIST_KEY_CFBundleIconFile = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 1.7.1;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.8.0;
 				INFOPLIST_KEY_CFBundleVersion = 18;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -613,7 +613,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = ProxyBridge;
 				INFOPLIST_KEY_CFBundleIconFile = ProxyBridge;
-				INFOPLIST_KEY_CFBundleShortVersionString = 1.7.1;
+				INFOPLIST_KEY_CFBundleShortVersionString = 1.8.0;
 				INFOPLIST_KEY_CFBundleVersion = 18;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = YES;
