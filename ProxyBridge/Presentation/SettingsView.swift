@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 设置窗口（约 960×680）：系统 NavigationSplitView 双栏 + 四个分区（原型 02）。
+/// 设置窗口（约 960×680）：系统 NavigationSplitView 双栏 + 五个分区，概览为首页（原型 02）。
 @MainActor
 struct SettingsView: View {
     @Environment(AppViewModel.self) private var model
@@ -88,6 +88,8 @@ struct SettingsView: View {
                     PasswordPromptCard()
                 }
                 switch model.settingsTab {
+                case .overview:
+                    OverviewView()
                 case .servers:
                     ServerEditorView()
                 case .proxy:
@@ -124,6 +126,7 @@ struct SettingsView: View {
 extension SettingsTab {
     var title: String {
         switch self {
+        case .overview: return L10n.t("概览")
         case .servers: return L10n.t("服务器配置")
         case .proxy: return L10n.t("本地代理")
         case .logs: return L10n.t("连接日志")
@@ -133,6 +136,7 @@ extension SettingsTab {
 
     var subtitle: String {
         switch self {
+        case .overview: return L10n.t("服务器运行状态与连接路径。")
         case .servers: return L10n.t("管理 SSH 主机、身份认证及远程监听端口。")
         case .proxy: return L10n.t("读取本机系统代理设置，验证可用协议与监听端口。")
         case .logs: return L10n.t("显示最近的事件、健康检查与错误原因。")
@@ -142,6 +146,7 @@ extension SettingsTab {
 
     var symbol: String {
         switch self {
+        case .overview: return "gauge"
         case .servers: return "square.stack.3d.up"
         case .proxy: return "point.3.filled.connected.trianglepath.dotted"
         case .logs: return "list.bullet.rectangle"

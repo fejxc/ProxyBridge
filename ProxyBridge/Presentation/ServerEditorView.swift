@@ -239,6 +239,9 @@ struct ServerEditorForm: View {
     let onDelete: (ServerProfile) -> Void
 
     @State private var confirmDelete = false
+    /// 高级配置（反向代理与端口）默认折叠：首次使用只关注基础五项；
+    /// 校验出现错误时强制展开，保证报错字段可见。手动展开后即使错误清空也保持展开。
+    @State private var advancedExpanded = false
 
     private var validation: ProfileValidation { ServerProfileRule.validate(profile) }
 
@@ -320,7 +323,15 @@ struct ServerEditorForm: View {
                 }
             }
 
-            GroupBox(L10n.t("反向代理配置")) {
+            // 高级层：反向代理与端口设置。折叠态由状态标签解释实际模式，
+            // 校验出错时强制展开（binding get 端兜底），避免报错字段被藏起。
+            GroupBox {
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: { advancedExpanded || !validation.errors.isEmpty },
+                        set: { advancedExpanded = $0 }
+                    )
+                ) {
                 VStack(spacing: 14) {
                     FormRow(label: L10n.t("连接模式"), help: "自动模式优先使用真实验证通过的本地代理，否则切换到 OpenSSH 动态 SOCKS5。") {
                         Picker(L10n.t("连接模式"), selection: $profile.connectionMode) {
@@ -353,12 +364,6 @@ struct ServerEditorForm: View {
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                         }
-                    }
-                    FormRow(label: L10n.t("本地代理")) {
-                        Text(proxySummary)
-                            .font(.callout)
-                            .foregroundStyle(Palette.ink)
-                            .textSelection(.enabled)
                     }
                     if profile.connectionMode != .reverseDynamic {
                         FormRow(label: "流量统计 Relay", help: "仅用于静态转发；动态 SOCKS5 的 SSH 业务流量不通过此 Relay 统计。") {
@@ -394,6 +399,19 @@ struct ServerEditorForm: View {
                     FormRow(label: "启动后连接") {
                         Toggle(L10n.t("App 启动后，自动连接此服务器"), isOn: $profile.connectAtLaunch)
                             .controlSize(.small)
+                    }
+                }
+                .padding(.top, 12)
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L10n.t("反向代理与端口设置"))
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(Palette.ink)
+                        Text(proxySummary)
+                            .font(.footnote)
+                            .foregroundStyle(Palette.muted)
+                            .lineLimit(1)
+                            .help(proxySummary)
                     }
                 }
             }

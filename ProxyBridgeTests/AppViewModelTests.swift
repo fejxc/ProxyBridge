@@ -111,6 +111,73 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(model.currentSnapshot.phase, .idle)
     }
 
+    // MARK: 健康摘要装配（菜单栏折叠行，概览页将共用）
+
+    func testHealthSummaryStaticRowsAndHonestUnverified() {
+        pinChineseForTesting()
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, _) = makeModel(directory: temp.url)
+        let p = validProfile()
+        model.saveDraftProfile(p)
+
+        // idle：SSH 层失败 → 摘要红、置位展开、点名失败行
+        XCTAssertEqual(model.displaysDynamicMode, false, "automatic 配置在快照未生效前按静态展示")
+        XCTAssertEqual(model.healthCheckRows.map(\.title), ["本地代理", "SSH 隧道", "远端代理"])
+        XCTAssertEqual(model.healthSummary.title, "1 项检查未通过")
+        XCTAssertEqual(model.healthSummary.failedTitles, ["SSH 隧道"])
+        XCTAssertTrue(model.healthSummary.shouldExpandDetails)
+
+        // connected + 远端未验证 → 2/3 已验证：unknown 绝不并入「通过」
+        spy.emit(TunnelSnapshot(
+            profileId: p.id, phase: .connected,
+            localProxyVerified: true, sshProcessRunning: true, remoteProbeVerified: nil,
+            lastRemoteProbeAt: nil, humanReadableDetail: "t"
+        ))
+        XCTAssertEqual(model.healthSummary.title, "2/3 项已验证")
+        XCTAssertEqual(model.healthSummary.tone, .orange)
+        XCTAssertFalse(model.healthSummary.shouldExpandDetails)
+    }
+
+    func testHealthSummaryDynamicModeRenamesRowsAndAddsHTTPAdapter() {
+        pinChineseForTesting()
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, _) = makeModel(directory: temp.url)
+        var p = validProfile(name: "动态机")
+        p.connectionMode = .reverseDynamic
+        model.saveDraftProfile(p)
+
+        XCTAssertTrue(model.displaysDynamicMode)
+        XCTAssertEqual(
+            model.healthCheckRows.map(\.title),
+            ["Mac 网络出口", "SSH 隧道", "远端 SOCKS5", "HTTP 兼容入口"],
+            "动态模式改用出口语义标题，且 HTTP 兼容入口默认计入"
+        )
+
+        // 全部已验证 → 绿「N 项检查通过」并带验证时间
+        spy.emit(TunnelSnapshot(
+            profileId: p.id, phase: .connected,
+            localProxyVerified: nil, sshProcessRunning: true, remoteProbeVerified: true,
+            lastRemoteProbeAt: Date(), humanReadableDetail: "t"
+        ))
+        XCTAssertEqual(model.healthSummary.title, "3/4 项已验证", "HTTP 入口未验证（notRequested）时不得全绿")
+        XCTAssertEqual(model.healthSummary.tone, .orange)
+    }
+
+    // MARK: 导航（概览为首页：先看状态，再进配置）
+
+    func testSettingsOpenOnOverviewTabFirst() {
+        pinChineseForTesting()
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, _, _) = makeModel(directory: temp.url)
+        XCTAssertEqual(SettingsTab.allCases.first, .overview, "概览必须是第一个分区")
+        XCTAssertEqual(model.settingsTab, .overview, "设置窗口默认落在概览页")
+        model.openSettings(tab: .servers)
+        XCTAssertEqual(model.settingsTab, .servers)
+    }
+
     // MARK: 保存 / 删除
 
     func testSaveDraftProfilePersistsAndSelects() throws {

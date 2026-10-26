@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 
 /// 菜单栏弹出面板（约 368pt 宽，结构对应原型 01）。
+/// 1.8 起职责收敛为「控制 + 摘要」：健康检查默认折叠为一行摘要（失败自动展开），
+/// 大段解释交给设置窗口与日志页；流量路径按真实业务流向绘制（Linux 应用 → Mac 出口）。
 @MainActor
 struct MenuBarView: View {
     @Environment(AppViewModel.self) private var model
@@ -9,8 +11,8 @@ struct MenuBarView: View {
     /// 改为面板内联确认条；8 秒无操作自动复位）。
     @State private var confirmQuit = false
     @State private var confirmQuitResetTask: Task<Void, Never>?
-    /// 自愈轨迹默认只占一行；展开后才显示状态迁移和原因，减少面板噪声。
-    @State private var showRecoveryTrace = false
+    /// 健康检查详情默认折叠；手动展开与「含失败自动展开」取或。
+    @State private var showAllChecks = false
 
     /// 打开设置并把窗口带到前台（菜单栏应用无 Dock 图标，必须显式激活）。
     private func openSettingsFront(tab: SettingsTab) {
@@ -70,7 +72,7 @@ struct MenuBarView: View {
                     RemotePortConflictCard()
                 }
                 checks
-                recoveryTraceCard
+                RecoveryTraceCard()
                 if let tool = model.remoteToolHint {
                     RemoteToolHintCard(tool: tool) {
                         model.runHealthCheck()
@@ -78,19 +80,17 @@ struct MenuBarView: View {
                         model.copyRemoteToolInstallHint()
                     }
                 }
-                if let profile = model.currentProfile {
+                // 流量统计仅静态转发模式渲染：动态 SOCKS5 无诚实数据源，不占面板空间。
+                if !model.displaysDynamicMode, let profile = model.currentProfile {
                     TrafficStatsView(
                         session: model.trafficStore.session(for: profile.id),
                         connected: model.currentSnapshot.sshProcessRunning &&
-                            [.connected, .degraded].contains(model.currentSnapshot.phase),
-                        supported: !isDynamicMode,
-                        connectedSince: model.connectedSince[profile.id]
+                            [.connected, .degraded].contains(model.currentSnapshot.phase)
                     )
                 }
                 actions
                 links
             }
-            footer
         }
         .padding(16)
         .frame(width: 368)
@@ -326,322 +326,74 @@ struct MenuBarView: View {
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(alignment: .top, spacing: 8) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(isDynamicMode ? L10n.t("Mac 网络出口") : L10n.t("本地上游 · Mac"))
-                            .font(.footnote)
-                            .foregroundStyle(Palette.muted)
-                        MonoText(text: localEndpointDisplay)
-                        MetaLine(text: L10n.t("模式 · ") + connectionModeLabel)
-                        MetaLine(text: localRouteBadge, tone: isDynamicMode ? .orange : nil)
-                        if let egress = model.detection.egressIP {
-                            MetaLine(text: L10n.t("出口 ") + egress)
-                                .help(L10n.t("经本地代理观测到的出口 IP；变化即代表节点切换，应用会自动重新验证"))
-                        }
-                    }
-                    Spacer(minLength: 0)
-                    Image(systemName: "arrow.right")
-                        .font(.callout)
-                        .foregroundStyle(Palette.muted.opacity(0.7))
-                        .padding(.top, 12)
-                    Spacer(minLength: 0)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(isDynamicMode
-                             ? (model.currentProfile?.httpAdapterEnabled == true ? L10n.t("Linux Codex HTTP") : L10n.t("Linux SOCKS5"))
-                             : L10n.t("Linux 远端代理"))
-                            .font(.footnote)
-                            .foregroundStyle(Palette.muted)
-                        MonoText(text: remoteEndpointDisplay)
-                        MetaLine(text: L10n.t("仅 127.0.0.1 · TCP"), tone: .green)
-                        if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
-                            MonoText(text: "SOCKS5 \(model.currentProfile?.remoteSocksListenDisplay ?? "—")", size: 10)
-                            MetaLine(text: adapterBadgeText, tone: adapterBadgeTone)
-                        }
-                    }
-                }
+                TrafficPathView()
             }
         }
     }
 
-    private var localEndpointDisplay: String {
-        guard let profile = model.currentProfile else { return "—" }
-        if isDynamicMode { return L10n.t("使用 Mac 当前网络栈") }
-        if let endpoint = model.currentSnapshot.activeLocalEndpoint {
-            return "\(endpoint.displayEndpoint) · \(endpoint.protocol.displayName)"
-        }
-        switch EndpointResolver.resolve(profile: profile, detection: model.detection) {
-        case .manual(let endpoint), .auto(let endpoint):
-            return "\(endpoint.displayEndpoint) · \(endpoint.protocol.displayName)"
-        case .none where profile.connectionMode == .automatic:
-            return L10n.t("未发现入口；自动模式将尝试 SOCKS5")
-        case .none:
-            return L10n.t("需要可验证的本地上游")
-        }
-    }
-
-    private var isDynamicMode: Bool {
-        if model.currentSnapshot.effectiveMode == .reverseDynamic { return true }
-        if model.currentSnapshot.effectiveMode == .staticForward { return false }
-        return model.currentProfile?.connectionMode == .reverseDynamic
-    }
-
-    private var connectionModeLabel: String {
-        if isDynamicMode { return ConnectionMode.reverseDynamic.displayName }
-        if model.currentSnapshot.effectiveMode == .staticForward { return ConnectionMode.staticForward.displayName }
-        return model.currentProfile?.connectionMode.displayName ?? "—"
-    }
-
-    private var localRouteBadge: String {
-        if isDynamicMode { return L10n.t("不需要本地代理端口") }
-        if model.currentSnapshot.effectiveMode == .staticForward { return L10n.t("本地入口已通过实测") }
-        return model.resolvedEndpointDescription
-    }
-
-    private var remoteEndpointDisplay: String {
-        guard let profile = model.currentProfile else { return "—" }
-        if isDynamicMode {
-            return profile.httpAdapterEnabled
-                ? "HTTP \(profile.remoteHTTPListenDisplay)"
-                : "SOCKS5 \(profile.remoteSocksListenDisplay)"
-        }
-        let endpoint = model.currentSnapshot.activeLocalEndpoint
-        return "\(ServerProfile.remoteBindHost):\(profile.remotePort) · \(endpoint?.protocol.displayName ?? profile.preferredProtocol.displayName)"
-    }
-
-    private var adapterBadgeText: String {
-        let snapshot = model.currentSnapshot
-        if snapshot.httpAdapterStatus == .verified { return L10n.t("HTTP CONNECT 已验证") }
-        if let detail = snapshot.httpAdapterDetail, !detail.isEmpty { return detail }
-        return L10n.t("HTTP 入口待验证")
-    }
-
-    private var adapterBadgeTone: StatusTone {
-        switch model.currentSnapshot.httpAdapterStatus {
-        case .verified: return .green
-        case .unavailable: return .orange
-        default: return .gray
-        }
-    }
-
-    // MARK: 三层健康
+    // MARK: 健康摘要（全过折叠为一行；含失败自动展开并点名）
 
     private var checks: some View {
-        let triad = model.healthTriad
+        let summary = model.healthSummary
+        let expanded = showAllChecks || summary.shouldExpandDetails
         return VStack(spacing: 0) {
-            HealthCheckRow(title: isDynamicMode ? L10n.t("Mac 网络出口") : L10n.t("本地代理"), display: triad.local, detail: localDetail(for: triad.local))
-            separator
-            HealthCheckRow(title: L10n.t("SSH 隧道"), display: triad.ssh, detail: sshDetail(for: triad.ssh))
-            separator
-            HealthCheckRow(title: isDynamicMode ? L10n.t("远端 SOCKS5") : L10n.t("远端代理"), display: triad.remote, detail: remoteDetail(for: triad.remote))
-            if isDynamicMode && model.currentProfile?.httpAdapterEnabled == true {
-                separator
-                HealthCheckRow(title: L10n.t("HTTP 兼容入口"), display: httpAdapterDisplay, detail: httpAdapterDetail)
+            summaryHeader(summary, expanded: expanded)
+            if expanded {
+                // 展开行与摘要消费同一份装配（healthCheckRows），标题永不分叉
+                HealthRowsDetailList()
+                    .padding(.top, 6)
             }
-            if let recovery = TunnelStatusPresentation.recoveryDecision(for: model.currentSnapshot) {
-                separator
-                HealthCheckRow(title: recovery.title, display: recovery.display, detail: recovery.detail)
-            }
-            separator
-            // 显式入口（原为整块隐性点击，可发现性差）：次级链接 + chevron
-            HStack {
-                Spacer(minLength: 0)
-                Button {
-                    openSettingsFront(tab: .logs)
-                } label: {
-                    HStack(spacing: 3) {
-                        Text(L10n.t("点击查看日志定位原因"))
-                        Image(systemName: "chevron.right")
+            if summary.tone != .green {
+                HStack {
+                    Spacer(minLength: 0)
+                    Button {
+                        openSettingsFront(tab: .logs)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(L10n.t("点击查看日志定位原因"))
+                            Image(systemName: "chevron.right")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(Palette.muted)
                     }
-                    .font(.caption2)
-                    .foregroundStyle(Palette.muted)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(L10n.t("查看日志"))
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L10n.t("查看日志"))
+                .padding(.vertical, 7)
+                .padding(.trailing, 2)
             }
-            .padding(.vertical, 7)
-            .padding(.trailing, 2)
         }
         .padding(.vertical, 4)
     }
 
-    /// magpie Routing 面板的 SwiftUI 版迁移：最近决策 + 可展开原因 + 主动复测。
-    @ViewBuilder
-    private var recoveryTraceCard: some View {
-        let history = model.currentSnapshot.recoveryHistory
-        if !history.isEmpty {
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        showRecoveryTrace.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(Palette.tone(recoveryTone))
-                            .frame(width: 7, height: 7)
-                        Text(L10n.t("自愈轨迹"))
-                            .font(.callout.weight(.semibold))
-                            .foregroundStyle(Palette.ink)
-                        Text(String(format: L10n.t("最近 %d 条"), history.count))
-                            .font(.caption2)
-                            .foregroundStyle(Palette.muted)
-                        Spacer(minLength: 4)
-                        Image(systemName: showRecoveryTrace ? "chevron.up" : "chevron.down")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(Palette.muted)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(L10n.t("自愈轨迹") + "，\(history.count) " + L10n.t("条记录"))
-                .accessibilityHint(L10n.t("展开查看每一步自愈原因"))
-
-                if showRecoveryTrace {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(history.enumerated().reversed()), id: \.offset) { _, decision in
-                            recoveryRow(decision)
-                        }
-                    }
-                    .padding(.leading, 13)
-                    .overlay(alignment: .leading) {
-                        Rectangle()
-                            .fill(Palette.border)
-                            .frame(width: 1)
-                            .padding(.vertical, 4)
-                    }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-
-                HStack(spacing: 8) {
-                    Button {
-                        model.runHealthCheck()
-                    } label: {
-                        Label(L10n.t("立即复测"), systemImage: "arrow.clockwise")
-                            .font(.footnote)
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        openSettingsFront(tab: .logs)
-                    } label: {
-                        Label(L10n.t("查看日志"), systemImage: "list.bullet.rectangle")
-                            .font(.footnote)
-                    }
-                    .controlSize(.small)
-                    .buttonStyle(.bordered)
-                    Spacer(minLength: 0)
-                }
-            }
-            .padding(12)
-            .background(Palette.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .accessibilityElement(children: .contain)
-        }
-    }
-
-    private var recoveryTone: StatusTone {
-        model.currentSnapshot.lastRecoveryDecision.map { Palette.recoveryTone($0) } ?? .gray
-    }
-
-    private func recoveryRow(_ decision: TunnelRecoveryDecision) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(decision.state.displayName)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Palette.tone(Palette.recoveryTone(decision)))
-                Text(decision.action.displayName)
-                    .font(.caption2)
-                    .foregroundStyle(Palette.muted)
+    private func summaryHeader(_ summary: HealthSummaryPresentation, expanded: Bool) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { showAllChecks.toggle() }
+        } label: {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Palette.tone(summary.tone))
+                    .frame(width: 8, height: 8)
+                Text(summary.title)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Palette.ink)
                 Spacer(minLength: 4)
-                Text(decision.decidedAt.formatted(date: .omitted, time: .standard))
-                    .font(.caption2)
-                    .monospacedDigit()
+                if let detail = summary.detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(Palette.muted)
+                        .lineLimit(1)
+                }
+                Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                    .font(.footnote.weight(.semibold))
                     .foregroundStyle(Palette.muted)
             }
-            if let next = decision.nextActionAt, decision.state == .scheduled {
-                Text(L10n.t("下次执行 ") + next.formatted(date: .omitted, time: .standard))
-                    .font(.caption2)
-                    .monospacedDigit()
-                    .foregroundStyle(Palette.muted)
-            }
-            if !decision.reason.isEmpty {
-                Text(decision.reason)
-                    .font(.caption2)
-                    .foregroundStyle(Palette.muted.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
+            .contentShape(Rectangle())
         }
-        .padding(.vertical, 2)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(decision.state.displayName)，\(decision.action.displayName)，\(decision.reason)")
-    }
-
-    private var separator: some View {
-        Rectangle()
-            .fill(Palette.border.opacity(0.6))
-            .frame(height: 1)
-    }
-
-    private func localDetail(for display: HealthCheckDisplay) -> String {
-        if isDynamicMode {
-            switch display {
-            case .ok: return L10n.t("经远端 SOCKS5 请求验证 Mac 当前网络出站；Clash 节点尚未确认")
-            case .unknown: return L10n.t("尚未通过远端请求验证 Mac 出站")
-            case .failed: return L10n.t("经 SSH 反向 SOCKS5 的公网请求失败")
-            }
-        }
-        switch display {
-        case .ok: return L10n.t("本地代理已通过协议验证")
-        case .unknown: return L10n.t("尚未验证本地代理可用性")
-        case .failed: return L10n.t("本地代理验证失败：请确认代理已启动或改用手动配置")
-        }
-    }
-
-    private func sshDetail(for display: HealthCheckDisplay) -> String {
-        switch display {
-        case .ok:
-            return L10n.t("隧道运行中")
-        case .unknown: return L10n.t("正在建立 SSH 连接…")
-        case .failed: return model.currentSnapshot.phase == .authRequired
-            ? L10n.t("需要核对服务器指纹或 SSH 身份验证")
-            : L10n.t("SSH 未连接")
-        }
-    }
-
-    /// 当前远端验证实际使用的目标 host（业务目标或默认 api.openai.com）。
-    private var probeTargetHost: String {
-        if let raw = model.currentProfile?.probeTargetURL,
-           let url = URL(string: raw), let host = url.host {
-            return host
-        }
-        return "api.openai.com"
-    }
-
-    private func remoteDetail(for display: HealthCheckDisplay) -> String {
-        switch display {
-        case .ok:
-            let suffix = L10n.t("（仅代表该目标可达）")
-            return isDynamicMode
-                ? L10n.t("Linux SOCKS5 已通过远端 HTTPS 请求验证") + " → \(probeTargetHost)" + suffix
-                : L10n.t("远端代理端到端验证通过") + " → \(probeTargetHost)" + suffix
-        case .unknown: return isDynamicMode ? L10n.t("Linux SOCKS5 尚未验证") : L10n.t("远端代理未验证（未验证 ≠ 可用）")
-        case .failed: return L10n.t("远端验证失败，请查看日志定位原因")
-        }
-    }
-
-    private var httpAdapterDisplay: HealthCheckDisplay {
-        if model.currentSnapshot.phase == .idle { return .unknown }
-        switch model.currentSnapshot.httpAdapterStatus {
-        case .verified: return .ok
-        case .unavailable: return .failed
-        case .notRequested, .checking, .running: return .unknown
-        }
-    }
-
-    private var httpAdapterDetail: String {
-        model.currentSnapshot.httpAdapterDetail ?? L10n.t("等待 SOCKS5 验活后检查 HTTP CONNECT 入口")
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary.detail.map { "\(summary.title)，\($0)" } ?? summary.title)
+        .accessibilityHint(L10n.t("展开或收起分层检查详情"))
     }
 
     // MARK: 操作
@@ -729,12 +481,5 @@ struct MenuBarView: View {
             }
             .buttonStyle(.link)
         }
-    }
-
-    private var footer: some View {
-        Text(L10n.t("产品重点：随时知道本地代理、SSH 隧道、远端代理各自是否正常，而不是只看到「SSH 已连接」。"))
-            .font(.caption2)
-            .foregroundStyle(Palette.muted.opacity(0.85))
-            .fixedSize(horizontal: false, vertical: true)
     }
 }

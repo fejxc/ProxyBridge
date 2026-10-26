@@ -2,9 +2,9 @@ import Foundation
 import AppKit
 import Observation
 
-/// 设置窗口的四个分区。
+/// 设置窗口的分区（概览为首页：先看状态，再进配置）。
 enum SettingsTab: String, CaseIterable, Identifiable, Sendable {
-    case servers, proxy, logs, general
+    case overview, servers, proxy, logs, general
     var id: String { rawValue }
 }
 
@@ -74,7 +74,7 @@ final class AppViewModel {
         pendingPasswordProfileId.flatMap { id in profiles.first { $0.id == id }?.name }
     }
     private(set) var settings: AppSettings = .defaults()
-    var settingsTab: SettingsTab = .servers
+    var settingsTab: SettingsTab = .overview
     var showSettingsWindow: (() -> Void)?
 
     // MARK: - 主机指纹引导（P0：首次连接免终端）
@@ -599,6 +599,109 @@ final class AppViewModel {
 
     var healthTriad: (local: HealthCheckDisplay, ssh: HealthCheckDisplay, remote: HealthCheckDisplay) {
         TunnelStatusPresentation.healthTriad(for: currentSnapshot)
+    }
+
+    /// 当前是否按动态 SOCKS5 语义展示：快照生效模式优先，未生效时看配置意图。
+    /// 面板与概览页共用，避免两处对「动态 / 静态」的判断分叉。
+    var displaysDynamicMode: Bool {
+        if currentSnapshot.effectiveMode == .reverseDynamic { return true }
+        if currentSnapshot.effectiveMode == .staticForward { return false }
+        return currentProfile?.connectionMode == .reverseDynamic
+    }
+
+    /// 健康检查行装配：标题即 UI 行标题，摘要折叠与展开行共用同一份数据。
+    /// 顺序固定：本地(Mac 出口) / SSH 隧道 / 远端(/HTTP 兼容入口)。
+    var healthCheckRows: [(title: String, display: HealthCheckDisplay)] {
+        let triad = healthTriad
+        let dynamic = displaysDynamicMode
+        var rows = [
+            (title: dynamic ? L10n.t("Mac 网络出口") : L10n.t("本地代理"), display: triad.local),
+            (title: L10n.t("SSH 隧道"), display: triad.ssh),
+            (title: dynamic ? L10n.t("远端 SOCKS5") : L10n.t("远端代理"), display: triad.remote)
+        ]
+        if dynamic, currentProfile?.httpAdapterEnabled == true {
+            rows.append((title: L10n.t("HTTP 兼容入口"), display: httpAdapterHealthDisplay))
+        }
+        return rows
+    }
+
+    /// 健康摘要行：全过折叠为一行；unknown 如实计数；失败置位展开并点名。
+    var healthSummary: HealthSummaryPresentation {
+        TunnelStatusPresentation.healthSummary(
+            checks: healthCheckRows,
+            lastVerifiedAt: currentSnapshot.lastRemoteProbeAt
+        )
+    }
+
+    /// HTTP 兼容入口的健康三态（快照 idle 时视为尚未开始）。
+    var httpAdapterHealthDisplay: HealthCheckDisplay {
+        if currentSnapshot.phase == .idle { return .unknown }
+        switch currentSnapshot.httpAdapterStatus {
+        case .verified: return .ok
+        case .unavailable: return .failed
+        case .notRequested, .checking, .running: return .unknown
+        }
+    }
+
+    /// 健康行详情文案：菜单栏展开行与概览页共用。index 与 healthCheckRows 顺序一致。
+    func healthRowDetail(index: Int, display: HealthCheckDisplay) -> String {
+        switch index {
+        case 0: return localHealthDetail(display)
+        case 1: return sshHealthDetail(display)
+        case 2: return remoteHealthDetail(display)
+        default: return httpAdapterHealthDetail
+        }
+    }
+
+    private func localHealthDetail(_ display: HealthCheckDisplay) -> String {
+        if displaysDynamicMode {
+            switch display {
+            case .ok: return L10n.t("经远端 SOCKS5 请求验证 Mac 当前网络出站；Clash 节点尚未确认")
+            case .unknown: return L10n.t("尚未通过远端请求验证 Mac 出站")
+            case .failed: return L10n.t("经 SSH 反向 SOCKS5 的公网请求失败")
+            }
+        }
+        switch display {
+        case .ok: return L10n.t("本地代理已通过协议验证")
+        case .unknown: return L10n.t("尚未验证本地代理可用性")
+        case .failed: return L10n.t("本地代理验证失败：请确认代理已启动或改用手动配置")
+        }
+    }
+
+    private func sshHealthDetail(_ display: HealthCheckDisplay) -> String {
+        switch display {
+        case .ok:
+            return L10n.t("隧道运行中")
+        case .unknown: return L10n.t("正在建立 SSH 连接…")
+        case .failed: return currentSnapshot.phase == .authRequired
+            ? L10n.t("需要核对服务器指纹或 SSH 身份验证")
+            : L10n.t("SSH 未连接")
+        }
+    }
+
+    /// 当前远端验证实际使用的目标 host（业务目标或默认 api.openai.com）。
+    private var probeTargetHost: String {
+        if let raw = currentProfile?.probeTargetURL,
+           let url = URL(string: raw), let host = url.host {
+            return host
+        }
+        return "api.openai.com"
+    }
+
+    private func remoteHealthDetail(_ display: HealthCheckDisplay) -> String {
+        switch display {
+        case .ok:
+            let suffix = L10n.t("（仅代表该目标可达）")
+            return displaysDynamicMode
+                ? L10n.t("Linux SOCKS5 已通过远端 HTTPS 请求验证") + " → \(probeTargetHost)" + suffix
+                : L10n.t("远端代理端到端验证通过") + " → \(probeTargetHost)" + suffix
+        case .unknown: return displaysDynamicMode ? L10n.t("Linux SOCKS5 尚未验证") : L10n.t("远端代理未验证（未验证 ≠ 可用）")
+        case .failed: return L10n.t("远端验证失败，请查看日志定位原因")
+        }
+    }
+
+    private var httpAdapterHealthDetail: String {
+        currentSnapshot.httpAdapterDetail ?? L10n.t("等待 SOCKS5 验活后检查 HTTP CONNECT 入口")
     }
 
     /// 当前应使用的本地代理端点描述（面板「本地代理」行）。

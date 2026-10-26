@@ -4,53 +4,19 @@ import SwiftUI
 struct TrafficStatsView: View {
     let session: TrafficSessionModel
     let connected: Bool
-    let supported: Bool
-    /// 连接建立时间（动态模式无流量数据时至少诚实展示会话时长）。
-    var connectedSince: Date?
     @State private var expanded = false
     private let uploadColor = Color(nsColor: .systemBlue)
     private let downloadColor = Color(nsColor: .systemGreen)
-    init(session: TrafficSessionModel, connected: Bool, supported: Bool = true, connectedSince: Date? = nil, initiallyExpanded: Bool = false) {
-        self.session = session; self.connected = connected; self.supported = supported
-        self.connectedSince = connectedSince
-        _expanded = State(initialValue: initiallyExpanded)
+    /// 仅静态转发模式渲染（动态 SOCKS5 无诚实数据源，面板不显示流量区块）。
+    init(session: TrafficSessionModel, connected: Bool) {
+        self.session = session
+        self.connected = connected
     }
     private var value: TrafficSnapshot { session.snapshot }
     private var live: Bool { connected && value.isRunning }
 
     var body: some View {
-        if supported {
-            statistics
-        } else {
-            unsupported
-        }
-    }
-
-    /// 动态 SOCKS5：不经过本地 Relay，业务字节无法诚实统计；
-    /// 给出原因 + 会话时长（每秒自刷新），而不是假装有数据。
-    private var unsupported: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "chart.xyaxis.line")
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(L10n.t("流量统计暂不可用"))
-                    .font(.caption.weight(.semibold))
-                Text(L10n.t("动态 SOCKS5 不经过本地 Relay；应用不会把 SSH 进程字节误报为代理业务流量。"))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let since = connectedSince {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(L10n.t("会话时长 ") + Self.duration(Date().timeIntervalSince(since)))
-                            .font(.caption2.weight(.medium))
-                            .monospacedDigit()
-                            .foregroundStyle(Palette.muted)
-                    }
-                }
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(.vertical, 8)
+        statistics
     }
 
     static func duration(_ seconds: TimeInterval) -> String {

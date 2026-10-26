@@ -77,6 +77,7 @@
 		51A300000000000000000039 /* ConflictRemediationCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000039 /* ConflictRemediationCoordinator.swift */; };
 		51A30000000000000000003A /* SSHAskpassCredential.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003A /* SSHAskpassCredential.swift */; };
 		51A30000000000000000003B /* HTTPEntryRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003B /* HTTPEntryRelay.swift */; };
+		51A30000000000000000003C /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003C /* OverviewView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,6 +97,7 @@
 		51A200000000000000000039 /* ConflictRemediationCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConflictRemediationCoordinator.swift; sourceTree = "<group>"; };
 		51A20000000000000000003A /* SSHAskpassCredential.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAskpassCredential.swift; sourceTree = "<group>"; };
 		51A20000000000000000003B /* HTTPEntryRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPEntryRelay.swift; sourceTree = "<group>"; };
+		51A20000000000000000003C /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
 		51A200000000000000000002 /* LocalProxyEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyEndpoint.swift; sourceTree = "<group>"; };
 		51A200000000000000000003 /* ServerProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProfile.swift; sourceTree = "<group>"; };
 		51A200000000000000000004 /* TunnelStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatus.swift; sourceTree = "<group>"; };
@@ -298,6 +300,7 @@
 				51A200000000000000000012 /* ProxySettingsView.swift */,
 				51A200000000000000000013 /* ServerEditorView.swift */,
 				51A200000000000000000014 /* SettingsView.swift */,
+				51A20000000000000000003C /* OverviewView.swift */,
 				51A200000000000000000029 /* L10n.swift */,
 				51A200000000000000000030 /* HostKeyTrustCard.swift */,
 				51A200000000000000000031 /* RemoteToolHintCard.swift */,
@@ -487,6 +490,7 @@
 				51A300000000000000000012 /* ProxySettingsView.swift in Sources */,
 				51A300000000000000000013 /* ServerEditorView.swift in Sources */,
 				51A300000000000000000014 /* SettingsView.swift in Sources */,
+				51A30000000000000000003C /* OverviewView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
