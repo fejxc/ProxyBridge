@@ -81,6 +81,16 @@
 
 ## 🚀 安装
 
+**方式一：Homebrew**
+
+```bash
+brew install fejxc/tap/proxybridge
+```
+
+未公证期间，Homebrew 安装的应用默认带 quarantine 标记，若首次打开被拦截，执行 `xattr -dr com.apple.quarantine /Applications/ProxyBridge.app`。版本更新请使用 App 内置自更新器（校验官方 sha256 后原子替换），**不要用 `brew upgrade`**——那会降级回 tap 记录的版本。
+
+**方式二：手动下载**
+
 1. 前往 [Releases](https://github.com/fejxc/ProxyBridge/releases/latest) 下载 `ProxyBridge-<版本号>-universal.dmg`（Apple Silicon 与 Intel 通用）。
 2. 打开 DMG，将 **ProxyBridge.app** 拖入「应用程序」文件夹，双击启动。
 3. 如果 macOS 阻止打开，确认文件来自本仓库 Release 后，按 [Apple 官方说明](https://support.apple.com/102445)在「系统设置 → 隐私与安全性」中允许打开。
