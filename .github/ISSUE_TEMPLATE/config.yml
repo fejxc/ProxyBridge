@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 使用文档
+    url: https://github.com/fejxc/ProxyBridge#readme
+    about: 安装、快速上手、连接模式与常见问题
+  - name: 已知限制
+    url: https://github.com/fejxc/ProxyBridge/blob/master/KNOWN_LIMITATIONS.md
+    about: 提问前建议先核对是否已在已知限制列表中

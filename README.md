@@ -14,6 +14,8 @@
 
 通过系统 SSH 建立反向隧道，让服务器上的开发工具（Codex、curl、pip、git 等）直接使用 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 代理出海；也支持 OpenSSH 原生反向动态 SOCKS5，兼容 Clash Network Extension / TUN 没有本地代理端口的场景。
 
+远程 AI 编码（Codex、Claude Code 等）把越来越多人的主战场搬回了 Linux 服务器，而出海出口往往还留在手边的 Mac 上：代理客户端、订阅和节点都在本机，服务器侧却要重新折腾一遍。ProxyBridge 把这条颠倒的链路接直——**服务器上零安装、零配置，直接复用 Mac 已验证的代理出口**；凭据不出本机，断线自愈，状态如实可见。
+
 [下载最新版](https://github.com/fejxc/ProxyBridge/releases/latest) · [更新日志](CHANGELOG.md) · [报告问题](https://github.com/fejxc/ProxyBridge/issues)
 
 </div>

@@ -1,0 +1,55 @@
+name: 故障报告
+description: 连接失败、自愈异常、状态显示与预期不符等
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。**「连接日志」页 →「导出诊断包」**可一键生成脱敏诊断文件（环境 + 连接状态 + 日志末段），
+        把 `.md` 内容贴到下面能大幅加快定位；日志本身已过滤控制字符并遮挡密钥路径与凭据。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 问题类别
+      options:
+        - 连接 / 隧道
+        - 自愈 / 重连
+        - 状态显示
+        - 流量统计
+        - 应用内更新
+        - 安装 / 启动
+        - Homebrew 安装
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App 版本
+      placeholder: "例如 1.8.1 (23)（菜单栏面板底部可见）"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS 版本
+      placeholder: "例如 14.1，Apple Silicon 或 Intel"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 现象
+      description: 期望是什么、实际发生了什么；复现步骤与操作时序越具体越好
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断包 / 日志
+      description: 建议「导出诊断包」的 .md 内容；没有的话贴关键日志行也可以
+  - type: textarea
+    id: server-env
+    attributes:
+      label: 服务器环境
+      description: 发行版、sshd 是否自建、Mac 侧代理客户端（Clash 等）及模式；**不要贴密码、私钥或完整订阅链接**
