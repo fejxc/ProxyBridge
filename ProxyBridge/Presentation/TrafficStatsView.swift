@@ -4,13 +4,16 @@ import SwiftUI
 struct TrafficStatsView: View {
     let session: TrafficSessionModel
     let connected: Bool
+    /// 历史 累计（TrafficTotalsStore 持久化，仅静态 Relay 真值）；nil 不渲染该行。
+    let lifetimeTotal: UInt64?
     @State private var expanded = false
     private let uploadColor = Color(nsColor: .systemBlue)
     private let downloadColor = Color(nsColor: .systemGreen)
     /// 仅静态转发模式渲染（动态 SOCKS5 无诚实数据源，面板不显示流量区块）。
-    init(session: TrafficSessionModel, connected: Bool) {
+    init(session: TrafficSessionModel, connected: Bool, lifetimeTotal: UInt64? = nil) {
         self.session = session
         self.connected = connected
+        self.lifetimeTotal = lifetimeTotal
     }
     private var value: TrafficSnapshot { session.snapshot }
     private var live: Bool { connected && value.isRunning }
@@ -68,6 +71,13 @@ struct TrafficStatsView: View {
                         Text(L10n.t("本次连接总流量"))
                         Spacer()
                         Text(value.sessionID == nil ? "—" : TrafficFormatting.total(value.uploadBytes + value.downloadBytes)).monospacedDigit()
+                    }
+                    if let lifetimeTotal {
+                        HStack {
+                            Text(L10n.t("历史累计（本机持久化）"))
+                            Spacer()
+                            Text(TrafficFormatting.total(lifetimeTotal)).monospacedDigit()
+                        }
                     }
                     if let port = value.relayPort {
                         Text("Relay 127.0.0.1:\(String(port)) · \(String(value.activeConnections))" + L10n.t(" 个 TCP 连接"))

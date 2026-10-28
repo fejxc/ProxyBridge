@@ -56,6 +56,8 @@
 		51A300000000000000000114 /* SSHTunnelCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000114 /* SSHTunnelCoordinatorTests.swift */; };
 		51A300000000000000000115 /* MockServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000115 /* MockServices.swift */; };
 		51A300000000000000000116 /* DiagnosticsReportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000116 /* DiagnosticsReportTests.swift */; };
+		51A300000000000000000117 /* UpstreamAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000117 /* UpstreamAuthTests.swift */; };
+		51A300000000000000000118 /* TrafficTotalsStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000118 /* TrafficTotalsStoreTests.swift */; };
 		51A300000000000000000020 /* ManagedTunnelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000020 /* ManagedTunnelService.swift */; };
 		51A300000000000000000021 /* AppSystemServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000021 /* AppSystemServices.swift */; };
 		51A300000000000000000022 /* ProxyBridge.icns in Resources */ = {isa = PBXBuildFile; fileRef = 51A200000000000000000022 /* ProxyBridge.icns */; };
@@ -80,6 +82,7 @@
 		51A30000000000000000003B /* HTTPEntryRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003B /* HTTPEntryRelay.swift */; };
 		51A30000000000000000003C /* OverviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003C /* OverviewView.swift */; };
 		51A30000000000000000003D /* DiagnosticsReport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003D /* DiagnosticsReport.swift */; };
+		51A30000000000000000003E /* TrafficTotalsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A20000000000000000003E /* TrafficTotalsStore.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -101,6 +104,7 @@
 		51A20000000000000000003B /* HTTPEntryRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPEntryRelay.swift; sourceTree = "<group>"; };
 		51A20000000000000000003C /* OverviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewView.swift; sourceTree = "<group>"; };
 		51A20000000000000000003D /* DiagnosticsReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsReport.swift; sourceTree = "<group>"; };
+		51A20000000000000000003E /* TrafficTotalsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficTotalsStore.swift; sourceTree = "<group>"; };
 		51A200000000000000000002 /* LocalProxyEndpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalProxyEndpoint.swift; sourceTree = "<group>"; };
 		51A200000000000000000003 /* ServerProfile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServerProfile.swift; sourceTree = "<group>"; };
 		51A200000000000000000004 /* TunnelStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TunnelStatus.swift; sourceTree = "<group>"; };
@@ -151,6 +155,8 @@
 		51A100000000000000000042 /* ProxyBridgeTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ProxyBridgeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		51A200000000000000000115 /* MockServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockServices.swift; sourceTree = "<group>"; };
 		51A200000000000000000116 /* DiagnosticsReportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsReportTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000117 /* UpstreamAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpstreamAuthTests.swift; sourceTree = "<group>"; };
+		51A200000000000000000118 /* TrafficTotalsStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrafficTotalsStoreTests.swift; sourceTree = "<group>"; };
 		51A200000000000000000020 /* ManagedTunnelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedTunnelService.swift; sourceTree = "<group>"; };
 		51A200000000000000000021 /* AppSystemServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSystemServices.swift; sourceTree = "<group>"; };
 		51A200000000000000000022 /* ProxyBridge.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = ProxyBridge.icns; sourceTree = "<group>"; };
@@ -261,6 +267,7 @@
 				51A200000000000000000007 /* LogRedaction.swift */,
 				51A200000000000000000008 /* LogStore.swift */,
 				51A20000000000000000003D /* DiagnosticsReport.swift */,
+				51A20000000000000000003E /* TrafficTotalsStore.swift */,
 				51A20000000000000000000A /* ProxyDetector.swift */,
 				51A20000000000000000000B /* RemoteCommandTemplate.swift */,
 				51A20000000000000000000C /* TunnelService.swift */,
@@ -340,6 +347,8 @@
 				51A2000000000000000117 /* RemoteJanitorTests.swift */,
 				51A20000000000000000010A /* LogStoreTests.swift */,
 				51A200000000000000000116 /* DiagnosticsReportTests.swift */,
+				51A200000000000000000117 /* UpstreamAuthTests.swift */,
+				51A200000000000000000118 /* TrafficTotalsStoreTests.swift */,
 				51A200000000000000000110 /* SystemProxyDetectionTests.swift */,
 				51A200000000000000000111 /* LocalProxyDetectorTests.swift */,
 				51A200000000000000000112 /* SSHCommandBuilderTests.swift */,
@@ -456,6 +465,7 @@
 				51A300000000000000000007 /* LogRedaction.swift in Sources */,
 				51A300000000000000000008 /* LogStore.swift in Sources */,
 				51A30000000000000000003D /* DiagnosticsReport.swift in Sources */,
+				51A30000000000000000003E /* TrafficTotalsStore.swift in Sources */,
 				51A30000000000000000000A /* ProxyDetector.swift in Sources */,
 				51A30000000000000000000B /* RemoteCommandTemplate.swift in Sources */,
 				51A30000000000000000000C /* TunnelService.swift in Sources */,
@@ -519,6 +529,8 @@
 				51A3000000000000000117 /* RemoteJanitorTests.swift in Sources */,
 				51A30000000000000000010A /* LogStoreTests.swift in Sources */,
 				51A300000000000000000116 /* DiagnosticsReportTests.swift in Sources */,
+				51A300000000000000000117 /* UpstreamAuthTests.swift in Sources */,
+				51A300000000000000000118 /* TrafficTotalsStoreTests.swift in Sources */,
 				51A300000000000000000110 /* SystemProxyDetectionTests.swift in Sources */,
 				51A300000000000000000111 /* LocalProxyDetectorTests.swift in Sources */,
 				51A300000000000000000112 /* SSHCommandBuilderTests.swift in Sources */,

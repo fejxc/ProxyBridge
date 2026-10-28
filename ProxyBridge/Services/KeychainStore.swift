@@ -18,9 +18,12 @@ protocol PasswordStoring: AnyObject, Sendable {
 /// 生产实现：Keychain。
 /// 可访问性 `AfterFirstUnlock`：用户登录后本会话 App 均可读写（本应用为用户会话菜单栏应用）。
 final class KeychainPasswordStore: PasswordStoring, @unchecked Sendable {
-    private let service = "dev.sunyun.ProxyBridge.ssh-password"
+    private let service: String
 
-    init() {}
+    /// SSH 密码与上游代理密码用不同 service 隔离（同 account 互不可见）。
+    init(service: String = "dev.sunyun.ProxyBridge.ssh-password") {
+        self.service = service
+    }
 
     private func baseQuery(for profileID: UUID) -> [String: Any] {
         [

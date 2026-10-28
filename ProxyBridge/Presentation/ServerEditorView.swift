@@ -15,6 +15,8 @@ struct ServerEditorView: View {
     /// 若在 body 里调用，表单每敲一个键就会查询一次；改为只在会改变其真值的
     /// 时点（装载草稿 / 保存 / 忘记密码）刷新。
     @State private var draftHasStoredPassword = false
+    /// 上游代理密码钥匙串状态的视图层缓存（刷新时机同 SSH 密码标记）。
+    @State private var draftHasStoredUpstreamPassword = false
     /// ~/.ssh/config 导入面板。
     @State private var importEntries: [SSHConfigEntry]?
 
@@ -95,19 +97,25 @@ struct ServerEditorView: View {
                 isNew: model.editorIsNewDraft,
                 snapshotPhase: model.snapshots[draftBinding.wrappedValue.id]?.phase,
                 hasStoredPassword: draftHasStoredPassword,
+                hasStoredUpstreamPassword: draftHasStoredUpstreamPassword,
                 onForgetStoredPassword: {
                     // 草稿可能不是当前选中的服务器（未保存横幅状态）：
                     // 必须按草稿 id 删凭据，否则会删掉另一台服务器的密码
                     model.forgetStoredPassword(for: draftBinding.wrappedValue.id)
                     refreshStoredPasswordFlag()
                 },
-                onSave: { profile in
-                    guard ServerProfileRule.validate(profile).isValid else { return }
-                    if model.saveDraftProfile(profile) {
-                        self.draft = profile
-                        self.lastLoaded = profile
+                onSave: { profile, secretAction in
+                    // 先归一化用户名（trim），再校验；密码走钥匙串闭包，不进 profile
+                    var normalized = profile
+                    normalized.upstreamAuthUsername = ServerProfile.normalizedUpstreamUsername(normalized.upstreamAuthUsername)
+                    guard ServerProfileRule.validate(normalized).isValid else { return }
+                    if model.saveDraftProfile(normalized) {
+                        model.applyUpstreamSecret(for: normalized.id, action: secretAction)
+                        self.draft = normalized
+                        self.lastLoaded = normalized
                         self.showUnsavedBanner = false
                         self.refreshStoredPasswordFlag()
+                        refreshUpstreamSecretFlag()
                     }
                 },
                 onDiscard: {
@@ -136,10 +144,15 @@ struct ServerEditorView: View {
         lastLoaded = draft
         showUnsavedBanner = false
         refreshStoredPasswordFlag()
+        refreshUpstreamSecretFlag()
     }
 
     private func refreshStoredPasswordFlag() {
         draftHasStoredPassword = draft.map { model.hasStoredPassword(for: $0.id) } ?? false
+    }
+
+    private func refreshUpstreamSecretFlag() {
+        draftHasStoredUpstreamPassword = draft.map { model.hasUpstreamPassword(for: $0.id) } ?? false
     }
 }
 
@@ -233,8 +246,9 @@ struct ServerEditorForm: View {
     let isNew: Bool
     let snapshotPhase: TunnelPhase?
     let hasStoredPassword: Bool
+    let hasStoredUpstreamPassword: Bool
     let onForgetStoredPassword: () -> Void
-    let onSave: (ServerProfile) -> Void
+    let onSave: (ServerProfile, UpstreamSecretAction) -> Void
     let onDiscard: () -> Void
     let onDelete: (ServerProfile) -> Void
 
@@ -242,8 +256,34 @@ struct ServerEditorForm: View {
     /// 高级配置（反向代理与端口）默认折叠：首次使用只关注基础五项；
     /// 校验出现错误时强制展开，保证报错字段可见。手动展开后即使错误清空也保持展开。
     @State private var advancedExpanded = false
+    /// 上游代理密码：只在表单内存中，保存时经闭包写入钥匙串（不进 profile/配置文件）。
+    @State private var upstreamPassword = ""
 
     private var validation: ProfileValidation { ServerProfileRule.validate(profile) }
+
+    private var upstreamAuthEnabled: Bool { profile.upstreamAuthUsername != nil }
+
+    /// 上游认证用户名的表单级校验（字符集错误由 ServerProfileRule.validate 呈现）。
+    private var upstreamUsernameError: String? {
+        guard upstreamAuthEnabled else { return nil }
+        let name = (profile.upstreamAuthUsername ?? "").trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? "请填写认证用户名" : nil
+    }
+
+    /// 上游密码表单级校验（RFC1929 上限 255 字节；换行/NUL 无法进报文与 curl 配置）。
+    private var upstreamPasswordError: String? {
+        guard upstreamAuthEnabled, !upstreamPassword.isEmpty else { return nil }
+        if upstreamPassword.utf8.count > 255 { return "上游代理密码最多 255 字节（SOCKS5 认证上限）" }
+        if upstreamPassword.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\u{0}" }) { return "密码不能包含换行或空字符" }
+        return nil
+    }
+
+    /// 保存时的钥匙串意图：关认证=清除；留空=保持已存密码；输入=覆盖。
+    private var upstreamSecretAction: UpstreamSecretAction {
+        guard upstreamAuthEnabled else { return .clear }
+        if upstreamPassword.isEmpty { return .keep }
+        return .set(upstreamPassword)
+    }
 
     private var needsReconnect: Bool {
         snapshotPhase == .connected || snapshotPhase == .degraded
@@ -383,6 +423,37 @@ struct ServerEditorForm: View {
                         .pickerStyle(.segmented)
                         .frame(width: 180)
                     }
+                    FormRow(label: L10n.t("上游代理认证"), help: "本地代理客户端开启认证时填写。用户名存入服务器配置，密码存 macOS 钥匙串（不进配置文件与日志）；HTTP 兼容入口与连接探测会代答认证。静态直通（关闭 HTTP 入口）不代答，需 Linux 侧自带凭据。") {
+                        VStack(alignment: .leading, spacing: 7) {
+                            Toggle(L10n.t("本地代理需要认证"), isOn: Binding(
+                                get: { upstreamAuthEnabled },
+                                set: { enabled in
+                                    profile.upstreamAuthUsername = enabled ? "" : nil
+                                    if !enabled { upstreamPassword = "" }
+                                }
+                            )).controlSize(.small)
+                            if upstreamAuthEnabled {
+                                TextField(L10n.t("认证用户名"), text: Binding(
+                                    get: { profile.upstreamAuthUsername ?? "" },
+                                    set: { profile.upstreamAuthUsername = $0 }
+                                ))
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 220)
+                                if let error = upstreamUsernameError {
+                                    Text(L10n.t(error)).font(.footnote).foregroundStyle(Palette.red)
+                                }
+                                SecureField(
+                                    hasStoredUpstreamPassword ? L10n.t("已存于钥匙串（留空保持不变）") : L10n.t("认证密码"),
+                                    text: $upstreamPassword
+                                )
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 220)
+                                if let error = upstreamPasswordError {
+                                    Text(L10n.t(error)).font(.footnote).foregroundStyle(Palette.red)
+                                }
+                            }
+                        }
+                    }
                     FormRow(label: "业务验证目标",
                             help: "远端「已连接」结论基于对该目标的真实请求。留空使用默认目标 api.openai.com；填写你实际要用的服务地址（如 https://api.anthropic.com），验证通过才代表该业务可达。") {
                         TextField("https://（可选）", text: Binding(
@@ -462,13 +533,13 @@ struct ServerEditorForm: View {
                         .controlSize(.large)
                 }
                 Button {
-                    onSave(profile)
+                    onSave(profile, upstreamSecretAction)
                 } label: {
                     Text(L10n.t("保存更改"))
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(!validation.isValid)
+                .disabled(!validation.isValid || upstreamUsernameError != nil || upstreamPasswordError != nil)
                 .keyboardShortcut(.defaultAction)
             }
         }

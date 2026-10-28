@@ -28,6 +28,8 @@ struct SmokeMain {
         logStoreChecks()
         diagnosticsChecks()
         diagnosticsExportChecks()
+        upstreamAuthChecks()
+        trafficTotalsChecks()
         await liveProxyChecks()
         sshChecks()
         await askpassChecks()
@@ -435,6 +437,49 @@ struct SmokeMain {
         check("DX04", "磁盘日志缺失如实返回 nil", DiagnosticsReport.diskLogTail(url: tmp) == nil)
     }
 
+    // MARK: UA 上游代理认证
+
+    static func upstreamAuthChecks() {
+        check("UA01", "SOCKS5 greeting：无凭据仅 NO-AUTH，有凭据双方法",
+              Array(UpstreamAuthWire.socks5Greeting(credentials: nil)) == [0x05, 0x01, 0x00]
+              && Array(UpstreamAuthWire.socks5Greeting(credentials: ProxyCredentials(username: "u", password: "p"))) == [0x05, 0x02, 0x00, 0x02])
+        check("UA02", "RFC1929 请求字节格式与 255 字节上限",
+              Array(UpstreamAuthWire.socks5UserPassRequest(username: "u", password: "p")!) == [0x01, 0x01] + Array("u".utf8) + [0x01] + Array("p".utf8)
+              && UpstreamAuthWire.socks5UserPassRequest(username: "", password: "p") == nil
+              && UpstreamAuthWire.socks5UserPassRequest(username: String(repeating: "u", count: 256), password: "p") == nil)
+        check("UA03", "HTTP Basic Proxy-Authorization 值",
+              UpstreamAuthWire.proxyAuthorizationValue(username: "user", password: "pass") == "Basic dXNlcjpwYXNz")
+        check("UA04", "curl 凭据配置转义引号/反斜杠、拒绝换行",
+              CurlProxyProbe.credentialConfigContents(ProxyCredentials(username: "u", password: "p\"a\\ss")) == "proxy-user = \"u:p\\\"a\\\\ss\"\n"
+              && CurlProxyProbe.credentialConfigContents(ProxyCredentials(username: "u", password: "a\nb")) == nil)
+        check("UA05", "用户名校验拒绝冒号；旧 JSON 缺键兼容为 nil",
+              !ServerProfileRule.validate(ServerProfile(name: "s", host: "example.com", sshPort: 22, username: "root", remotePort: 7890, upstreamAuthUsername: "a:b")).isValid)
+    }
+
+    // MARK: TS 流量历史累计
+
+    @MainActor
+    static func trafficTotalsChecks() {
+        let store = TrafficTotalsStore()
+        let id = UUID(), session = UUID()
+        var snap = TrafficSnapshot(profileID: id, sessionID: session)
+        snap.uploadBytes = 100; snap.downloadBytes = 0; snap.isRunning = true
+        store.record(snap)
+        snap.uploadBytes = 350; snap.downloadBytes = 20
+        store.record(snap)
+        check("TS01", "同会话按差值累计", store.totals(for: id).uploadBytes == 350 && store.totals(for: id).downloadBytes == 20)
+        var second = TrafficSnapshot(profileID: id, sessionID: UUID())
+        second.uploadBytes = 30; second.downloadBytes = 0; second.isRunning = true
+        store.record(second)
+        check("TS02", "新会话从新计数器起算不重复累计", store.totals(for: id).uploadBytes == 380 && store.totals(for: id).downloadBytes == 20)
+        store.remove(id)
+        check("TS03", "删除 profile 清账", !store.hasData(for: id))
+        var idle = TrafficSnapshot(profileID: UUID(), sessionID: nil)
+        idle.uploadBytes = 999
+        store.record(idle)
+        check("TS04", "无会话快照不计入", store.totals(for: idle.profileID).uploadBytes == 0)
+    }
+
     // MARK: S20 复制模板
 
     static func templateChecks() {
@@ -777,7 +822,7 @@ struct SmokeMain {
         let probe = CurlProxyProbe(connectTimeoutSeconds: 2, maxTimeSeconds: 4)
 
         // S28a：连接一个必然拒绝的回环端口 → connectionRefused，绝不 verified
-        let refused = await probe.probe(host: "127.0.0.1", port: 1, protocol: .http)
+        let refused = await probe.probe(host: "127.0.0.1", port: 1, protocol: .http, credentials: nil)
         check("S28a", "真实 curl：拒绝连接 → connectionRefused", refused == .connectionRefused)
 
         // S28b：本机起一个「普通 HTTP 服务器」（对 CONNECT 应答 404）→ 探测不得给出 verified
@@ -786,7 +831,7 @@ struct SmokeMain {
             return
         }
         defer { server.stop() }
-        let notProxy = await probe.probe(host: "127.0.0.1", port: Int(server.port), protocol: .http)
+        let notProxy = await probe.probe(host: "127.0.0.1", port: Int(server.port), protocol: .http, credentials: nil)
         let notGreen: Bool
         switch notProxy {
         case .verified:
@@ -817,7 +862,7 @@ struct SmokeMain {
 
         // S30：对真实系统代理做端到端协议实测（信息性证据：代理未运行时如实呈现非 verified）
         if let systemProxy = snapshot.http {
-            let real = await probe.probe(host: systemProxy.host, port: systemProxy.port, protocol: .http)
+            let real = await probe.probe(host: systemProxy.host, port: systemProxy.port, protocol: .http, credentials: nil)
             switch real {
             case .verified(let code):
                 print("   实测  = 经系统代理 \(systemProxy.host):\(systemProxy.port) 访问 api.openai.com/v1/models 成功（HTTP \(code)）")

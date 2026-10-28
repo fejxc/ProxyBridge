@@ -23,7 +23,11 @@ struct OverviewView: View {
                     TrafficStatsView(
                         session: model.trafficStore.session(for: profile.id),
                         connected: model.currentSnapshot.sshProcessRunning &&
-                            [.connected, .degraded].contains(model.currentSnapshot.phase)
+                            [.connected, .degraded].contains(model.currentSnapshot.phase),
+                        lifetimeTotal: model.trafficTotals.hasData(for: profile.id)
+                            ? model.trafficTotals.totals(for: profile.id).uploadBytes
+                                + model.trafficTotals.totals(for: profile.id).downloadBytes
+                            : nil
                     )
                 }
                 RecoveryTraceCard()

@@ -1,20 +1,48 @@
 import Foundation
 import Network
 
+/// 上游认证的报文构造（纯函数，供测试钉住字节级格式）。
+enum UpstreamAuthWire {
+    /// SOCKS5 方法协商：无凭据仅提供 NO-AUTH（回环惯例不变）；有凭据同时提供
+    /// NO-AUTH 与 USERPASS——无认证代理不受影响，认证代理走子协商。
+    static func socks5Greeting(credentials: ProxyCredentials?) -> Data {
+        credentials == nil ? Data([0x05, 0x01, 0x00]) : Data([0x05, 0x02, 0x00, 0x02])
+    }
+
+    /// RFC 1929 请求：VER=1, ULEN, UNAME, PLEN, PASSWD（各限 255 字节，用户名非空）。
+    static func socks5UserPassRequest(username: String, password: String) -> Data? {
+        let user = Data(username.utf8)
+        let pass = Data(password.utf8)
+        guard user.count >= 1, user.count <= 255, pass.count <= 255 else { return nil }
+        var request = Data([0x01, UInt8(user.count)])
+        request.append(user)
+        request.append(UInt8(pass.count))
+        request.append(pass)
+        return request
+    }
+
+    /// HTTP Basic 的 Proxy-Authorization 头值（base64("user:pass")）。
+    static func proxyAuthorizationValue(username: String, password: String) -> String {
+        "Basic " + Data("\(username):\(password)".utf8).base64EncodedString()
+    }
+}
+
 /// Mac 侧 HTTP 代理入口：把 Linux 侧 `http_proxy/https_proxy` 指向的端口经 SSH
 /// 反向转发到本监听器，由 App 自己实现 HTTP 代理语义——远端不再依赖 Privoxy。
 ///
-/// 三种上游模式（按本地代理实测协议与连接模式选择）：
-/// - `.pipe`：上游是 HTTP/Mixed 代理 → 纯透明字节管道。客户端的 CONNECT 与
-///   绝对格式请求本就是标准 HTTP 代理协议，透传即可（零解析，语义最全）。
+/// 四种上游模式（按本地代理实测协议、连接模式与认证配置选择）：
+/// - `.pipe`：上游是 HTTP/Mixed 代理且无需认证 → 纯透明字节管道。客户端的
+///   CONNECT 与绝对格式请求本就是标准 HTTP 代理协议，透传即可（零解析，语义最全）。
+/// - `.httpConnect`：上游是 HTTP/Mixed 代理且配置了认证 → 解析客户端请求，由入口
+///   代答上游认证（CONNECT 生成 / 明文请求注入 Proxy-Authorization）。
 /// - `.socks5`：上游是 SOCKS5 代理 → 解析 CONNECT 请求行，向上游完成 SOCKS5
-///   握手后按 200 应答并透传（仅支持 CONNECT，即 https_proxy 用法）。
+///   握手后按 200 应答并透传（仅支持 CONNECT，即 https_proxy 用法）；凭据非 nil
+///   时方法协商同时提供 RFC1929 用户名/密码。
 /// - `.direct`：动态 SOCKS5 回退场景没有本地代理 → 解析 CONNECT 后由 Mac
 ///   网络栈直连目标（与动态模式的出站语义一致）。
 ///
 /// 隐私与边界：只监听 127.0.0.1；流量统计由静态转发主 Relay 承担，本入口不计
-/// 业务字节（面板语义不变，文档如实说明）；SOCKS5 上游无认证（回环代理惯例，
-/// 与静态转发探测的假设一致）。
+/// 业务字节（面板语义不变，文档如实说明）；凭据只在握手报文中使用，不进日志。
 protocol HTTPEntryRelaying: AnyObject, Sendable {
     /// 监听器启动成功后死亡（端口被抢/系统回收）的上报通道：启动期失败经
     /// start() 抛错感知，不走此回调（语义与 TCPRelaying.onFailure 一致）。
@@ -27,7 +55,10 @@ protocol HTTPEntryRelaying: AnyObject, Sendable {
 
 enum HTTPEntryMode: Sendable {
     case pipe(LocalProxyEndpoint)
-    case socks5(LocalProxyEndpoint)
+    /// HTTP/Mixed 上游 + 认证：入口代答（CONNECT 生成 / 明文请求注入认证头）。
+    case httpConnect(LocalProxyEndpoint, ProxyCredentials)
+    /// SOCKS5 上游；credentials 非 nil 时方法协商同时提供 RFC1929 用户名/密码。
+    case socks5(LocalProxyEndpoint, credentials: ProxyCredentials?)
     case direct
 }
 
@@ -60,7 +91,7 @@ final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
                     // NWListener 并覆盖 startup，前一个 continuation 永不恢复
                     guard !stopped, !started else { continuation.resume(throwing: CancellationError()); return }
                     switch mode {
-                    case .pipe(let endpoint), .socks5(let endpoint):
+                    case .pipe(let endpoint), .httpConnect(let endpoint, _), .socks5(let endpoint, _):
                         guard LocalProxyEndpointRule.isValid(host: endpoint.host, port: endpoint.port) else {
                             continuation.resume(throwing: NSError(
                                 domain: "ProxyBridge.HTTPEntry", code: 1,
@@ -171,7 +202,8 @@ final class HTTPEntryRelay: HTTPEntryRelaying, @unchecked Sendable {
 
 /// 单条入口连接（状态机，全部回调在 relay queue 上串行执行）：
 /// pipe：upstream TCP ready 即双向透传（零解析）；
-/// socks5：解析 CONNECT → 上游 SOCKS5 握手（NO-AUTH）→ 200 → 透传；
+/// socks5：解析 CONNECT → 上游 SOCKS5 握手（可带 RFC1929 认证）→ 200 → 透传；
+/// httpConnect：解析客户端请求 → 带认证的 CONNECT/明文代答 → 透传；
 /// direct：解析 CONNECT → 直连 authority → 200 → 透传。
 private final class EntryConnection: @unchecked Sendable {
     let id = UUID()
@@ -213,6 +245,8 @@ private final class EntryConnection: @unchecked Sendable {
     private var remainderAfterHead = Data()
     /// 明文请求：翻译后的请求行 + 头（CONNECT 请求为 nil）。
     private var plainRequestHead: String?
+    /// httpConnect CONNECT 路径：上游应答头之后的余量字节（隧道数据，待回给客户端）。
+    private var upstreamEarlyData = Data()
     private var isConnect = false
     private var handshakeStarted = false
     private var deadline: DispatchWorkItem?
@@ -247,7 +281,7 @@ private final class EntryConnection: @unchecked Sendable {
         switch mode {
         case .pipe(let endpoint):
             openUpstream(toHost: endpoint.host, port: UInt16(endpoint.port))
-        case .socks5(let endpoint):
+        case .httpConnect(let endpoint, _), .socks5(let endpoint, _):
             // 上游连接先行；CONNECT 解析完成后在 upstreamReady 时立即握手
             openUpstream(toHost: endpoint.host, port: UInt16(endpoint.port))
         case .direct:
@@ -260,7 +294,7 @@ private final class EntryConnection: @unchecked Sendable {
         switch mode {
         case .pipe:
             phase = .connecting // 零解析：字节从 ready 起双向透传
-        case .socks5, .direct:
+        case .httpConnect, .socks5, .direct:
             readHeaderChunk()
         }
     }
@@ -282,7 +316,7 @@ private final class EntryConnection: @unchecked Sendable {
                 switch self.mode {
                 case .pipe:
                     self.establishTunnel()
-                case .socks5:
+                case .httpConnect, .socks5:
                     self.startHandshakeIfPossible()
                 case .direct:
                     self.completeTunnel()
@@ -341,7 +375,8 @@ private final class EntryConnection: @unchecked Sendable {
             isConnect = true
         } else {
             // 绝对格式明文请求（http_proxy 用法，如健康检查 GET）：翻译为源站请求——
-            // 请求行改写为源站形式，其余头与头部之后的余量字节原样跟随
+            // 请求行改写为源站形式，其余头与头部之后的余量字节原样跟随；
+            // httpConnect 模式在翻译头中注入 Proxy-Authorization（代答上游认证）
             guard let url = URL(string: parts[1]), let host = url.host, !host.isEmpty else {
                 reject("400 Bad Request"); return
             }
@@ -351,14 +386,19 @@ private final class EntryConnection: @unchecked Sendable {
             let path = url.path.isEmpty ? "/" : url.path
             let originTarget = path + (url.query.map { "?\($0)" } ?? "")
             let headerTail = lines.dropFirst().joined(separator: "\r\n")
-            plainRequestHead = "\(parts[0]) \(originTarget) \(parts[2])\r\n\(headerTail)\r\n\r\n"
+            var head = "\(parts[0]) \(originTarget) \(parts[2])\r\n\(headerTail)\r\n\r\n"
+            if case .httpConnect(_, let credentials) = mode {
+                let auth = UpstreamAuthWire.proxyAuthorizationValue(username: credentials.username, password: credentials.password)
+                head = "\(parts[0]) \(originTarget) \(parts[2])\r\nProxy-Authorization: \(auth)\r\n\(headerTail)\r\n\r\n"
+            }
+            plainRequestHead = head
             authority = (host, port)
             isConnect = false
         }
         switch mode {
         case .direct:
             openUpstream(toHost: authority!.host, port: authority!.port)
-        case .socks5:
+        case .socks5, .httpConnect:
             startHandshakeIfPossible()
         case .pipe:
             reject("500 Internal Server Error") // pipe 模式不经过解析路径
@@ -379,23 +419,102 @@ private final class EntryConnection: @unchecked Sendable {
         return (hostPort[0], port)
     }
 
-    // MARK: - SOCKS5 握手（无认证，回环上游）
+    // MARK: - 上游握手（SOCKS5 可带 RFC1929 认证；HTTP 上游 CONNECT 代答）
 
     private func startHandshakeIfPossible() {
-        guard case .socks5 = mode, let authority,
-              upstreamReady, incomingReady, !handshakeStarted, let upstream = outgoing else { return }
-        handshakeStarted = true
-        let greeting = Data([0x05, 0x01, 0x00]) // VER=5, 1 个方法，NO-AUTH
-        upstream.send(content: greeting, completion: .contentProcessed { [weak self] error in
+        guard upstreamReady, incomingReady, !handshakeStarted, let upstream = outgoing else { return }
+        switch mode {
+        case .socks5(_, let credentials):
+            guard let authority else { return }
+            handshakeStarted = true
+            upstream.send(content: UpstreamAuthWire.socks5Greeting(credentials: credentials), completion: .contentProcessed { [weak self] error in
+                guard let self, !self.isClosing else { return }
+                guard error == nil else { self.reject("502 Bad Gateway"); return }
+                self.receiveExactly(on: upstream, count: 2) { reply in
+                    guard reply.count == 2, reply[0] == 0x05 else {
+                        self.reject("502 Bad Gateway"); return
+                    }
+                    switch reply[1] {
+                    case 0x00:
+                        self.sendConnectRequest(on: upstream, host: authority.host, port: authority.port)
+                    case 0x02 where credentials != nil:
+                        self.sendUserPass(on: upstream, credentials: credentials!)
+                    default:
+                        // 0xFF（不接受任何提供的方法）或凭据缺失时被要求认证
+                        self.reject("502 Bad Gateway")
+                    }
+                }
+            })
+        case .httpConnect(_, let credentials):
+            guard let authority else { return }
+            handshakeStarted = true
+            if isConnect {
+                sendHTTPConnect(on: upstream, host: authority.host, port: authority.port, credentials: credentials)
+            } else {
+                // 明文请求：翻译头已注入认证，直接发上游并建立隧道（无需 CONNECT）
+                completeTunnel()
+            }
+        case .pipe, .direct:
+            break // 不经过握手路径
+        }
+    }
+
+    /// RFC 1929 用户名/密码子协商：VER=1 ULEN UNAME PLEN PASSWD → 期望 VER=1 STATUS=0。
+    private func sendUserPass(on upstream: NWConnection, credentials: ProxyCredentials) {
+        guard let request = UpstreamAuthWire.socks5UserPassRequest(username: credentials.username, password: credentials.password) else {
+            reject("502 Bad Gateway"); return
+        }
+        upstream.send(content: request, completion: .contentProcessed { [weak self] error in
             guard let self, !self.isClosing else { return }
             guard error == nil else { self.reject("502 Bad Gateway"); return }
             self.receiveExactly(on: upstream, count: 2) { reply in
-                guard reply.count == 2, reply[0] == 0x05, reply[1] == 0x00 else {
+                guard reply.count == 2, reply[0] == 0x01, reply[1] == 0x00 else {
                     self.reject("502 Bad Gateway"); return
                 }
+                guard let authority = self.authority else { self.reject("502 Bad Gateway"); return }
                 self.sendConnectRequest(on: upstream, host: authority.host, port: authority.port)
             }
         })
+    }
+
+    /// HTTP 上游 CONNECT 代答：带 Proxy-Authorization 向上游发起 CONNECT；
+    /// 2xx 后对客户端回 200 并建立隧道（上游应答头后的余量字节属于隧道数据，不丢）。
+    private func sendHTTPConnect(on upstream: NWConnection, host: String, port: UInt16, credentials: ProxyCredentials) {
+        let auth = UpstreamAuthWire.proxyAuthorizationValue(username: credentials.username, password: credentials.password)
+        let request = "CONNECT \(host):\(port) HTTP/1.1\r\nHost: \(host):\(port)\r\nProxy-Authorization: \(auth)\r\n\r\n"
+        upstream.send(content: Data(request.utf8), completion: .contentProcessed { [weak self] error in
+            guard let self, !self.isClosing else { return }
+            guard error == nil else { self.reject("502 Bad Gateway"); return }
+            self.receiveUpstreamHead(on: upstream) { head, extra in
+                let headText = String(decoding: head, as: UTF8.self)
+                let statusToken = headText.split(separator: "\r\n", omittingEmptySubsequences: false).first?
+                    .split(separator: " ").dropFirst().first
+                guard let code = statusToken.flatMap({ Int($0) }), (200...299).contains(code) else {
+                    self.reject("502 Bad Gateway"); return
+                }
+                self.upstreamEarlyData = extra
+                self.completeTunnel()
+            }
+        })
+    }
+
+    /// 读取上游应答头（至首个空行；上限 headerLimit），返回头与其后的余量字节。
+    private func receiveUpstreamHead(
+        on connection: NWConnection,
+        accumulated: Accumulator = Accumulator(),
+        then: @escaping (_ head: Data, _ extra: Data) -> Void
+    ) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: headerLimit) { [weak self] data, _, eof, error in
+            guard let self, !self.isClosing else { return }
+            guard error == nil, let data, !eof else { self.reject("502 Bad Gateway"); return }
+            accumulated.data.append(data)
+            guard accumulated.data.count <= headerLimit else { self.reject("502 Bad Gateway"); return }
+            if let range = accumulated.data.range(of: Data("\r\n\r\n".utf8)) {
+                then(Data(accumulated.data[..<range.lowerBound]), Data(accumulated.data[range.upperBound...]))
+            } else {
+                self.receiveUpstreamHead(on: connection, accumulated: accumulated, then: then)
+            }
+        }
     }
 
     private func sendConnectRequest(on upstream: NWConnection, host: String, port: UInt16) {
@@ -458,17 +577,28 @@ private final class EntryConnection: @unchecked Sendable {
             // 先回 200，再把头部之后已读出的余量字节补发给上游——部分客户端
             // 不等 200 应答就随 CONNECT 管线化发送（如 TLS ClientHello），这些
             // 字节已从 socket 读出、缓存在 remainderAfterHead，不补发即永久丢失。
-            // 全部完成后再建立隧道启动泵，保证发往上游的字节序与客户端写入一致
+            // 全部完成后再建立隧道启动泵，保证发往上游的字节序与客户端写入一致。
+            // httpConnect 路径上游应答头之后读出的早期字节按序回给客户端。
             incoming.send(content: Data("HTTP/1.1 200 Connection established\r\n\r\n".utf8), completion: .contentProcessed { [weak self] error in
                 guard let self, !self.isClosing else { return }
                 guard error == nil else { self.close(); return }
-                let remainder = self.remainderAfterHead
-                self.remainderAfterHead = Data()
-                guard !remainder.isEmpty else { self.establishTunnel(); return }
-                upstream.send(content: remainder, completion: .contentProcessed { [weak self] sendError in
+                let early = self.upstreamEarlyData
+                self.upstreamEarlyData = Data()
+                func forwardRemainderToUpstream() {
+                    let remainder = self.remainderAfterHead
+                    self.remainderAfterHead = Data()
+                    guard !remainder.isEmpty else { self.establishTunnel(); return }
+                    upstream.send(content: remainder, completion: .contentProcessed { [weak self] sendError in
+                        guard let self, !self.isClosing else { return }
+                        guard sendError == nil else { self.close(); return }
+                        self.establishTunnel()
+                    })
+                }
+                guard !early.isEmpty else { forwardRemainderToUpstream(); return }
+                incoming.send(content: early, completion: .contentProcessed { [weak self] earlyError in
                     guard let self, !self.isClosing else { return }
-                    guard sendError == nil else { self.close(); return }
-                    self.establishTunnel()
+                    guard earlyError == nil else { self.close(); return }
+                    forwardRemainderToUpstream()
                 })
             })
         } else {

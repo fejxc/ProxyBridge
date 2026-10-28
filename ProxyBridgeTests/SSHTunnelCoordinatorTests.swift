@@ -129,7 +129,7 @@ final class GatedLocalProber: ProxyProbeExecuting, @unchecked Sendable {
     private var continuations: [CheckedContinuation<ProbeOutcome, Never>] = []
     var outcome: ProbeOutcome = .verified(statusCode: 200)
 
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome {
         await withCheckedContinuation { continuation in
             lock.lock()
             continuations.append(continuation)
@@ -162,7 +162,7 @@ final class StubLocalProber: ProxyProbeExecuting, @unchecked Sendable {
         calls += 1
         lock.unlock()
     }
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome {
         recordCall()
         return outcome
     }

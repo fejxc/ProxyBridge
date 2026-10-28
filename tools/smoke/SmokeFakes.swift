@@ -84,7 +84,7 @@ final class SmokeLocalProber: ProxyProbeExecuting, @unchecked Sendable {
     var outcome: ProbeOutcome
     private(set) var callCount = 0
     init(outcome: ProbeOutcome) { self.outcome = outcome }
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome { callCount += 1; return outcome }
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome { callCount += 1; return outcome }
 }
 
 final class SmokeRemoteProber: RemoteProbeExecuting, @unchecked Sendable {

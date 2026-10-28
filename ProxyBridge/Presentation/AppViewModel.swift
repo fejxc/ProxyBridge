@@ -2,6 +2,16 @@ import Foundation
 import AppKit
 import Observation
 
+
+/// 上游代理密码的落库意图（编辑器表单 → AppViewModel）。
+/// keep：不动钥匙串（已存密码、留空输入框）；clear：删除（关闭认证）；
+/// set：覆盖写入。密码本体绝不进 ServerProfile/配置文件。
+enum UpstreamSecretAction {
+    case keep
+    case clear
+    case set(String)
+}
+
 /// 设置窗口的分区（概览为首页：先看状态，再进配置）。
 enum SettingsTab: String, CaseIterable, Identifiable, Sendable {
     case overview, servers, proxy, logs, general
@@ -23,6 +33,10 @@ final class AppViewModel {
     let logStore: LogStore
     /// SSH 密码的安全存储（生产 Keychain；测试内存实现）。
     let trafficStore = TrafficStore()
+    /// 上游代理密码的安全存储（独立 service，与 SSH 密码隔离；测试注入内存实现）。
+    let upstreamSecrets: any PasswordStoring
+    /// 按 profile 持久化的流量累计（仅静态 Relay 真值；见 TrafficTotalsStore）。
+    let trafficTotals: TrafficTotalsStore
     let secrets: any PasswordStoring
     /// 主机指纹信任（TOFU）：nil = 功能不可用（测试环境）。
     private let hostKeyTrust: (any HostKeyTrustProviding)?
@@ -179,6 +193,8 @@ final class AppViewModel {
         proxyDetector: ProxyDetectorService,
         logStore: LogStore,
         secrets: any PasswordStoring,
+        upstreamSecrets: any PasswordStoring = KeychainPasswordStore(service: "dev.sunyun.ProxyBridge.upstream-password"),
+        trafficTotals: TrafficTotalsStore? = nil,
         systemServices: (any AppSystemIntegrating)? = nil,
         hostKeyTrust: (any HostKeyTrustProviding)? = nil,
         updateChecker: (any UpdateChecking)? = nil,
@@ -191,6 +207,8 @@ final class AppViewModel {
         self.proxyDetector = proxyDetector
         self.logStore = logStore
         self.secrets = secrets
+        self.upstreamSecrets = upstreamSecrets
+        self.trafficTotals = trafficTotals ?? TrafficTotalsStore()
         self.systemServices = systemServices
         self.hostKeyTrust = hostKeyTrust
         self.profileManager = ProfileManager(profileStore: profileStore, logStore: logStore)
@@ -258,6 +276,8 @@ final class AppViewModel {
             ),
             logStore: LogStore.live(),
             secrets: KeychainPasswordStore(),
+            upstreamSecrets: KeychainPasswordStore(service: "dev.sunyun.ProxyBridge.upstream-password"),
+            trafficTotals: .live(),
             systemServices: AppSystemServices(),
             hostKeyTrust: HostKeyTrustService(),
             updateChecker: GitHubReleaseUpdateChecker(),
@@ -346,7 +366,10 @@ final class AppViewModel {
             guard let self else { return }
             switch event {
             case .traffic(let snapshot):
-                if self.profiles.contains(where: { $0.id == snapshot.profileID }) { self.trafficStore.update(snapshot) }
+                if self.profiles.contains(where: { $0.id == snapshot.profileID }) {
+                    self.trafficStore.update(snapshot)
+                    self.trafficTotals.record(snapshot)
+                }
             case .snapshot(let snap):
                 self.applySnapshot(snap)
             case .passwordPromptRequested(let profileId):
@@ -799,9 +822,11 @@ final class AppViewModel {
         if tunnel.isActive(profileID: id) {
             tunnel.disconnect(profileID: id)
         }
-        secrets.delete(for: id) // 清掉可能记住的密码
+        secrets.delete(for: id) // 清掉可能记住的 SSH 密码
+        upstreamSecrets.delete(for: id) // 清掉可能记住的上游代理密码
         snapshots[id] = nil
         trafficStore.remove(id)
+        trafficTotals.remove(id)
         // 运行期私有状态整对象移除：升级冷却、端点记录、通知任务、提示标记等
         // 全部键由结构保证一次清空（平行字典时代这里先后漏清过八个键）
         profileStates[id]?.notificationTask?.cancel()
@@ -853,7 +878,18 @@ final class AppViewModel {
                 : reason
             logStore.append(raw: message, level: level, profileId: profile.id)
         }
-        let config = TunnelConfiguration(profile: profile, localEndpoint: endpointValue(of: resolved))
+        if let username = profile.upstreamAuthUsername, upstreamCredential(for: profile) == nil {
+            logStore.append(
+                raw: "已配置上游代理认证用户名「\(username)」，但钥匙串中无对应密码：连接会因认证失败被拒，请在服务器编辑中重新填写密码",
+                level: .warning,
+                profileId: profile.id
+            )
+        }
+        let config = TunnelConfiguration(
+            profile: profile,
+            localEndpoint: endpointValue(of: resolved),
+            upstreamCredential: upstreamCredential(for: profile)
+        )
         profileStates[profile.id, default: .init()].connectionEndpoint = config.localEndpoint
         logStore.append(
             raw: "请求连接「\(profile.name)」",
@@ -868,6 +904,35 @@ final class AppViewModel {
         pendingStartupProfiles.remove(profile.id)
         logStore.append(raw: "用户手动断开「\(profile.name)」", level: .info, profileId: profile.id)
         tunnel.disconnect(profileID: profile.id)
+    }
+
+    /// 从钥匙串装配上游代理凭据（用户名在 profile，密码在独立 service）。
+    private func upstreamCredential(for profile: ServerProfile) -> ProxyCredentials? {
+        guard let username = profile.upstreamAuthUsername,
+              let password = upstreamSecrets.load(for: profile.id) else { return nil }
+        return ProxyCredentials(username: username, password: password)
+    }
+
+    /// 编辑器查询：该 profile 是否已存上游代理密码（密码框占位文案用）。
+    func hasUpstreamPassword(for id: UUID) -> Bool {
+        upstreamSecrets.exists(for: id)
+    }
+
+    /// 编辑器保存时应用上游代理密码的落库意图（keep 不动 / clear 删除 / set 覆盖）。
+    func applyUpstreamSecret(for id: UUID, action: UpstreamSecretAction) {
+        switch action {
+        case .keep:
+            break
+        case .clear:
+            upstreamSecrets.delete(for: id)
+        case .set(let password):
+            let saved = upstreamSecrets.save(password, for: id)
+            logStore.append(
+                raw: saved ? "上游代理密码已存入钥匙串（不进配置文件与日志）" : "上游代理密码写入钥匙串失败：认证将无法自动完成，请重试保存",
+                level: saved ? .info : .warning,
+                profileId: id
+            )
+        }
     }
 
     /// 用户提交 SSH 密码（转发给隧道服务）。勾选「记住」只登记意图：

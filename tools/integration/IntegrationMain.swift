@@ -234,7 +234,7 @@ final class FakeHTTPUpstream: @unchecked Sendable {
 
 /// 本地探测替身：本地代理探测已由单元/冒烟覆盖，集成层聚焦真实隧道数据路径。
 final class AlwaysVerifiedLocalProber: ProxyProbeExecuting, @unchecked Sendable {
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome {
         .verified(statusCode: 200)
     }
 }

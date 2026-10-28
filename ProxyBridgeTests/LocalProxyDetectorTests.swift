@@ -59,7 +59,7 @@ final class FakeProxyProber: ProxyProbeExecuting, @unchecked Sendable {
         return calls
     }
 
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome {
         lock.lock()
         calls.append(Call(host: host, port: port, `protocol`: `protocol`))
         lock.unlock()
@@ -79,7 +79,7 @@ final class GatedProxyProber: ProxyProbeExecuting, @unchecked Sendable {
         return calls
     }
 
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome {
         lock.lock()
         calls += 1
         lock.unlock()

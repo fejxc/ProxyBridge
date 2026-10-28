@@ -58,6 +58,8 @@ final class SSHTunnelCoordinator: TunnelService {
         /// 用户提交密码时勾选的「记住」意图：钥匙串写入推迟到认证成功之后，
         /// 错密码不会污染持久化存储。
         var rememberPasswordRequested = false
+        /// 上游本地代理认证凭据（连接时由 UI 注入；仅内存，不落盘不进日志）。
+        var upstreamCredential: ProxyCredentials?
         /// 健康检查因上一次刷新/切换任务在途而被拒时置位；任务收尾后排空，
         /// 周期不再整段丢失到下一个间隔。
         var pendingHealthCheck = false
@@ -101,6 +103,7 @@ final class SSHTunnelCoordinator: TunnelService {
         let session = Session()
         session.profile = configuration.profile
         session.password = sessionPasswords[id] // 会话内记忆：自动重连免再次询问
+        session.upstreamCredential = configuration.upstreamCredential
         sessions[id] = session
 
         session.task = Task { @MainActor [weak self] in
@@ -250,7 +253,7 @@ final class SSHTunnelCoordinator: TunnelService {
         var selectionReason: String?
         if requestedMode != .reverseDynamic {
             if let localEndpoint = configuration.localEndpoint {
-                let localOutcome = await probeLocalEndpoint(localEndpoint)
+                let localOutcome = await probeLocalEndpoint(localEndpoint, credentials: session.upstreamCredential)
                 guard !Task.isCancelled, !session.userStopped else { return }
                 if localOutcome.isVerified {
                     session.localVerified = true
@@ -424,8 +427,14 @@ final class SSHTunnelCoordinator: TunnelService {
                     break
                 }
                 switch localEndpoint.protocol {
-                case .http, .mixed: entryMode = .pipe(localEndpoint)
-                case .socks5: entryMode = .socks5(localEndpoint)
+                case .http, .mixed:
+                    // 带认证的 HTTP/Mixed 上游走 CONNECT 代答；无认证维持零解析管道
+                    if let credential = session.upstreamCredential {
+                        entryMode = .httpConnect(localEndpoint, credential)
+                    } else {
+                        entryMode = .pipe(localEndpoint)
+                    }
+                case .socks5: entryMode = .socks5(localEndpoint, credentials: session.upstreamCredential)
                 }
                 do {
                     let port = try await entry.start(port: 0, mode: entryMode)
@@ -611,7 +620,7 @@ final class SSHTunnelCoordinator: TunnelService {
         let requiresLocalProxy = session.effectiveMode == .staticForward
         var localOK: Bool? = requiresLocalProxy ? session.localVerified : nil
         if requiresLocalProxy, let endpoint = session.localEndpoint {
-            let outcome = await probeLocalEndpoint(endpoint)
+            let outcome = await probeLocalEndpoint(endpoint, credentials: session.upstreamCredential)
             // await 后收口：断开/取消/进程死亡/终态一概静默（U13；error 不被翻转）
             guard !session.userStopped, !Task.isCancelled,
                   session.handle?.isRunning == true,
@@ -747,7 +756,7 @@ final class SSHTunnelCoordinator: TunnelService {
         onEvent?(.snapshot(probing))
 
         // 新端点必须实测通过才切换（与连接时同一验证标准，不凭扫描结论）
-        let outcome = await probeLocalEndpoint(endpoint)
+        let outcome = await probeLocalEndpoint(endpoint, credentials: session.upstreamCredential)
         guard !session.userStopped, !Task.isCancelled,
               session.handle?.isRunning == true,
               session.phase == .connected || session.phase == .degraded else { return }
@@ -765,8 +774,13 @@ final class SSHTunnelCoordinator: TunnelService {
         if session.httpEntry != nil {
             let entryMode: HTTPEntryMode
             switch endpoint.protocol {
-            case .http, .mixed: entryMode = .pipe(endpoint)
-            case .socks5: entryMode = .socks5(endpoint)
+            case .http, .mixed:
+                if let credential = session.upstreamCredential {
+                    entryMode = .httpConnect(endpoint, credential)
+                } else {
+                    entryMode = .pipe(endpoint)
+                }
+            case .socks5: entryMode = .socks5(endpoint, credentials: session.upstreamCredential)
             }
             session.httpEntry?.retarget(to: entryMode)
             // 新上游下入口验证结论不再成立，与健康检查一并重验
@@ -942,16 +956,17 @@ final class SSHTunnelCoordinator: TunnelService {
 
     /// Mixed means both protocols are promised to Linux clients, so verify
     /// HTTP CONNECT and SOCKS5 separately before creating a static forward.
-    private func probeLocalEndpoint(_ endpoint: LocalProxyEndpoint) async -> ProbeOutcome {
+    private func probeLocalEndpoint(_ endpoint: LocalProxyEndpoint, credentials: ProxyCredentials?) async -> ProbeOutcome {
         if endpoint.protocol == .mixed {
-            let http = await localProber.probe(host: endpoint.host, port: endpoint.port, protocol: .http)
+            let http = await localProber.probe(host: endpoint.host, port: endpoint.port, protocol: .http, credentials: credentials)
             guard http.isVerified else { return http }
-            return await localProber.probe(host: endpoint.host, port: endpoint.port, protocol: .socks5)
+            return await localProber.probe(host: endpoint.host, port: endpoint.port, protocol: .socks5, credentials: credentials)
         }
         return await localProber.probe(
             host: endpoint.host,
             port: endpoint.port,
-            protocol: endpoint.protocol
+            protocol: endpoint.protocol,
+            credentials: credentials
         )
     }
 

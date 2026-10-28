@@ -61,6 +61,8 @@ struct TunnelConfiguration: Sendable, Equatable {
     var profile: ServerProfile
     /// 已解析的本地代理端点（manual 优先，其次已验证的自动候选）。nil = 未解析。
     var localEndpoint: LocalProxyEndpoint?
+    /// 上游本地代理认证凭据（连接时由 UI 从钥匙串装配；仅内存传递，不落盘不进日志）。
+    var upstreamCredential: ProxyCredentials? = nil
 }
 
 /// 隧道服务向 UI 上报的事件。

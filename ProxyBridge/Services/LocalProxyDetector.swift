@@ -172,7 +172,8 @@ final class LocalProxyDetector: ProxyDetectorService {
                         let outcome = await prober.probe(
                             host: candidate.endpoint.host,
                             port: candidate.endpoint.port,
-                            protocol: candidate.endpoint.protocol
+                            protocol: candidate.endpoint.protocol,
+                            credentials: nil  // 全局检测不带凭据；认证代理在连接时按 profile 实测
                         )
                         return (index, outcome)
                     }

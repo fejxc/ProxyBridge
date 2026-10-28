@@ -23,7 +23,7 @@ enum ProbeOutcome: Equatable, Sendable {
 
 /// 探测执行抽象（测试注入 fake / 生产 curl）。
 protocol ProxyProbeExecuting: AnyObject, Sendable {
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome
 }
 
 // MARK: - curl 探测器
@@ -50,18 +50,31 @@ final class CurlProxyProbe: ProxyProbeExecuting {
         self.maxTimeSeconds = maxTimeSeconds
     }
 
-    func probe(host: String, port: Int, protocol: ProxyProtocol) async -> ProbeOutcome {
+    func probe(host: String, port: Int, protocol: ProxyProtocol, credentials: ProxyCredentials?) async -> ProbeOutcome {
         guard FileManager.default.isExecutableFile(atPath: Self.executableURL.path) else {
             return .failed(reason: "系统缺少 /usr/bin/curl")
         }
         guard Self.isValidProbeHost(host), (1...65_535).contains(port) else {
             return .failed(reason: "探测参数未通过校验（host/port）")
         }
-        let args = Self.arguments(
+        let baseArgs = Self.arguments(
             host: host, port: port, protocol: `protocol`,
             urlString: Self.verificationURL,
             connectTimeout: connectTimeoutSeconds, maxTime: maxTimeSeconds
         )
+        // 凭据经 0600 临时 curl 配置文件交付（-K），不经 argv/ps与环境变量——
+        // 与 SSH_ASKPASS 凭据文件同一安全取向（同用户可见性折衷，用后即删）。
+        let configFileURL: URL?
+        if let credentials {
+            guard let url = Self.writeCredentialConfig(credentials) else {
+                return .failed(reason: "无法写入代理凭据临时配置文件")
+            }
+            configFileURL = url
+        } else {
+            configFileURL = nil
+        }
+        let args = baseArgs + (configFileURL.map { ["-K", $0.path] } ?? [])
+        defer { if let url = configFileURL { try? FileManager.default.removeItem(at: url) } }
         // Task 取消时终止在途 curl（否则陈旧探测会占满 --max-time 窗口）
         let box = ProcessBox()
         return await withTaskCancellationHandler {
@@ -73,6 +86,30 @@ final class CurlProxyProbe: ProxyProbeExecuting {
         } onCancel: {
             box.terminateIfRunning()
         }
+    }
+
+    /// 凭据临时配置文件（0600）。内容形如 `proxy-user = "user:pass"`，
+    /// 覆盖 HTTP Basic 与 SOCKS5 RFC1929 两种认证（curl 按 scheme 自适配）。
+    static func writeCredentialConfig(_ credentials: ProxyCredentials) -> URL? {
+        guard let contents = credentialConfigContents(credentials) else { return nil }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pb-proxy-cred-\(UUID().uuidString).conf")
+        let permissions: [FileAttributeKey: Any] = [.posixPermissions: 0o600]
+        return FileManager.default.createFile(atPath: url.path, contents: Data(contents.utf8), attributes: permissions)
+            ? url : nil
+    }
+
+    /// curl 配置文件内容（纯函数）。引号/反斜杠按 curl 配置语法转义；
+    /// 含换行/回车/NUL 的密码无法在单行配置中表达，返回 nil 如实失败。
+    static func credentialConfigContents(_ credentials: ProxyCredentials) -> String? {
+        func escaped(_ raw: String) -> String? {
+            guard !raw.contains(where: { $0 == "\n" || $0 == "\r" || $0 == "\0" }) else { return nil }
+            return raw
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+        }
+        guard let user = escaped(credentials.username), let pass = escaped(credentials.password) else { return nil }
+        return "proxy-user = \"\(user):\(pass)\"\n"
     }
 
     /// 参数数组构建（纯函数，U07 同源保真：host/port 逐字进入数组，无任何拼接 shell）。

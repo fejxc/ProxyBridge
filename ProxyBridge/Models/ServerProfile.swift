@@ -82,6 +82,9 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     var connectAtLaunch: Bool
     /// 密码模式：是否记住密码（密码本体存 macOS 钥匙串，绝不进本文件）。
     var rememberPassword: Bool
+    /// 上游本地代理认证用户名（nil = 本地代理无需认证）。
+    /// 密码本体存 macOS 钥匙串（独立 service），绝不进本文件。
+    var upstreamAuthUsername: String?
 
     /// MVP 远程绑定只允许 loopback；不提供 0.0.0.0。
     static let remoteBindHost = "127.0.0.1"
@@ -106,7 +109,8 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         connectionMode: ConnectionMode = .automatic,
         remoteSocksPort: Int = 17_890,
         remoteHTTPPort: Int = 7_890,
-        httpAdapterEnabled: Bool = true
+        httpAdapterEnabled: Bool = true,
+        upstreamAuthUsername: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -128,6 +132,14 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.reconnectEnabled = reconnectEnabled
         self.connectAtLaunch = connectAtLaunch
         self.rememberPassword = rememberPassword
+        self.upstreamAuthUsername = Self.normalizedUpstreamUsername(upstreamAuthUsername)
+    }
+
+    /// 上游认证用户名归一化：去首尾空白，空串归 nil（nil = 不使用认证）。
+    /// 字符集合法性由 ServerProfileRule.validate 报错呈现，不做静默丢弃。
+    static func normalizedUpstreamUsername(_ raw: String?) -> String? {
+        guard let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 
     var displayTarget: String { "\(username)@\(host):\(sshPort)" }
@@ -140,6 +152,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         case relayPort, remotePort, remoteSocksPort, remoteHTTPPort, connectionMode, httpAdapterEnabled
         case proxySelectionMode, manualEndpoint, preferredProtocol, probeTargetURL
         case reconnectEnabled, connectAtLaunch, rememberPassword
+        case upstreamAuthUsername
     }
 
     /// 业务探测目标的严格清洗：https?:// 开头、无空白与控制字符、长度受限。
@@ -184,6 +197,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         reconnectEnabled = try c.decodeIfPresent(Bool.self, forKey: .reconnectEnabled) ?? true
         connectAtLaunch = try c.decodeIfPresent(Bool.self, forKey: .connectAtLaunch) ?? false
         rememberPassword = try c.decodeIfPresent(Bool.self, forKey: .rememberPassword) ?? false
+        upstreamAuthUsername = Self.normalizedUpstreamUsername(try c.decodeIfPresent(String.self, forKey: .upstreamAuthUsername))
     }
 }
 
@@ -305,6 +319,18 @@ enum ServerProfileRule {
                 }
             } else if profile.connectionMode == .staticForward {
                 result.errors.append("手动代理模式必须填写本地代理端点")
+            }
+        }
+        if let upstreamUser = profile.upstreamAuthUsername {
+            if upstreamUser.count > 128 {
+                result.errors.append("上游代理用户名过长（最多 128 字符）")
+            }
+            if upstreamUser.contains(":") {
+                // curl --proxy-user 以首个冒号分隔用户名与密码（凭据经 curl 配置文件交付）
+                result.errors.append("上游代理用户名不能包含冒号")
+            }
+            if upstreamUser.contains(where: { $0.isWhitespace || $0.isNewline || $0.asciiValue.map { $0 < 0x21 || $0 == 0x7f } == true }) {
+                result.errors.append("上游代理用户名不能包含空白或控制字符")
             }
         }
         return result

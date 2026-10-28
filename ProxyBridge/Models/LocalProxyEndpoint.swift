@@ -92,6 +92,13 @@ struct LocalProxyEndpoint: Codable, Equatable, Identifiable, Sendable {
     var displayEndpoint: String { "\(host):\(port)" }
 }
 
+/// 上游本地代理的认证凭据（运行期对象）。
+/// 密码只存在于会话内存与 macOS 钥匙串，绝不进 profiles.json、日志或诊断导出。
+struct ProxyCredentials: Equatable, Sendable {
+    let username: String
+    let password: String
+}
+
 enum LocalProxyEndpointRule {
     /// MVP 只允许本机回环地址作为本地代理主机。
     static let allowedHosts: Set<String> = ["127.0.0.1", "::1", "localhost"]
