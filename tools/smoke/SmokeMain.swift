@@ -453,7 +453,7 @@ struct SmokeMain {
               CurlProxyProbe.credentialConfigContents(ProxyCredentials(username: "u", password: "p\"a\\ss")) == "proxy-user = \"u:p\\\"a\\\\ss\"\n"
               && CurlProxyProbe.credentialConfigContents(ProxyCredentials(username: "u", password: "a\nb")) == nil)
         check("UA05", "用户名校验拒绝冒号；旧 JSON 缺键兼容为 nil",
-              !ServerProfileRule.validate(ServerProfile(name: "s", host: "example.com", sshPort: 22, username: "root", remotePort: 7890, upstreamAuthUsername: "a:b")).isValid)
+              !ServerProfileRule.validate(ServerProfile(name: "s", host: "example.com", sshPort: 22, username: "root", remotePort: 17_897, upstreamAuthUsername: "a:b")).isValid)
     }
 
     // MARK: TS 流量历史累计

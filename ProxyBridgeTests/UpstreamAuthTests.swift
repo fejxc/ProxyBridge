@@ -84,8 +84,9 @@ final class UpstreamAuthTests: XCTestCase {
     }
 
     func testValidationRejectsInvalidUpstreamUsername() {
+        // remotePort 不能与默认 remoteHTTPPort(7890) 相同（校验规则）
         func profile(username: String?) -> ServerProfile {
-            ServerProfile(name: "s", host: "example.com", sshPort: 22, username: "root", remotePort: 7890, upstreamAuthUsername: username)
+            ServerProfile(name: "s", host: "example.com", sshPort: 22, username: "root", remotePort: 17_897, upstreamAuthUsername: username)
         }
         XCTAssertTrue(ServerProfileRule.validate(profile(username: "corp-user")).isValid)
         XCTAssertFalse(ServerProfileRule.validate(profile(username: "us:er")).isValid, "冒号会被 curl 当作用户名分隔")
