@@ -237,7 +237,7 @@ final class LocalProxyDetector: ProxyDetectorService {
                 ?? "端口有响应，但拒绝了代理连接（CONNECT 被拒）"
         case .authRequired:
             updated.capability = .failed
-            updated.note = "代理要求身份认证（407）：MVP 不支持带认证的代理，请调整代理客户端设置"
+            updated.note = "代理要求身份认证（407）：可在服务器编辑的「上游代理认证」中填写凭据后连接（检测扫描不带凭据，以连接时实测为准）"
         case .connectionRefused:
             updated.capability = .failed
             updated.note = "端口未监听或拒绝连接（代理客户端未运行？）"
