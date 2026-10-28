@@ -67,22 +67,26 @@ final class DiagnosticsReportTests: XCTestCase {
         XCTAssertTrue(tail.text.contains("token=[凭据]"), "凭据形态必须被遮挡")
         XCTAssertFalse(tail.text.contains("10.11.154.192"), "原始 IP 不得出机")
         XCTAssertTrue(tail.text.contains("line-199"), "必须保留文件末尾")
-        XCTAssertFalse(tail.text.contains("line-100\n"), "超出上限的更早行被裁剪")
-        XCTAssertFalse(tail.truncated, "未触字节上限时不得标注截断")
+        XCTAssertTrue(tail.truncated, "201 行 > maxLines 50，行数截断必须如实标注")
+
+        let full = DiagnosticsReport.diskLogTail(url: url, maxLines: 500)
+        XCTAssertEqual(full?.truncated, false, "maxLines 覆盖全部行时不标注截断")
     }
 
     func testDiskLogTailMarksTruncation() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("diag-\(UUID().uuidString).log")
-        try String(repeating: "line-0123456789\n", count: 100)
-            .write(to: url, atomically: true, encoding: .utf8)
+        var body = ""
+        for i in 0..<100 { body += String(format: "L%03d\n", i) }
+        try body.write(to: url, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let tail = DiagnosticsReport.diskLogTail(url: url, maxLines: 1_000, maxBytes: 64)
+        // 文件 500 字节；末 12 字节 = "097\nL098\nL099\n"，字节截断起点落在 L097 行中间。
+        let tail = DiagnosticsReport.diskLogTail(url: url, maxLines: 1_000, maxBytes: 12)
         XCTAssertNotNil(tail)
         guard let tail else { return }
         XCTAssertTrue(tail.truncated, "超过字节上限必须如实标注截断")
-        XCTAssertFalse(tail.text.contains("line-0123456789\nline"), "截断起点丢弃残行")
+        XCTAssertEqual(tail.text, "L098\nL099", "残缺首行被丢弃，仅保留完整行")
     }
 
     func testDiskLogTailMissingFileReturnsNil() {
