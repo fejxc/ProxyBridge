@@ -27,6 +27,7 @@ struct SmokeMain {
         await retargetWiringChecks()
         logStoreChecks()
         diagnosticsChecks()
+        diagnosticsExportChecks()
         await liveProxyChecks()
         sshChecks()
         await askpassChecks()
@@ -406,6 +407,32 @@ struct SmokeMain {
         check("LD03", "普通信息日志不硬造建议", LogDiagnostics.hint(for: "ProxyBridge 启动") == nil)
         check("LD04", "多行/超长消息判定为默认折叠",
               LogDiagnostics.needsCollapse("a\nb") && LogDiagnostics.needsCollapse(String(repeating: "x", count: 121)) && !LogDiagnostics.needsCollapse("短"))
+    }
+
+    // MARK: DX 诊断包
+
+    static func diagnosticsExportChecks() {
+        let content = DiagnosticsReport.Content(
+            appVersion: "9.9.9 (1)",
+            systemVersion: "test-system",
+            servers: [DiagnosticsReport.ServerInfo(name: "srv", mode: "静态转发", status: "已连接")],
+            activeSummary: nil,
+            sessionLogs: "12:00:00 [错误] 连接 10.11.154.192 token=abcdefgh12345678",
+            diskLogPathLabel: nil,
+            diskLogTail: nil,
+            diskLogTruncated: false
+        )
+        let report = DiagnosticsReport.markdown(content)
+        check("DX01", "报告含环境与服务器段", report.contains("应用版本：9.9.9 (1)") && report.contains("「srv」") && report.contains("静态转发"))
+        check("DX02", "会话日志入报告且 IP/凭据导出级脱敏",
+              report.contains("12:00:00 [错误]") && report.contains("[IP]") && report.contains("token=[凭据]")
+              && !report.contains("10.11.154.192"))
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("smoke-diag-\(UUID().uuidString).log")
+        try? "a\nb\nc\n".write(to: tmp, atomically: true, encoding: .utf8)
+        let tail = DiagnosticsReport.diskLogTail(url: tmp)
+        check("DX03", "磁盘日志尾段读取（去尾部空行）", tail?.text == "a\nb\nc")
+        try? FileManager.default.removeItem(at: tmp)
+        check("DX04", "磁盘日志缺失如实返回 nil", DiagnosticsReport.diskLogTail(url: tmp) == nil)
     }
 
     // MARK: S20 复制模板

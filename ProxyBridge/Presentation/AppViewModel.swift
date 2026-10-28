@@ -1165,6 +1165,51 @@ final class AppViewModel {
         logStore.append(raw: "已复制日志（\(settings.redactLogsOnCopy ? "脱敏" : "未脱敏——包含主机与用户名")）", level: .info)
     }
 
+    /// 诊断包导出：环境 + 各服务器状态 + 会话日志 + 磁盘日志末段，一律导出级脱敏；
+    /// 保存位置由用户经 NSSavePanel 决定，导出后可在附到 issue 前自行打开检查。
+    func exportDiagnosticsBundle() {
+        let tail = logStore.fileURL.flatMap { DiagnosticsReport.diskLogTail(url: $0) }
+        let content = DiagnosticsReport.Content(
+            appVersion: DiagnosticsReport.appVersionString,
+            systemVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            servers: profiles.map { profile in
+                let snapshot = snapshots[profile.id] ?? .idle(profile.id)
+                return DiagnosticsReport.ServerInfo(
+                    name: profile.name,
+                    mode: resolvedConnectionMode(profile: profile, snapshot: snapshot).displayName,
+                    status: TunnelStatusPresentation.overall(for: snapshot).title
+                )
+            },
+            activeSummary: {
+                let summary = healthSummary
+                return [summary.title, summary.detail].compactMap { $0 }.joined(separator: "；")
+            }(),
+            sessionLogs: logStore.exportText(redacted: true),
+            diskLogPathLabel: logStore.fileURL.map { ($0.path as NSString).abbreviatingWithTildeInPath },
+            diskLogTail: tail?.text,
+            diskLogTruncated: tail?.truncated ?? false
+        )
+        let text = DiagnosticsReport.markdown(content)
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = "ProxyBridge-诊断-\(Self.diagnosticsFileNameFormatter.string(from: Date())).md"
+        panel.message = L10n.t("内容与日志同规则脱敏；可在附加到 issue 前打开检查。")
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            logStore.append(raw: "诊断包已导出：\((url.path as NSString).abbreviatingWithTildeInPath)", level: .info)
+        } catch {
+            logStore.append(raw: "诊断包导出失败：\(error.localizedDescription)", level: .error)
+        }
+    }
+
+    private static let diagnosticsFileNameFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
+
     /// 菜单栏「查看日志」/设置按钮跳转。
     func openSettings(tab: SettingsTab) {
         settingsTab = tab

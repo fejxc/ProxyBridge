@@ -117,6 +117,13 @@ struct LogsView: View {
                 }
                 .help("在 Finder 中打开 ~/Library/Logs/ProxyBridge/app.log；完整历史记录在磁盘上，重启不丢失")
 
+                Button {
+                    model.exportDiagnosticsBundle()
+                } label: {
+                    Label(L10n.t("导出诊断包"), systemImage: "stethoscope")
+                }
+                .help("生成脱敏诊断文件（环境、连接状态、会话与磁盘日志末段），可直接附到 GitHub issue")
+
                 Button(role: .destructive) {
                     model.logStore.removeAll()
                 } label: {
