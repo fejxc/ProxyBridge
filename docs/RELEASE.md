@@ -17,6 +17,7 @@
 - [v1.4.6](https://github.com/fejxc/ProxyBridge/releases/tag/v1.4.6)：更新链路加固（流式下载、codesign 完整性与身份核对、同卷原子替换）；发布流程钉死与被测代码一致（CI 绿门槛、标签内构建、资产不可覆盖）；真实验收清单成为发布门槛；「已连接」明确标注探测目标并支持每服务器业务验证目标。
 - [v1.5.2](https://github.com/fejxc/ProxyBridge/releases/tag/v1.5.2)：应用内更新 DMG 挂载点修复与步骤日志；增加 sshd 原始转发错误透传。
 - v1.5.3：修复 HTTP 入口与静态转发使用相同端口导致的 SSH 监听失败；新建配置使用独立静态端口；补齐全 TCP 状态的远端残留诊断与清理复查，修正 1.5.2 发布说明与实际诊断扫描不一致的问题。
+- [v1.8.1](https://github.com/fejxc/ProxyBridge/releases/tag/v1.8.1)：分发扩展——Homebrew 自建 tap 上线（`brew install fejxc/tap/proxybridge`），README 增加安装方式；隧道核心与 UI 零行为变化，仅版本元数据与文档。
 - v1.8.0：UI 信息架构改版——菜单栏收敛为控制+摘要（健康检查折叠、纵向流量路径、删说明块），新增概览首页（状态+编辑入口），服务器配置基础/高级分层，日志页搜索与修复建议；健康摘要/修复建议为纯函数并配单测与冒烟断言。
 - [v1.7.1](https://github.com/fejxc/ProxyBridge/releases/tag/v1.7.1)：界面原生化第二批——设置行左对齐修正、侧栏玻璃贯穿全窗高（fullSizeContentView）、表单行与侧栏系统组件化、流量图系统色。
 - [v1.7.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.7.0)：界面 Apple 原生化专项——设计令牌全面迁移系统语义色、15 种手工字号收敛为 6 档语义字阶、徽章胶囊降噪、容器去描边与系统材质、设置分组 GroupBox/LabeledContent 原生化；行为零变化。
@@ -30,7 +31,7 @@
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-当前稳定版为 `ProxyBridge-1.8.0-universal.dmg`，拖入 Applications 即可安装，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
+当前稳定版为 `ProxyBridge-1.8.1-universal.dmg`，拖入 Applications 即可安装，也可以 `brew install fejxc/tap/proxybridge`，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
 
 ## 后续版本
 

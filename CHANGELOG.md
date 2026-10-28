@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.1 — 2026-10-28（已发布）
+
+分发渠道扩展：Homebrew 安装支持。隧道核心、自愈与 UI 零行为变化（与 1.8.0 代码一致，仅版本元数据与文档；本机 typecheck、smoke 213 项、build_app 通过）：
+
+- **Homebrew 自建 tap 上线**：`brew install fejxc/tap/proxybridge`（[fejxc/homebrew-tap](https://github.com/fejxc/homebrew-tap)）。cask 钉官方 Release DMG 的 SHA-256，`livecheck` 自动跟踪 GitHub Releases，`brew test-bot` CI 守护 tap（含 cask audit 与 shell 脚本 shellcheck/shfmt 检查）。
+- **README 安装节改为两种方式**：方式一 Homebrew 一条命令；方式二手动下载 DMG。更新通道不变：版本更新仍走 App 内置自更新器（SHA-256 + 签名双校验原子替换）——cask 声明 `auto_updates`，Homebrew 用户**不要使用 `brew upgrade`**，手动 upgrade 会把已自更新的 App 降级回 tap 记录的版本。
+- 未公证期间，Homebrew 安装的应用默认带 quarantine 标记，首次打开被 Gatekeeper 拦截时执行 `xattr -dr com.apple.quarantine /Applications/ProxyBridge.app`（公证接入后移除此说明）。
+- 发版配套：`bump.sh` 在每次 Release 后同步 tap 的 version 与 SHA-256 两行。
+
 ## 1.8.0 — 2026-10-26（已发布）
 
 UI 信息架构改版：菜单栏负责控制、概览页先看状态再进配置、解释归诊断页（连接语义零变化；本机 typecheck、smoke 211 项、build_app 通过；F19 单实例锁项因应用运行中属环境性失败，与历版一致）：

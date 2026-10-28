@@ -1,4 +1,4 @@
-# 已知限制（截至 ProxyBridge 1.7.1）
+# 已知限制（截至 ProxyBridge 1.8.1）
 
 已实现 SSH 密码（SSH_ASKPASS）/钥匙串/密钥认证、网络退避重连、周期健康检查、睡眠唤醒恢复、启动连接、登录项注册和系统异常通知。手动断开停止重试；认证与主机指纹错误需要人工处理。HTTP 兼容入口由 App 内实现，远端零依赖（仅 sshd + curl）。
 
@@ -14,6 +14,10 @@
 - **界面限制**：菜单栏固定宽度；超大字体及小屏自适应、逐页视觉验收未完成；当前只提供简体中文。
 
 1.7.1 已在 GitHub Releases 发布；早期阶段报告保留当时状态，当前限制以本文件为准。
+
+## 1.8.1 补充
+
+- **Homebrew 安装（自建 tap `fejxc/tap`）**：未公证期间，Homebrew 默认给安装的应用打 quarantine 标记，首次打开被 Gatekeeper 拦截时执行 `xattr -dr com.apple.quarantine /Applications/ProxyBridge.app`。cask 声明 `auto_updates`：版本更新只走 App 内置自更新器，`brew upgrade` 会把已自更新的 App 降级回 tap 记录的版本，不要使用。
 
 ## 1.2.0 补充
 
