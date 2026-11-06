@@ -208,7 +208,9 @@ enum RemoteProbeCommand {
         }
         return "if ! command -v curl >/dev/null 2>&1; then echo \(noCurlMarker); exit 0; fi; "
             + "exec curl --noproxy \"\" \(proxyArg) "
-            + "--connect-timeout 3 --max-time 8 --silent --show-error "
+            // connect-timeout 与 max-time 对齐（8s）：隧道 + 本机出站（如 Clash）多级
+            // 链路的握手偶发超过 3 秒，过紧预算把「偶发慢」误报成降级；总上限不变。
+            + "--connect-timeout 8 --max-time 8 --silent --show-error "
             + "--output /dev/null --write-out '%{http_code}' '\(urlString)'"
     }
 }

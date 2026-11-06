@@ -197,7 +197,7 @@ final class SSHCommandBuilderTests: XCTestCase {
             ),
             "if ! command -v curl >/dev/null 2>&1; then echo \(RemoteProbeCommand.noCurlMarker); exit 0; fi; "
                 + "exec curl --noproxy \"\" --proxy http://127.0.0.1:7890 "
-                + "--connect-timeout 3 --max-time 8 --silent --show-error "
+                + "--connect-timeout 8 --max-time 8 --silent --show-error "
                 + "--output /dev/null --write-out '%{http_code}' 'https://www.example.com/'"
         )
         XCTAssertEqual(
@@ -206,7 +206,7 @@ final class SSHCommandBuilderTests: XCTestCase {
             ),
             "if ! command -v curl >/dev/null 2>&1; then echo \(RemoteProbeCommand.noCurlMarker); exit 0; fi; "
                 + "exec curl --noproxy \"\" --socks5-hostname 127.0.0.1:1080 "
-                + "--connect-timeout 3 --max-time 8 --silent --show-error "
+                + "--connect-timeout 8 --max-time 8 --silent --show-error "
                 + "--output /dev/null --write-out '%{http_code}' 'https://www.example.com/'"
         )
     }

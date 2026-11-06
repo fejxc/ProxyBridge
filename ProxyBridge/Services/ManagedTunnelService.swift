@@ -26,6 +26,8 @@ final class ManagedTunnelService: TunnelService {
         var businessRecoveryAttempts: [Date] = []      // 5 分钟滚动窗口内的业务失败重建时间
         var lastBusinessRecoveryAt: Date?              // 最近一次业务失败重建时间，用于冷却
         var budgetExhaustedAnnounced = false           // 「重建预算用尽」提示只发一次（连接恢复/新连接意图时复位）
+        var hardFailureTimes: [Date] = []              // 证据窗口内的硬失败时间戳（允许间隔成功）
+        var lastObservedRemoteFailures: Int?           // 上次快照的连续失败计数；差分识别「新失败」
     }
     private var policies: [UUID: RecoveryPolicyState] = [:]
     /// 每台服务器的自愈状态迁移短历史；只存决策元数据，不存业务请求内容。
@@ -45,8 +47,12 @@ final class ManagedTunnelService: TunnelService {
     /// 远端端口冲突的自动重试窗口（秒）：旧 sshd 释放端口通常需要 1–3 分钟；
     /// 窗口过后仍冲突视为真实占用/禁转发，停止重试转为终态指引。测试注入更短值。
     var remoteBindConflictWindowSeconds: Double = 180
-    /// 连续业务硬失败阈值；三个独立周期可排除单次网络抖动。
+    /// 证据窗口内累计业务硬失败阈值；允许间隔成功（孤发失败也累计），
+    /// 窗口过期证据自动失效，单次网络抖动不会凑齐。测试注入更短值。
     var businessFailureThreshold = 3
+    /// 硬失败证据窗口（秒）：窗口内累计达阈值即受控重建；成功不再清零，
+    /// 靠窗口自然衰减——「时好时坏」的隧道也能攒齐证据。测试注入更短值。
+    var hardFailureEvidenceWindowSeconds: Double = 600
     /// 两次业务失败重建的最小间隔；测试注入更短值。
     var businessRecoveryCooldownSeconds: Double = 60
     /// 滚动窗口大小，与 maximumBusinessRecoveries 共同防重连风暴。
@@ -93,6 +99,8 @@ final class ManagedTunnelService: TunnelService {
         policies[id]?.remoteDue = nil
         policies[id]?.conflictSince = nil // 新的连接意图：端口冲突窗口重新计时
         policies[id]?.budgetExhaustedAnnounced = false
+        policies[id]?.hardFailureTimes = [] // 新隧道 = 新证据：旧会话的失败记录不得跨会话累计
+        policies[id]?.lastObservedRemoteFailures = nil
         recoveryHistory[id] = nil // 新连接意图从干净轨迹开始
         resumeIDs.remove(id)
         if sleeping {
@@ -365,8 +373,12 @@ final class ManagedTunnelService: TunnelService {
             policies[id]?.conflictSince = nil
         }
         if snapshot.phase == .degraded, snapshot.sshProcessRunning {
+            recordHardFailureEvidence(id: id, snapshot: snapshot)
             maybeScheduleBusinessRecovery(id: id, snapshot: snapshot)
             if policies[id]?.recoveryTask != nil || businessFailureBudgetExhausted(snapshot) { return }
+        } else {
+            // 非 degraded 快照（connected/checking 等）只推进差分基线，不产生证据
+            policies[id]?.lastObservedRemoteFailures = snapshot.consecutiveRemoteFailures
         }
         let unavailableLocal = snapshot.phase == .degraded && !snapshot.sshProcessRunning
         guard configuration.profile.reconnectEnabled, Self.shouldRetry(snapshot) || unavailableLocal || bindConflict else { return }
@@ -389,6 +401,8 @@ final class ManagedTunnelService: TunnelService {
         snapshot.localProxyVerified = nil
         snapshot.remoteProbeVerified = nil
         snapshot.consecutiveRemoteFailures = 0
+        policies[id, default: .init()].hardFailureTimes = [] // 新会话重新攒证据
+        policies[id, default: .init()].lastObservedRemoteFailures = nil
         snapshot.humanReadableDetail = "\(reason)；\(String(format: "%.1f", delay)) 秒后重连"
         snapshots[id] = snapshot
         policies[id, default: .init()].retryTask = Task { @MainActor [weak self] in
@@ -405,12 +419,14 @@ final class ManagedTunnelService: TunnelService {
         onEvent?(.snapshot(snapshot))
     }
 
-    /// SSH 进程还活着、但业务通路连续明确失败：受控重建。
-    /// 只统计 connectionFailure/notProxy；探测超时或缺 curl 是不确定结论，不触发。
+    /// SSH 进程还活着、但业务通路在证据窗口内多次明确失败：受控重建。
+    /// 只统计 connectionFailure 等明确失败（探测超时或缺 curl 是不确定结论，不计数）；
+    /// 证据允许间隔成功——孤发失败也累计，窗口过期自动失效，避免「时好时坏」永不自愈。
     private func maybeScheduleBusinessRecovery(id: UUID, snapshot: TunnelSnapshot) {
+        let windowFailures = hardFailuresInWindow(id: id)
         guard policies[id]?.recoveryTask == nil,
               snapshot.sshProcessRunning,
-              snapshot.consecutiveRemoteFailures >= businessFailureThreshold else { return }
+              windowFailures >= businessFailureThreshold else { return }
 
         let now = Date()
         policies[id]?.businessRecoveryAttempts.removeAll { now.timeIntervalSince($0) >= businessRecoveryWindowSeconds }
@@ -420,7 +436,7 @@ final class ManagedTunnelService: TunnelService {
             guard policies[id]?.budgetExhaustedAnnounced != true else { return }
             policies[id, default: .init()].budgetExhaustedAnnounced = true
             var budgetSnapshot = snapshot
-            budgetSnapshot.humanReadableDetail += "；已连续失败，自动重建窗口预算用尽，将继续探测"
+            budgetSnapshot.humanReadableDetail += "；已多次失败，自动重建预算用尽，将继续探测"
             let decision = TunnelRecoveryDecision(
                 scope: .remotePath,
                 action: .probeOnly,
@@ -428,7 +444,7 @@ final class ManagedTunnelService: TunnelService {
                 reason: snapshot.humanReadableDetail,
                 decidedAt: now,
                 nextActionAt: nil,
-                consecutiveFailures: snapshot.consecutiveRemoteFailures,
+                consecutiveFailures: windowFailures,
                 remainingRecoveries: 0
             )
             budgetSnapshot.appendRecoveryDecision(decision)
@@ -445,15 +461,32 @@ final class ManagedTunnelService: TunnelService {
             id: id,
             delay: delay,
             reason: snapshot.humanReadableDetail,
-            consecutiveFailures: snapshot.consecutiveRemoteFailures,
+            consecutiveFailures: windowFailures,
             remainingRecoveries: maximumBusinessRecoveries - (policies[id]?.businessRecoveryAttempts.count ?? 0)
         )
+    }
+
+    /// 差分登记硬失败证据：协调器每个健康快照携带 `consecutiveRemoteFailures`
+    /// （验证通过时清零、明确失败时 +1、冷却/保持周期原值携带）。计数高于上次
+    /// 快照即记一次新失败；归零不清证据——「时好时坏」的证据靠窗口自然衰减。
+    private func recordHardFailureEvidence(id: UUID, snapshot: TunnelSnapshot) {
+        let previous = policies[id]?.lastObservedRemoteFailures
+        policies[id, default: .init()].lastObservedRemoteFailures = snapshot.consecutiveRemoteFailures
+        guard let previous, snapshot.consecutiveRemoteFailures > previous else { return }
+        policies[id, default: .init()].hardFailureTimes.append(Date())
+    }
+
+    /// 证据窗口内的硬失败次数（惰性剪枝：读取时清掉过期时间戳）。
+    private func hardFailuresInWindow(id: UUID) -> Int {
+        let now = Date()
+        policies[id]?.hardFailureTimes.removeAll { now.timeIntervalSince($0) >= hardFailureEvidenceWindowSeconds }
+        return policies[id]?.hardFailureTimes.count ?? 0
     }
 
     private func businessFailureBudgetExhausted(_ snapshot: TunnelSnapshot) -> Bool {
         let id = snapshot.profileId
         guard snapshot.phase == .degraded, snapshot.sshProcessRunning,
-              snapshot.consecutiveRemoteFailures >= businessFailureThreshold else { return false }
+              hardFailuresInWindow(id: id) >= businessFailureThreshold else { return false }
         let now = Date()
         policies[id]?.businessRecoveryAttempts.removeAll { now.timeIntervalSince($0) >= businessRecoveryWindowSeconds }
         return (policies[id]?.businessRecoveryAttempts.count ?? 0) >= maximumBusinessRecoveries
@@ -475,7 +508,9 @@ final class ManagedTunnelService: TunnelService {
         snapshot.localProxyVerified = nil
         snapshot.remoteProbeVerified = nil
         snapshot.consecutiveRemoteFailures = 0
-        snapshot.humanReadableDetail = "业务通路连续失败；正在受控重建（\(String(format: "%.1f", delay)) 秒后执行）"
+        policies[id, default: .init()].hardFailureTimes = [] // 重建后新会话重新攒证据
+        policies[id, default: .init()].lastObservedRemoteFailures = nil
+        snapshot.humanReadableDetail = "业务通路窗口内多次失败；正在受控重建（\(String(format: "%.1f", delay)) 秒后执行）"
         let decision = TunnelRecoveryDecision(
             scope: .remotePath,
             action: .rebuildTunnel,
@@ -513,7 +548,7 @@ final class ManagedTunnelService: TunnelService {
                 self.onEvent?(.snapshot(snapshot))
             }
             // 先显式释放旧 Session，再连接；coordinator 的 connect 用新 Session 替换旧终态。
-            self.underlying.disconnectForSystemReason(profileID: id, reason: "业务通路连续失败")
+            self.underlying.disconnectForSystemReason(profileID: id, reason: "业务通路窗口内多次失败")
             self.underlying.connect(configuration: configuration)
         }
     }

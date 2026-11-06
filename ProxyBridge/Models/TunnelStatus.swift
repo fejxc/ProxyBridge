@@ -22,7 +22,7 @@ enum HTTPAdapterStatus: String, Codable, Sendable, CaseIterable {
     case unavailable
 }
 
-/// 当前自愈策略只覆盖“SSH 存活但远端业务通路连续失败”；
+/// 当前自愈策略只覆盖“SSH 存活但远端业务通路在证据窗口内多次失败”；
 /// 后续分层探测扩展时再增加本机出口、HTTP 入口等作用域。
 enum TunnelFaultScope: String, Sendable, Equatable {
     case remotePath

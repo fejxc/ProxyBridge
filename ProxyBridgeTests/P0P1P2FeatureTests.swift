@@ -536,7 +536,8 @@ final class AppViewModelFeatureTests: XCTestCase {
         XCTAssertEqual(spy.healthCheckCalls.count, 1, "冷却窗口内的连续路径变化只复测一次")
     }
 
-    /// SSH 活着但业务连续失败：第三次触发受控重建；成功后连续计数从快照复位。
+    /// SSH 活着但业务通路窗口内多次硬失败：第三次触发受控重建；预算内最多两次，
+    /// 超出转只探测。快照节奏忠实模拟协调器：基线快照先行，失败逐次 +1。
     func testPersistentBusinessFailureRebuildsWithBudget() async {
         let temp = TempDirectory.make()
         defer { temp.removeAll() }
@@ -568,17 +569,37 @@ final class AppViewModelFeatureTests: XCTestCase {
             snap.humanReadableDetail = "远端代理请求失败（curl exit 7）"
             spy.emit(snap)
         }
+        func emitHealthy() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            spy.emit(snap)
+        }
 
+        // 第一轮：基线（验证通过、计数清零）后逐次 +1，凑齐三次硬失败 → 受控重建
+        emitHealthy()
+        emitFailure(1)
+        emitFailure(2)
         emitFailure(3)
         let firstRebuilt = await waitUntilMain { spy.connectCalls.count == 2 && spy.systemDisconnectCalls.count == 1 }
-        XCTAssertTrue(firstRebuilt, "连续三次业务失败应受控重建")
+        XCTAssertTrue(firstRebuilt, "窗口内三次业务硬失败应受控重建")
         let scheduled = await waitUntilMain { decisions.contains { $0.state == .scheduled && $0.action == .rebuildTunnel } }
         XCTAssertTrue(scheduled, "重建排程应作为结构化决策暴露给面板")
 
+        // 第二轮：重建即清证据，新会话重新攒齐三次
+        emitHealthy()
+        emitFailure(1)
+        emitFailure(2)
         emitFailure(3)
         let secondRebuilt = await waitUntilMain { spy.connectCalls.count == 3 && spy.systemDisconnectCalls.count == 2 }
         XCTAssertTrue(secondRebuilt)
 
+        // 第三轮：阈值再次凑齐但 5 分钟滚动预算已用尽 → 只探测，不再重建
+        emitHealthy()
+        emitFailure(1)
+        emitFailure(2)
         emitFailure(3)
         try? await Task.sleep(nanoseconds: 150_000_000)
         XCTAssertEqual(spy.connectCalls.count, 3, "滚动窗口最多重建两次")
@@ -586,6 +607,93 @@ final class AppViewModelFeatureTests: XCTestCase {
         let exhausted = await waitUntilMain { decisions.last?.state == .budgetExhausted && decisions.last?.action == .probeOnly }
         XCTAssertTrue(exhausted, "预算用尽后应显示只探测，而不是静默停住")
         XCTAssertTrue(spy.onEvent != nil)
+    }
+
+    /// 孤发失败（每次失败后穿插验证通过）在证据窗口内同样累计：第三次硬失败即触发
+    /// 受控重建。旧「连续三次」逻辑下这类「时好时坏」永远凑不齐证据、永不自愈。
+    func testIntermittentBusinessFailuresAccumulateToRebuild() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.hardFailureEvidenceWindowSeconds = 600
+        runtime.businessRecoveryCooldownSeconds = 0.05
+
+        var profile = ServerProfile(name: "孤发自愈", host: "10.0.0.8", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitUntilMain { spy.connectCalls.count == 1 }
+
+        func emitFailure() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 1 // 每次孤发失败都是新一条 streak
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 28）"
+            spy.emit(snap)
+        }
+        func emitHealthy() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            spy.emit(snap)
+        }
+
+        emitFailure()
+        emitHealthy()
+        emitFailure()
+        emitHealthy()
+        emitFailure()
+        let rebuilt = await waitUntilMain { spy.connectCalls.count == 2 && spy.systemDisconnectCalls.count == 1 }
+        XCTAssertTrue(rebuilt, "窗口内三次孤发硬失败应累计触发受控重建")
+    }
+
+    /// 证据窗口过期后孤发失败不累计：三次失败跨窗口分布（相邻间隔 > 窗口），
+    /// 每次读取时旧证据已剪掉，始终凑不齐阈值，不触发重建。
+    func testExpiredFailureEvidenceDoesNotTriggerRebuild() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.hardFailureEvidenceWindowSeconds = 1
+        runtime.businessRecoveryCooldownSeconds = 0.05
+
+        var profile = ServerProfile(name: "证据过期", host: "10.0.0.9", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitUntilMain { spy.connectCalls.count == 1 }
+
+        func emitFailure() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 1
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 28）"
+            spy.emit(snap)
+        }
+        func emitHealthy() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            spy.emit(snap)
+        }
+
+        emitFailure()
+        emitHealthy()
+        try? await Task.sleep(nanoseconds: 1_200_000_000) // 第一条证据过期
+        emitFailure()
+        emitHealthy()
+        try? await Task.sleep(nanoseconds: 1_200_000_000) // 第二条证据过期
+        emitFailure()
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertEqual(spy.connectCalls.count, 1, "过期证据不累计：跨窗口的孤发失败不触发重建")
+        XCTAssertEqual(spy.systemDisconnectCalls.count, 0)
     }
 
     /// 用户断开会取消待执行的业务自愈，desired 清空后不会 ghost 重连。
@@ -609,6 +717,14 @@ final class AppViewModelFeatureTests: XCTestCase {
             snap.consecutiveRemoteFailures = count
             spy.emit(snap)
         }
+        // 基线 + 逐次递增凑齐阈值，让受控重建真正进入排程，再验证断开能取消它
+        var baseline = TunnelSnapshot.idle(profile.id)
+        baseline.phase = .connected
+        baseline.sshProcessRunning = true
+        baseline.consecutiveRemoteFailures = 0
+        spy.emit(baseline)
+        emitFailure(1)
+        emitFailure(2)
         emitFailure(3)
         runtime.disconnect(profileID: profile.id)
         try? await Task.sleep(nanoseconds: 300_000_000)
