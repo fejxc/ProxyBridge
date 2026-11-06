@@ -53,7 +53,8 @@ echo "== 下载并校验发布产物 =="
 # 与 cask 同一公开 URL 下载（不带认证），保证校验的字节就是用户会拿到的字节
 curl -fsSL -o "${TMPDIR_SYNC}/${DMG}" "https://github.com/fejxc/ProxyBridge/releases/download/${TAG}/${DMG}"
 curl -fsSL -o "${TMPDIR_SYNC}/${DMG}.sha256" "https://github.com/fejxc/ProxyBridge/releases/download/${TAG}/${DMG}.sha256"
-shasum -a 256 -c "${TMPDIR_SYNC}/${DMG}.sha256"
+# shasum -c 按文件内引用的裸文件名在 CWD 查找，必须先进入临时目录
+(cd "${TMPDIR_SYNC}" && shasum -a 256 -c "${DMG}.sha256")
 
 echo "== 更新 tap =="
 "${TAP_DIR}/bump.sh" "${VERSION}" "${TMPDIR_SYNC}/${DMG}.sha256"
