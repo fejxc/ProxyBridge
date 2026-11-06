@@ -642,6 +642,8 @@ final class AppViewModelFeatureTests: XCTestCase {
             spy.emit(snap)
         }
 
+        // 基线先行（真实协调器连接后必先发 checking/connected，计数 0），随后孤发失败逐条入窗
+        emitHealthy()
         emitFailure()
         emitHealthy()
         emitFailure()
@@ -684,6 +686,7 @@ final class AppViewModelFeatureTests: XCTestCase {
             spy.emit(snap)
         }
 
+        emitHealthy() // 基线（计数 0），与真实协调器节奏一致
         emitFailure()
         emitHealthy()
         try? await Task.sleep(nanoseconds: 1_200_000_000) // 第一条证据过期
