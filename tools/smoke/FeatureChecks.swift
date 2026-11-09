@@ -117,6 +117,9 @@ extension SmokeMain {
         // F06 ManagedTunnelService 网络恢复：退避中的立即重连、活跃的回收重建、未开自动重连的不动
         await networkRestorationChecks()
 
+        // F06c 受控重建与自动重连解耦（1.10.0）：autoRepairEnabled 独立生效
+        await autoRepairChecks()
+
         // F07 动态→静态回升（连续两次验证同一端点才升级）
         await upgradeChecks()
 
@@ -509,5 +512,81 @@ extension SmokeMain {
         let upgraded = await waitSmokeUntil { spy.connects.count == 2 }
         check("F07b", "连续两次验证同一端点 → 断开重建切回静态",
               upgraded && spy.systemReasons.contains { $0.contains("静态转发") })
+    }
+
+    /// 受控重建（自动修复）与「自动重连」解耦：autoRepairEnabled 单独管「活着但业务坏要不要修」。
+    @MainActor
+    private static func autoRepairChecks() async {
+        func degraded(_ id: UUID, _ count: Int) -> TunnelSnapshot {
+            var snap = TunnelSnapshot.idle(id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = count
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 28）"
+            return snap
+        }
+        func healthy(_ id: UUID) -> TunnelSnapshot {
+            var snap = TunnelSnapshot.idle(id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            return snap
+        }
+
+        // AR01 自动重连关闭 + 自动修复开启：窗口内三次硬失败仍受控重建
+        let spy = FeatureTunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.businessRecoveryCooldownSeconds = 0.05
+        var profile = ServerProfile(name: "ar1", host: "10.0.0.20", sshPort: 22, username: "u", remotePort: 7892)
+        profile.reconnectEnabled = false
+        profile.autoRepairEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitSmokeUntil { spy.connects.count == 1 }
+        spy.onEvent?(.snapshot(healthy(profile.id)))
+        spy.onEvent?(.snapshot(degraded(profile.id, 1)))
+        spy.onEvent?(.snapshot(degraded(profile.id, 2)))
+        spy.onEvent?(.snapshot(degraded(profile.id, 3)))
+        let rebuilt = await waitSmokeUntil { spy.connects.count == 2 && spy.systemReasons.count == 1 }
+        check("AR01", "自动重连关闭不抑制受控重建（autoRepairEnabled 独立生效）", rebuilt)
+        runtime.terminateAllSessions()
+
+        // AR02 自动修复关闭：阈值凑齐也不重建
+        let offSpy = FeatureTunnelSpy()
+        let offRuntime = ManagedTunnelService(underlying: offSpy)
+        offRuntime.businessFailureThreshold = 3
+        offRuntime.businessRecoveryCooldownSeconds = 0.05
+        var offProfile = ServerProfile(name: "ar2", host: "10.0.0.21", sshPort: 22, username: "u", remotePort: 7892)
+        offProfile.autoRepairEnabled = false
+        offRuntime.connect(configuration: TunnelConfiguration(profile: offProfile, localEndpoint: nil))
+        _ = await waitSmokeUntil { offSpy.connects.count == 1 }
+        offSpy.onEvent?(.snapshot(healthy(offProfile.id)))
+        offSpy.onEvent?(.snapshot(degraded(offProfile.id, 1)))
+        offSpy.onEvent?(.snapshot(degraded(offProfile.id, 2)))
+        offSpy.onEvent?(.snapshot(degraded(offProfile.id, 3)))
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        check("AR02", "自动修复关闭时不重建（保持 degraded 探测）",
+              offSpy.connects.count == 1 && offSpy.systemReasons.count == 0)
+        offRuntime.terminateAllSessions()
+
+        // AR03 连接中途关闭自动重连：已排程的受控重建不被误杀
+        let midSpy = FeatureTunnelSpy()
+        let midRuntime = ManagedTunnelService(underlying: midSpy)
+        midRuntime.businessFailureThreshold = 3
+        midRuntime.businessRecoveryCooldownSeconds = 0.3
+        var midProfile = ServerProfile(name: "ar3", host: "10.0.0.22", sshPort: 22, username: "u", remotePort: 7892)
+        midProfile.reconnectEnabled = true
+        midProfile.autoRepairEnabled = true
+        midRuntime.connect(configuration: TunnelConfiguration(profile: midProfile, localEndpoint: nil))
+        _ = await waitSmokeUntil { midSpy.connects.count == 1 }
+        midSpy.onEvent?(.snapshot(healthy(midProfile.id)))
+        midSpy.onEvent?(.snapshot(degraded(midProfile.id, 1)))
+        midSpy.onEvent?(.snapshot(degraded(midProfile.id, 2)))
+        midSpy.onEvent?(.snapshot(degraded(midProfile.id, 3)))
+        midRuntime.updateReconnectPreference(profileID: midProfile.id, enabled: false, rememberPassword: false)
+        let midRebuilt = await waitSmokeUntil { midSpy.connects.count == 2 && midSpy.systemReasons.count == 1 }
+        check("AR03", "关闭自动重连不取消进行中的受控重建", midRebuilt)
+        midRuntime.terminateAllSessions()
     }
 }

@@ -467,6 +467,11 @@ struct ServerEditorForm: View {
                         Toggle(L10n.t("网络波动时自动恢复 SSH 连接"), isOn: $profile.reconnectEnabled)
                             .controlSize(.small)
                     }
+                    FormRow(label: "自动修复",
+                            help: "连接还在但业务通路反复失败（如探测多次超时）时，自动重建隧道尝试修复。与上面的自动重连相互独立：关闭自动重连后本开关仍然生效。") {
+                        Toggle(L10n.t("业务通路反复失败时自动重建隧道"), isOn: $profile.autoRepairEnabled)
+                            .controlSize(.small)
+                    }
                     FormRow(label: "启动后连接") {
                         Toggle(L10n.t("App 启动后，自动连接此服务器"), isOn: $profile.connectAtLaunch)
                             .controlSize(.small)

@@ -79,6 +79,9 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     /// （api.openai.com/v1/models）。仅影响验证目标，不改变转发本身。
     var probeTargetURL: String?
     var reconnectEnabled: Bool
+    /// 业务通路多次失败的受控重建（自愈），与「自动重连」语义独立：
+    /// 自动重连管「隧道死了要不要自己回来」，自动修复管「隧道活着但业务通路时好时坏要不要修」。
+    var autoRepairEnabled: Bool
     var connectAtLaunch: Bool
     /// 密码模式：是否记住密码（密码本体存 macOS 钥匙串，绝不进本文件）。
     var rememberPassword: Bool
@@ -103,6 +106,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         preferredProtocol: ProxyProtocol = .http,
         probeTargetURL: String? = nil,
         reconnectEnabled: Bool = true,
+        autoRepairEnabled: Bool = true,
         connectAtLaunch: Bool = false,
         rememberPassword: Bool = false,
         relayPort: Int? = nil,
@@ -130,6 +134,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.preferredProtocol = preferredProtocol
         self.probeTargetURL = Self.sanitizedProbeTarget(probeTargetURL)
         self.reconnectEnabled = reconnectEnabled
+        self.autoRepairEnabled = autoRepairEnabled
         self.connectAtLaunch = connectAtLaunch
         self.rememberPassword = rememberPassword
         self.upstreamAuthUsername = Self.normalizedUpstreamUsername(upstreamAuthUsername)
@@ -151,7 +156,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         case id, name, host, sshPort, username, authMode, identityFilePath
         case relayPort, remotePort, remoteSocksPort, remoteHTTPPort, connectionMode, httpAdapterEnabled
         case proxySelectionMode, manualEndpoint, preferredProtocol, probeTargetURL
-        case reconnectEnabled, connectAtLaunch, rememberPassword
+        case reconnectEnabled, autoRepairEnabled, connectAtLaunch, rememberPassword
         case upstreamAuthUsername
     }
 
@@ -195,6 +200,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         preferredProtocol = try c.decodeIfPresent(ProxyProtocol.self, forKey: .preferredProtocol) ?? .http
         probeTargetURL = Self.sanitizedProbeTarget(try c.decodeIfPresent(String.self, forKey: .probeTargetURL))
         reconnectEnabled = try c.decodeIfPresent(Bool.self, forKey: .reconnectEnabled) ?? true
+        autoRepairEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoRepairEnabled) ?? true
         connectAtLaunch = try c.decodeIfPresent(Bool.self, forKey: .connectAtLaunch) ?? false
         rememberPassword = try c.decodeIfPresent(Bool.self, forKey: .rememberPassword) ?? false
         upstreamAuthUsername = Self.normalizedUpstreamUsername(try c.decodeIfPresent(String.self, forKey: .upstreamAuthUsername))

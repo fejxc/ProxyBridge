@@ -653,6 +653,130 @@ final class AppViewModelFeatureTests: XCTestCase {
         XCTAssertTrue(rebuilt, "窗口内三次孤发硬失败应累计触发受控重建")
     }
 
+    /// 受控重建与「自动重连」解耦（1.10.0）：自动重连关闭的 profile，
+    /// 只要「自动修复」开启，业务通路窗口内硬失败仍应受控重建。
+    /// 1.9.0 的耦合行为（重建被自动重连开关抑制）是 192 服务器「永不自愈」的根因之一。
+    func testBusinessRecoveryWorksWithAutoReconnectDisabled() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.businessRecoveryCooldownSeconds = 0.05
+
+        var profile = ServerProfile(name: "只修不连", host: "10.0.0.10", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = false // 自动重连关闭
+        profile.autoRepairEnabled = true // 自动修复开启（默认）
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitUntilMain { spy.connectCalls.count == 1 }
+
+        func emitDegraded(_ count: Int) {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = count
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 28）"
+            spy.emit(snap)
+        }
+        func emitHealthy() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            spy.emit(snap)
+        }
+
+        emitHealthy()
+        emitDegraded(1)
+        emitDegraded(2)
+        emitDegraded(3)
+        let rebuilt = await waitUntilMain { spy.connectCalls.count == 2 && spy.systemDisconnectCalls.count == 1 }
+        XCTAssertTrue(rebuilt, "自动重连关闭不应抑制受控重建（autoRepairEnabled 独立生效）")
+    }
+
+    /// 「自动修复」关闭：窗口内硬失败凑齐阈值也不受控重建，隧道保持 degraded 继续探测。
+    func testBusinessRecoveryDisabledWhenAutoRepairOff() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.businessRecoveryCooldownSeconds = 0.05
+
+        var profile = ServerProfile(name: "不自动修", host: "10.0.0.11", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = true
+        profile.autoRepairEnabled = false
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitUntilMain { spy.connectCalls.count == 1 }
+
+        func emitDegraded(_ count: Int) {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = count
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 28）"
+            spy.emit(snap)
+        }
+        func emitHealthy() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            spy.emit(snap)
+        }
+
+        emitHealthy()
+        emitDegraded(1)
+        emitDegraded(2)
+        emitDegraded(3)
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        XCTAssertEqual(spy.connectCalls.count, 1, "自动修复关闭时不得受控重建")
+        XCTAssertEqual(spy.systemDisconnectCalls.count, 0)
+    }
+
+    /// 连接中途关闭「自动重连」：已排程的受控重建不得被误杀（1.9.0 会一并取消）。
+    func testClosingAutoReconnectKeepsScheduledRebuild() async {
+        let temp = TempDirectory.make()
+        defer { temp.removeAll() }
+        let spy = TunnelSpy()
+        let runtime = ManagedTunnelService(underlying: spy)
+        runtime.businessFailureThreshold = 3
+        runtime.businessRecoveryCooldownSeconds = 0.2
+
+        var profile = ServerProfile(name: "中途关重连", host: "10.0.0.12", sshPort: 22, username: "u", remotePort: 17891)
+        profile.reconnectEnabled = true
+        profile.autoRepairEnabled = true
+        runtime.connect(configuration: TunnelConfiguration(profile: profile, localEndpoint: nil))
+        _ = await waitUntilMain { spy.connectCalls.count == 1 }
+
+        func emitDegraded(_ count: Int) {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .degraded
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = count
+            snap.humanReadableDetail = "远端代理请求失败（curl exit 28）"
+            spy.emit(snap)
+        }
+        func emitHealthy() {
+            var snap = TunnelSnapshot.idle(profile.id)
+            snap.phase = .connected
+            snap.sshProcessRunning = true
+            snap.consecutiveRemoteFailures = 0
+            snap.humanReadableDetail = "手动检查完成：远端验证通过（HTTP 401）"
+            spy.emit(snap)
+        }
+
+        emitHealthy()
+        emitDegraded(1)
+        emitDegraded(2)
+        emitDegraded(3) // 凑齐阈值 → 排程受控重建（冷却 0.2s，任务在途）
+        runtime.updateReconnectPreference(profileID: profile.id, enabled: false, rememberPassword: false)
+        let rebuilt = await waitUntilMain { spy.connectCalls.count == 2 && spy.systemDisconnectCalls.count == 1 }
+        XCTAssertTrue(rebuilt, "关闭自动重连不得取消进行中的受控重建（自动修复语义独立）")
+    }
+
     /// 证据窗口过期后孤发失败不累计：三次失败跨窗口分布（相邻间隔 > 窗口），
     /// 每次读取时旧证据已剪掉，始终凑不齐阈值，不触发重建。
     func testExpiredFailureEvidenceDoesNotTriggerRebuild() async {

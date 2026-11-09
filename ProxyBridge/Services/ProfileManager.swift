@@ -22,12 +22,14 @@ final class ProfileManager {
         snapshot: @escaping (UUID) -> TunnelSnapshot?,
         applySnapshot: @escaping (TunnelSnapshot) -> Void,
         updateReconnectPreference: @escaping (_ id: UUID, _ reconnectEnabled: Bool, _ rememberPassword: Bool) -> Void,
+        updateAutoRepairPreference: @escaping (_ id: UUID, _ autoRepairEnabled: Bool) -> Void,
         onProfileAdded: @escaping (UUID) -> Void,
         onProfileRemoving: @escaping (UUID) -> Void
     ) {
         self.snapshot = snapshot
         self.applySnapshot = applySnapshot
         self.updateReconnectPreference = updateReconnectPreference
+        self.updateAutoRepairPreference = updateAutoRepairPreference
         self.onProfileAdded = onProfileAdded
         self.onProfileRemoving = onProfileRemoving
     }
@@ -35,6 +37,7 @@ final class ProfileManager {
     private var snapshot: (UUID) -> TunnelSnapshot? = { _ in nil }
     private var applySnapshot: (TunnelSnapshot) -> Void = { _ in }
     private var updateReconnectPreference: (UUID, Bool, Bool) -> Void = { _, _, _ in }
+    private var updateAutoRepairPreference: (UUID, Bool) -> Void = { _, _ in }
     private var onProfileAdded: (UUID) -> Void = { _ in }
     private var onProfileRemoving: (UUID) -> Void = { _ in }
 
@@ -232,6 +235,7 @@ final class ProfileManager {
             logStore.append(raw: "新增服务器「\(profile.name)」", level: .success, profileId: profile.id)
         }
         updateReconnectPreference(profile.id, profile.reconnectEnabled, profile.rememberPassword)
+        updateAutoRepairPreference(profile.id, profile.autoRepairEnabled)
         if deferPersist { return }
         persist()
     }

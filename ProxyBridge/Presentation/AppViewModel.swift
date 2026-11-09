@@ -234,6 +234,9 @@ final class AppViewModel {
             updateReconnectPreference: { [weak self] id, reconnectEnabled, rememberPassword in
                 self?.tunnel.updateReconnectPreference(profileID: id, enabled: reconnectEnabled, rememberPassword: rememberPassword)
             },
+            updateAutoRepairPreference: { [weak self] id, autoRepairEnabled in
+                self?.tunnel.updateAutoRepairPreference(profileID: id, enabled: autoRepairEnabled)
+            },
             onProfileAdded: { [weak self] id in self?.snapshots[id] = TunnelSnapshot.idle(id) },
             onProfileRemoving: { [weak self] id in self?.tearDownProfileState(id) }
         )

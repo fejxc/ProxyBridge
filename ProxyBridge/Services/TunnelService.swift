@@ -51,6 +51,8 @@ extension TunnelService {
     func disconnectForSystemReason(profileID: UUID, reason: String) { disconnect(profileID: profileID) }
     func updateRuntimeSettings(_ settings: AppSettings) {}
     func updateReconnectPreference(profileID: UUID, enabled: Bool, rememberPassword: Bool) {}
+    /// 「自动修复」（受控重建）偏好：与自动重连语义独立，默认无操作。
+    func updateAutoRepairPreference(profileID: UUID, enabled: Bool) {}
     func prepareForSleep() {}
     func resumeAfterWake() {}
     func handleNetworkRestoration() {}

@@ -160,10 +160,9 @@ final class ManagedTunnelService: TunnelService {
         desired[profileID] = configuration
         if !enabled {
             resumeIDs.remove(profileID)
-            // 排程中的受控重建一并取消：关闭自动重连后任务不应再醒来重建，
-            // 也不能留下孤儿条目让 isActive 永真
-            policies[profileID]?.recoveryTask?.cancel()
-            policies[profileID]?.recoveryTask = nil
+            // 只取消错误退避重试排程：受控重建与「自动重连」语义独立
+            // （自动重连管「死了要不要回来」，受控重建管「活着但业务通路坏要不要修」，
+            // 由 autoRepairEnabled 单独管理），关闭自动重连不得误杀进行中的修复。
             if let task = policies[profileID]?.retryTask {
                 task.cancel()
                 policies[profileID]?.retryTask = nil
@@ -174,6 +173,18 @@ final class ManagedTunnelService: TunnelService {
                 snapshots[profileID] = snapshot
                 onEvent?(.snapshot(snapshot))
             }
+        }
+    }
+
+    /// 「自动修复」偏好（受控重建开关）：独立于自动重连。关闭时取消排程中的
+    /// 受控重建——与 retryTask 不同，此刻任务不留终态快照，隧道继续按 degraded 探测。
+    func updateAutoRepairPreference(profileID: UUID, enabled: Bool) {
+        guard var configuration = desired[profileID] else { return }
+        configuration.profile.autoRepairEnabled = enabled
+        desired[profileID] = configuration
+        if !enabled {
+            policies[profileID]?.recoveryTask?.cancel()
+            policies[profileID]?.recoveryTask = nil
         }
     }
 
@@ -499,7 +510,7 @@ final class ManagedTunnelService: TunnelService {
         consecutiveFailures: Int,
         remainingRecoveries: Int
     ) {
-        guard !sleeping, policies[id]?.recoveryTask == nil, desired[id]?.profile.reconnectEnabled == true else { return }
+        guard !sleeping, policies[id]?.recoveryTask == nil, desired[id]?.profile.autoRepairEnabled == true else { return }
         let generation = policies[id]?.generation ?? UUID()
         policies[id, default: .init()].generation = generation
         var snapshot = snapshots[id] ?? .idle(id)
@@ -533,7 +544,7 @@ final class ManagedTunnelService: TunnelService {
             // 否则孤儿条目会让 isActive 永真，该 profile 的 connect() 被永久拒绝
             self.policies[id]?.recoveryTask = nil
             guard !self.sleeping, self.policies[id]?.generation == generation,
-                  var configuration = self.desired[id], configuration.profile.reconnectEnabled else { return }
+                  var configuration = self.desired[id], configuration.profile.autoRepairEnabled else { return }
             if let resolve = self.resolveEndpoint { configuration.localEndpoint = resolve(configuration.profile) }
             self.desired[id] = configuration
             self.policies[id]?.localDue = nil
