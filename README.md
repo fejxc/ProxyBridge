@@ -6,6 +6,8 @@
 
 **在 Mac 菜单栏一键把本地代理「带」到 Linux 服务器**
 
+[简体中文](README.md) | [English](README.en.md)
+
 [![CI](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml/badge.svg)](https://github.com/fejxc/ProxyBridge/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/fejxc/ProxyBridge)](https://github.com/fejxc/ProxyBridge/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -103,7 +105,7 @@ brew install fejxc/tap/proxybridge
 ## ⚡ 快速上手
 
 1. 如果使用传统静态转发，先在 Mac 上启动代理客户端并确认 HTTP、SOCKS5 或 Mixed 回环入口可用；Clash 使用 Network Extension / TUN 时，直接选「动态 SOCKS5」。
-2. 启动 ProxyBridge，添加服务器并选择认证方式（可从 `~/.ssh/config` 导入）。主机指纹两种方式任选其一：
+2. 启动 ProxyBridge，添加服务器并选择认证方式（可从 `~/.ssh/config` 导入）。主机支持 IPv4、域名与 IPv6 字面量。主机指纹两种方式任选其一：
    - 首次连接时在应用内按引导核对指纹并写入 `known_hosts`（推荐，无需先开终端）；
    - 或先在终端手动登录一次：
 
