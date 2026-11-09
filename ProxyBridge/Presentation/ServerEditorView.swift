@@ -16,8 +16,6 @@ struct ServerEditorView: View {
     @State private var draftHasStoredPassword = false
     /// 上游代理密码钥匙串状态的视图层缓存（刷新时机同 SSH 密码标记）。
     @State private var draftHasStoredUpstreamPassword = false
-    /// ~/.ssh/config 导入面板。
-    @State private var importEntries: [SSHConfigEntry]?
 
     var body: some View {
         Group {
@@ -28,10 +26,10 @@ struct ServerEditorView: View {
             }
         }
         .sheet(isPresented: Binding(
-            get: { importEntries != nil },
-            set: { if !$0 { importEntries = nil } }
+            get: { model.sshConfigImportEntries != nil },
+            set: { if !$0 { model.sshConfigImportEntries = nil } }
         )) {
-            if let entries = importEntries {
+            if let entries = model.sshConfigImportEntries {
                 SSHConfigImportSheet(entries: entries)
             }
         }
@@ -71,7 +69,7 @@ struct ServerEditorView: View {
                     .controlSize(.regular)
                     .buttonStyle(.borderedProminent)
                     Button {
-                        importEntries = model.availableSSHConfigEntries()
+                        model.sshConfigImportEntries = model.availableSSHConfigEntries()
                     } label: {
                         Label(L10n.t("从 ~/.ssh/config 导入"), systemImage: "square.and.arrow.down.on.square")
                     }
@@ -149,9 +147,10 @@ extension ServerProfile {
 }
 
 /// ~/.ssh/config 导入面板（P2）：列出可导入条目，勾选后创建服务器配置。
-/// 只读取 HostName / Port / User / IdentityFile 四个指令，其他指令不迁移。
+/// 只读取 HostName / Port / User / IdentityFile（Include 已展开），其他指令不迁移。
+/// 面板呈现状态在 AppViewModel.sshConfigImportEntries：概览页空状态与服务器编辑页共用。
 @MainActor
-private struct SSHConfigImportSheet: View {
+struct SSHConfigImportSheet: View {
     @Environment(AppViewModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let entries: [SSHConfigEntry]

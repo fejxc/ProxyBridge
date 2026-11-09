@@ -7,57 +7,107 @@ import AppKit
 @MainActor
 struct OverviewView: View {
     @Environment(AppViewModel.self) private var model
+    /// ~/.ssh/config 是否存在（只在页面出现时读一次盘，避免 body 每次求值都解析配置文件）。
+    @State private var hasSSHConfig = false
 
     var body: some View {
-        if model.profiles.isEmpty {
-            emptyState
-        } else {
-            VStack(alignment: .leading, spacing: 16) {
-                headerCard
-                statusCard
-                TrafficPathView()
-                actions
-                connectionInfoCard
-                // 流量统计仅静态转发：动态 SOCKS5 无诚实数据源（同菜单栏约定）
-                if !model.displaysDynamicMode, let profile = model.currentProfile {
-                    TrafficStatsView(
-                        session: model.trafficStore.session(for: profile.id),
-                        connected: model.currentSnapshot.sshProcessRunning &&
-                            [.connected, .degraded].contains(model.currentSnapshot.phase),
-                        lifetimeTotal: model.trafficTotals.hasData(for: profile.id)
-                            ? model.trafficTotals.totals(for: profile.id).uploadBytes
-                                + model.trafficTotals.totals(for: profile.id).downloadBytes
-                            : nil
-                    )
+        Group {
+            if model.profiles.isEmpty {
+                emptyState
+            } else {
+                VStack(alignment: .leading, spacing: 16) {
+                    headerCard
+                    statusCard
+                    TrafficPathView()
+                    actions
+                    connectionInfoCard
+                    // 流量统计仅静态转发：动态 SOCKS5 无诚实数据源（同菜单栏约定）
+                    if !model.displaysDynamicMode, let profile = model.currentProfile {
+                        TrafficStatsView(
+                            session: model.trafficStore.session(for: profile.id),
+                            connected: model.currentSnapshot.sshProcessRunning &&
+                                [.connected, .degraded].contains(model.currentSnapshot.phase),
+                            lifetimeTotal: model.trafficTotals.hasData(for: profile.id)
+                                ? model.trafficTotals.totals(for: profile.id).uploadBytes
+                                    + model.trafficTotals.totals(for: profile.id).downloadBytes
+                                : nil
+                        )
+                    }
+                    RecoveryTraceCard()
+                    linksRow
                 }
-                RecoveryTraceCard()
-                linksRow
+            }
+        }
+        .task {
+            // 空状态的「从 ~/.ssh/config 导入」按钮可用性：出现时读一次盘即可
+            hasSSHConfig = model.availableSSHConfigEntries() != nil
+        }
+    }
+
+    // MARK: 空状态（三步上手引导）
+
+    private var emptyState: some View {
+        SectionCard {
+            VStack(alignment: .leading, spacing: 14) {
+                Text(L10n.t("三步连上第一台服务器"))
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Palette.ink)
+                VStack(alignment: .leading, spacing: 10) {
+                    onboardingStep(number: 1, title: L10n.t("添加服务器"),
+                                   detail: L10n.t("填写名称、SSH 主机、端口、用户名即可；也可以从 ~/.ssh/config 一键导入。"))
+                    onboardingStep(number: 2, title: L10n.t("首次连接时核对主机指纹"),
+                                   detail: L10n.t("应用内即可核对并信任，无需先开终端；指纹经可信渠道（服务器管理员、云控制台）确认。"))
+                    onboardingStep(number: 3, title: L10n.t("连接并验证"),
+                                   detail: L10n.t("「已连接」只在实际业务请求通过后才显示；健康检查、流量路径与自愈轨迹都会如实呈现在这里。"))
+                }
+                HStack(spacing: 8) {
+                    Button {
+                        model.requestCreateProfile()
+                        model.settingsTab = .servers
+                    } label: {
+                        Label(L10n.t("添加服务器"), systemImage: "plus")
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.borderedProminent)
+                    Button {
+                        model.sshConfigImportEntries = model.availableSSHConfigEntries()
+                    } label: {
+                        Label(L10n.t("从 ~/.ssh/config 导入"), systemImage: "square.and.arrow.down.on.square")
+                    }
+                    .controlSize(.large)
+                    .buttonStyle(.bordered)
+                    .disabled(!hasSSHConfig)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 20)
+        }
+        .sheet(isPresented: Binding(
+            get: { model.sshConfigImportEntries != nil },
+            set: { if !$0 { model.sshConfigImportEntries = nil } }
+        )) {
+            if let entries = model.sshConfigImportEntries {
+                SSHConfigImportSheet(entries: entries)
             }
         }
     }
 
-    // MARK: 空状态
-
-    private var emptyState: some View {
-        SectionCard {
-            VStack(alignment: .leading, spacing: 10) {
-                Text(L10n.t("尚未配置服务器"))
-                    .font(.body.weight(.semibold))
+    private func onboardingStep(number: Int, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)")
+                .font(.callout.weight(.bold)).monospacedDigit()
+                .foregroundStyle(Palette.blue)
+                .frame(width: 22, height: 22)
+                .background(Palette.blue.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
-                Text(L10n.t("添加服务器并填写 SSH 信息后，这里会显示连接路径与健康状态。"))
-                    .font(.subheadline)
+                Text(detail)
+                    .font(.footnote)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    model.requestCreateProfile()
-                } label: {
-                    Label(L10n.t("添加服务器"), systemImage: "plus")
-                }
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 20)
         }
     }
 

@@ -97,6 +97,9 @@ final class AppViewModel {
     }
     private(set) var settings: AppSettings = .defaults()
     var settingsTab: SettingsTab = .overview
+    /// ~/.ssh/config 导入面板的呈现状态（nil = 关闭）。上移到模型层让概览页
+    /// 空状态与服务器编辑页共用同一入口（概览页不在编辑器视图层级内）。
+    var sshConfigImportEntries: [SSHConfigEntry]?
     var showSettingsWindow: (() -> Void)?
 
     // MARK: - 主机指纹引导（P0：首次连接免终端）
