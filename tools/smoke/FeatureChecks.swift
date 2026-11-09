@@ -141,6 +141,13 @@ extension SmokeMain {
         check("F08", "L10n：中文原样、英文查表、回退安全",
               zh.title == "未连接" && en.title == "Not connected"
                 && L10n.t("不存在的句子") == "不存在的句子")
+        // F08b 1.10.0 新键英文翻译（共享组件内嵌 L10n 后的覆盖面抽检）
+        L10n.apply(.english)
+        let enNew = ["自动修复": "Auto-repair", "三步连上第一台服务器": "Connect your first server in three steps",
+                     "SSH 主机": "SSH host", "确定删除服务器「": "Delete server “", "概览": "Overview"]
+            .allSatisfy { L10n.t($0.key) == $0.value }
+        L10n.apply(.chinese)
+        check("F08b", "L10n：1.10.0 新增静态文案英文查表覆盖", enNew)
 
         // F09 安装指引：不含危险命令，含主流包管理器（HTTP 入口零远端依赖，curl 是唯一远端依赖）
         let curlHint = RemoteCommandTemplate.installHintCommands(component: .curl)

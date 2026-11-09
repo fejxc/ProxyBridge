@@ -171,8 +171,8 @@ struct ProxySettingsView: View {
 
     private var scannedAtText: String {
         let formatter = Self.timeFormatter
-        guard let date = model.detection.lastScanAt else { return "尚未完成检测" }
-        return "最近检测 \(formatter.string(from: date)) · 各协议验证结果见下方"
+        guard let date = model.detection.lastScanAt else { return L10n.t("尚未完成检测") }
+        return L10n.t("最近检测 ") + formatter.string(from: date) + L10n.t(" · 各协议验证结果见下方")
     }
 
     private func candidateCard(_ candidate: ProxyCandidate) -> some View {

@@ -99,7 +99,7 @@ struct GeneralSettingsView: View {
                     Divider()
                     settingRow(
                         title: L10n.t("界面语言"),
-                        subtitle: L10n.t("切换后立即生效；事件详情与日志文案保持中文。")
+                        subtitle: L10n.t("切换后立即生效；服务层事件详情与日志保持中文。")
                     ) {
                         Picker(L10n.t("界面语言"), selection: languageBinding) {
                             ForEach(AppLanguage.allCases, id: \.self) { lang in
@@ -189,10 +189,10 @@ struct GeneralSettingsView: View {
     ) -> some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(L10n.t(title))
                     .font(.callout.weight(.semibold))
                     .foregroundStyle(Palette.ink)
-                Text(subtitle)
+                Text(L10n.t(subtitle))
                     .font(.subheadline)
                     .foregroundStyle(Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)

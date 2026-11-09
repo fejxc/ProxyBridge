@@ -89,7 +89,9 @@ struct ServerEditorView: View {
         )
         return VStack(alignment: .leading, spacing: 16) {
             if showUnsavedBanner {
-                InfoBlock(text: "正在编辑「\(draftBinding.wrappedValue.name)」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器或关闭设置窗口都不会丢弃它们，但当前显示的是草稿而非已保存配置。")
+                // 分段拼接让英文模式可翻译（含插值的整句无法进词典；「」引号同样词典化）
+                InfoBlock(text: L10n.t("正在编辑「") + draftBinding.wrappedValue.name
+                    + L10n.t("」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器或关闭设置窗口都不会丢弃它们，但当前显示的是草稿而非已保存配置。"))
             }
             ServerEditorForm(
                 profile: draftBinding,
@@ -498,7 +500,7 @@ struct ServerEditorForm: View {
                     }
                 }
                 .accessibilityElement(children: .combine)
-                .accessibilityLabel("校验错误：\(validation.errors.joined(separator: "；"))")
+                .accessibilityLabel(L10n.t("校验错误：") + validation.errors.map { L10n.t($0) }.joined(separator: "；"))
             }
             if !validation.warnings.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {
@@ -519,7 +521,7 @@ struct ServerEditorForm: View {
                 .controlSize(.large)
                 .disabled(isNew)
                 .confirmationDialog(
-                    "确定删除服务器「\(profile.name)」？",
+                    L10n.t("确定删除服务器「") + profile.name + L10n.t("」？"),
                     isPresented: $confirmDelete,
                     titleVisibility: .visible
                 ) {

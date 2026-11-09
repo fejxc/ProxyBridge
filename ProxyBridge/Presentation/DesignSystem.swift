@@ -169,11 +169,11 @@ struct FormRow<Control: View>: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(label)
+                Text(L10n.t(label))
                     .font(.callout)
                     .foregroundStyle(Palette.ink)
                 if let help {
-                    Text(help)
+                    Text(L10n.t(help))
                         .font(.caption2)
                         .foregroundStyle(Palette.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -213,7 +213,7 @@ struct InfoBlock: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "info.circle")
                 .font(.footnote)
-            Text(text)
+            Text(L10n.t(text))
                 .font(.footnote)
                 .fixedSize(horizontal: false, vertical: true)
         }
