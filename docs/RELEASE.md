@@ -4,6 +4,7 @@
 
 ## 已发布版本
 
+- [v1.10.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.10.0)：自愈兑现与国际化——自动修复（受控重建）与自动重连解耦（独立开关、关重连不误杀）、IPv6 字面量 SSH 主机、ssh config 导入展开 Include、设置窗草稿保留、表单弹宽大字体适配、概览三步引导卡、界面英文全量对照（词典 370 键）+ README 英文版、三段接力发版脚本。
 - [v1.0.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.0.0)：初始版本。
 - [v1.1.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.1.0)：加入阶段 D 功能，提供 universal DMG 和 SHA-256 校验文件。
 - [v1.2.0](https://github.com/fejxc/ProxyBridge/releases/tag/v1.2.0)：加入本地 TCP Relay 实时流量统计。
@@ -32,7 +33,7 @@
 
 Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，两者通过后合并两个架构的可执行文件，生成通用 DMG；验证签名、挂载后的 App 版本、架构和 Applications 链接。最后上传 DMG 和 SHA-256 文件到对应 GitHub Release。创建新 Release 时先保持 draft，附件上传完成后才公开。
 
-当前稳定版为 `ProxyBridge-1.9.0-universal.dmg`，拖入 Applications 即可安装，也可以 `brew install fejxc/tap/proxybridge`，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
+当前稳定版为 `ProxyBridge-1.10.0-universal.dmg`，拖入 Applications 即可安装，也可以 `brew install fejxc/tap/proxybridge`，不需要 Xcode、Swift 或命令行开发工具。首次使用仍需配置服务器（支持从 `~/.ssh/config` 导入，Include 已展开）；主机指纹可在应用内核对。自 1.4.5 起后续版本可在应用内一键更新（下载官方资产并经 SHA-256 与签名完整性双校验后自动替换重启）。
 
 ## 后续版本
 
