@@ -39,9 +39,9 @@ Apple Silicon 和 Intel runner 分别运行类型检查及原生冒烟测试，�
 1. 更新 Xcode 工程中的 MARKETING_VERSION、CFBundleShortVersionString 和构建号，并更新 README 与 CHANGELOG。
 2. 推送 master，确认 CI 和两架构检查通过。
 3. **完成[真实验收清单](ACCEPTANCE-CHECKLIST.md)并在其结果表中记录**——未验收的版本不发布（发布工作流同时要求标签指向的提交 CI 全绿，否则拒绝构建）。
-4. 获准发布后创建对应版本标签，例如 `git tag -a v1.4.6 -m 'ProxyBridge 1.4.6'`，然后 `git push origin v1.4.6`。
-5. 标签推送自动触发工作流。以下任一情况不会公开新的下载文件：版本不一致、标签提交的 CI 非全绿、任一架构测试失败、DMG 验证失败。
-6. 工作流成功、资产核验通过后，运行 `bash scripts/sync_tap.sh vX.Y.Z` 同步 Homebrew tap（等待资产 → 公开 URL 下载校验 sha256 → bump version/sha256 → 推送 `fejxc/homebrew-tap`；tap 镜像路径可用 `PB_TAP_DIR` 覆盖）。
+4. 获准发布后，**标准路径为三段接力脚本**（v1.9.0 轮询流程固化，v1.10.0 起）：`bash scripts/release_relay.sh vX.Y.Z --tag` —— 等待 CI 全绿 → 打标签并推送 → 等待发布工作流 success → 资产核验（Release 非草稿、Notes 非空、DMG + sha256 公开 URL 下载复算）→ 自动调 `sync_tap.sh` 同步 Homebrew tap。已手动打标签时省略 `--tag`；跳过 tap 同步加 `--no-tap`。脚本轮询一律带认证头（匿名轮询耗尽出口 IP 的 API 配额会导致用户 App「检查更新」报 403）。
+5. 手动等价流程（与脚本逐段对应）：创建版本标签 `git tag -a vX.Y.Z -m '...'` 并 `git push origin vX.Y.Z`（推送绕过本机代理）；标签推送自动触发工作流。以下任一情况不会公开新的下载文件：版本不一致、标签提交的 CI 非全绿、任一架构测试失败、DMG 验证失败。
+6. 工作流成功、资产核验通过后同步 Homebrew tap：`bash scripts/sync_tap.sh vX.Y.Z`（等待资产 → 公开 URL 下载校验 sha256 → bump version/sha256 → 推送 `fejxc/homebrew-tap`；tap 镜像路径可用 `PB_TAP_DIR` 覆盖）。接力脚本已内置此步。
 
 工作流仅发布 `vX.Y.Z` 格式的现有标签；构建与验证全部使用**标签内的脚本与源码**（不从当前分支复制）。已公开版本的附件不可被后续运行覆盖（上传不带 `--clobber`）。
 
