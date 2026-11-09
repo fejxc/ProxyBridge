@@ -100,6 +100,15 @@ extension SmokeMain {
                 && entries[0].port == 20064 && entries[0].user == "sunyun"
                 && entries[0].identityFile == "~/.ssh/id_ed25519")
 
+        // F04b Include 展开（1.10.0）：被包含 Host 按位置导入、不可读跳过、环引用不重复
+        let includeConfig = "Host main\n  HostName 10.0.0.1\n\nInclude inc.conf missing.conf\n\nHost tail\n  HostName 10.0.0.2\n"
+        let includedEntries = SSHConfigParser.parse(includeConfig, includeResolver: { raw in
+            raw == "inc.conf" ? (raw, "Host from-inc\n  HostName 10.9.0.1\n\nInclude inc.conf\n") : nil
+        })
+        check("F04b", "Include 展开：按位置导入、缺文件跳过、自引用不重复",
+              includedEntries.map(\.alias) == ["main", "from-inc", "tail"]
+                && includedEntries.first { $0.alias == "from-inc" }?.hostName == "10.9.0.1")
+
         // F05 旧 settings.json 兼容
         let sdir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ProxyBridgeSmokeS-\(UUID().uuidString)", isDirectory: true)

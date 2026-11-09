@@ -134,6 +134,55 @@ final class SSHConfigParserTests: XCTestCase {
         XCTAssertEqual(entries[0].user, "ops")
     }
 
+    /// Include 展开（1.10.0）：相对路径解析、被包含 Host 导入、不可读路径如实跳过。
+    func testIncludeExpansion() {
+        let config = """
+        Host main
+          HostName 10.0.0.1
+
+        Include conf.d/*.conf ~/.ssh/other.conf
+
+        Host tail
+          HostName 10.0.0.2
+        """
+        let resolver: (String) -> (key: String, content: String)? = { raw in
+            switch raw {
+            case "conf.d/*.conf":
+                return ("key-glob", """
+                Host from-glob-b
+                  HostName 10.1.0.2
+                Host from-glob-a
+                  HostName 10.1.0.1
+                """)
+            case "~/.ssh/other.conf":
+                return ("key-other", "Host from-other\n  HostName 10.2.0.1\n")
+            default:
+                return nil
+            }
+        }
+        let entries = SSHConfigParser.parse(config, includeResolver: resolver)
+        XCTAssertEqual(entries.map(\.alias), ["main", "from-glob-a", "from-glob-b", "from-other", "tail"],
+                       "被包含条目按 Include 位置插入（glob 排序确定性）")
+        XCTAssertEqual(entries.first { $0.alias == "from-other" }?.hostName, "10.2.0.1")
+    }
+
+    /// Include 环引用与重复包含：深度上限与规范化键去重，不死循环、不重复导入。
+    func testIncludeCycleProtection() {
+        let seen = ["conf": "Host a\n  HostName 10.0.0.1\n\nInclude conf\nInclude conf\n"]
+        let resolver: (String) -> (key: String, content: String)? = { raw in
+            seen[raw].map { (raw, $0) }
+        }
+        let entries = SSHConfigParser.parse("Include conf", includeResolver: resolver)
+        XCTAssertEqual(entries.map(\.alias), ["a"], "同文件被重复 Include 只展开一次")
+    }
+
+    /// Include 路径列表：空格分隔多路径、引号包裹含空格路径。
+    func testIncludePathSplitting() {
+        XCTAssertEqual(SSHConfigParser.includePaths(from: ["conf.d/*.conf", "other.conf"]), ["conf.d/*.conf", "other.conf"])
+        XCTAssertEqual(SSHConfigParser.includePaths(from: ["\"my", "configs/one.conf\""]), ["my configs/one.conf"])
+        XCTAssertEqual(SSHConfigParser.includePaths(from: ["'single quoted.conf'"]), ["single quoted.conf"])
+    }
+
     func testImportSkipsInvalidAndDuplicates() {
         let temp = TempDirectory.make()
         defer { temp.removeAll() }

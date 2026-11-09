@@ -32,7 +32,7 @@
 - **网络恢复重连**：只作用于开启「自动重连」的 profile；未开启的会话按用户语义进入终态不自动恢复。「自动修复」（业务通路反复失败时的受控重建）与「自动重连」是两个独立开关：关闭自动重连不抑制受控重建；自动修复只针对 SSH 进程存活的 degraded 会话，休眠唤醒后的死亡重建仍属自动重连语义。
 - **端口冲突重试窗口**：远端转发端口被旧 sshd 占用时自动重试 3 分钟；若服务器 sshd 配置了很长的客户端探活超时（或端口被他人长期占用），3 分钟后仍会失败并转为终态指引（更换端口或联系管理员）。服务器端设置 `ClientAliveInterval 60` / `ClientAliveCountMax 3` 可让 sshd 及时释放失效转发，从根上减少此类冲突——应用不修改 sshd 配置。
 - **远端残留诊断清理**：端口冲突时经 SSH 只读诊断占用者（/proc 解析，不依赖服务器 ss/netstat）；用户确认后仅清理「同用户且无活连接的 sshd」与「带本 App 配置目录的孤儿 Privoxy」，他人进程只报告。密码模式未记住密码时无法自动诊断（如实提示）。多 profile 共用同主机同端口时，诊断可见但清理需用户自行判断（卡上列明 PID 与进程）。Linux 实机清理路径待人工验收；解析与分类已由 188 项冒烟与本机 POSIX shell 语法检查覆盖。
-- **ssh config 导入**：只读取 HostName/Port/User/IdentityFile；不展开 Include，不迁移代理指令。
+- **ssh config 导入**：只读取 Host/HostName/Port/User/IdentityFile，并展开 `Include`（相对路径按 OpenSSH 语义相对 `~/.ssh`，支持 `*`/`?` glob 通配与 `~` 展开；深度上限 5 层防环引用，同一文件不重复导入；不可读的 Include 路径如实跳过）；不迁移代理指令（ProxyCommand 等）。
 - **防休眠边界**：只阻止「空闲休眠」（IOPMAssertion）；合盖睡眠、系统强制睡眠不受影响，届时隧道仍会按既有睡眠语义断开并在唤醒后恢复。
 - **主机指纹引导范围**：只覆盖「首次连接（known_hosts 无记录）」；主机密钥变化（可能被劫持）不提供一键覆盖，需人工核对后 `ssh-keygen -R`。指纹经 `/usr/bin/ssh-keyscan` 获取，网络不可达时如实报错。
 - **动态 SOCKS5 范围**：OpenSSH 反向动态代理只保证 TCP。Linux 应用需支持 SOCKS5；Codex HTTP 兼容性依赖用户已安装的 Privoxy 且 HTTP CONNECT 实测通过。
