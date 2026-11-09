@@ -57,7 +57,7 @@ struct LogsView: View {
                         Text(scope.title).tag(scope)
                     }
                 }
-                .frame(width: 110)
+                .frame(minWidth: 110)
 
                 Picker(L10n.t("级别"), selection: $levelFilter) {
                     Text(L10n.t("全部级别")).tag(LogLevel?.none)
@@ -65,7 +65,7 @@ struct LogsView: View {
                         Text(level.displayName).tag(LogLevel?.some(level))
                     }
                 }
-                .frame(width: 120)
+                .frame(minWidth: 120)
 
                 Picker(L10n.t("服务器"), selection: $profileFilter) {
                     Text(L10n.t("全部服务器")).tag(UUID?.none)
@@ -73,7 +73,7 @@ struct LogsView: View {
                         Text(p.name).tag(UUID?.some(p.id))
                     }
                 }
-                .frame(width: 150)
+                .frame(minWidth: 150)
 
                 HStack(spacing: 5) {
                     Image(systemName: "magnifyingglass")
@@ -96,7 +96,7 @@ struct LogsView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Palette.softFill, in: RoundedRectangle(cornerRadius: 6))
-                .frame(width: 190)
+                .frame(minWidth: 190)
 
                 Spacer()
 

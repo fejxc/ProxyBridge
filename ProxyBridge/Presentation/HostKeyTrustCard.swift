@@ -11,7 +11,7 @@ struct HostKeyTrustCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "fingerprint")
-                        .font(.system(size: 13))
+                        .font(.callout)
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("「") + (model.pendingHostKeyProfileName ?? L10n.t("服务器")) + L10n.t("」是首次连接"))
                         .font(.callout.weight(.semibold))

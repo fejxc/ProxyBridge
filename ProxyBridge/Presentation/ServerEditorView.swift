@@ -219,7 +219,7 @@ private struct SSHConfigImportSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 460)
+        .frame(minWidth: 460)
         .onAppear { selected = Set(entries.map(\.alias)) } // 默认全选
     }
 }
@@ -376,7 +376,7 @@ struct ServerEditorForm: View {
                             }
                         }
                         .pickerStyle(.menu)
-                        .frame(width: 190, alignment: .leading)
+                        .frame(minWidth: 190, alignment: .leading)
                     }
                     if profile.connectionMode != .reverseDynamic {
                         FormRow(label: "静态转发端口", help: "Linux 127.0.0.1:<端口> 会转发到 Mac 上已验证的 HTTP、SOCKS5 或 Mixed 入口。") {
@@ -417,7 +417,7 @@ struct ServerEditorForm: View {
                             Text("SOCKS5").tag(ProxyProtocol.socks5)
                         }
                         .pickerStyle(.segmented)
-                        .frame(width: 180)
+                        .frame(minWidth: 180)
                     }
                     FormRow(label: L10n.t("上游代理认证"), help: "本地代理客户端开启认证时填写。用户名存入服务器配置，密码存 macOS 钥匙串（不进配置文件与日志）；HTTP 兼容入口与连接探测会代答认证。静态直通（关闭 HTTP 入口）不代答，需 Linux 侧自带凭据。") {
                         VStack(alignment: .leading, spacing: 7) {
@@ -434,7 +434,7 @@ struct ServerEditorForm: View {
                                     set: { profile.upstreamAuthUsername = $0 }
                                 ))
                                 .textFieldStyle(.roundedBorder)
-                                .frame(width: 220)
+                                .frame(minWidth: 220)
                                 if let error = upstreamUsernameError {
                                     Text(L10n.t(error)).font(.footnote).foregroundStyle(Palette.red)
                                 }
@@ -443,7 +443,7 @@ struct ServerEditorForm: View {
                                     text: $upstreamPassword
                                 )
                                 .textFieldStyle(.roundedBorder)
-                                .frame(width: 220)
+                                .frame(minWidth: 220)
                                 if let error = upstreamPasswordError {
                                     Text(L10n.t(error)).font(.footnote).foregroundStyle(Palette.red)
                                 }
@@ -457,7 +457,7 @@ struct ServerEditorForm: View {
                             set: { profile.probeTargetURL = $0.isEmpty ? nil : $0 }
                         ))
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 300)
+                        .frame(minWidth: 300)
                     }
                     FormRow(label: "自动重连") {
                         Toggle(L10n.t("网络波动时自动恢复 SSH 连接"), isOn: $profile.reconnectEnabled)
@@ -595,7 +595,7 @@ struct PortField: View {
     var body: some View {
         TextField(prompt, value: $value, format: .number)
             .textFieldStyle(.roundedBorder)
-            .frame(width: 110)
+            .frame(minWidth: 110)
             .monospacedDigit()
     }
 }

@@ -32,7 +32,7 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 180)
+                        .frame(minWidth: 180)
                     }
                     Divider()
                     settingRow(
@@ -54,7 +54,7 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 110)
+                        .frame(minWidth: 110)
                     }
                     Divider()
                     settingRow(
@@ -67,7 +67,7 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 110)
+                        .frame(minWidth: 110)
                     }
                     Divider()
                     settingRow(
@@ -107,7 +107,7 @@ struct GeneralSettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 140)
+                        .frame(minWidth: 140)
                     }
                 }
                 .padding(.vertical, 4)

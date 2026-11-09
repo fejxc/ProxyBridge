@@ -11,7 +11,7 @@ struct RemotePortConflictCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "sparkles.and.bubbles")
-                        .font(.system(size: 13))
+                        .font(.callout)
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("「") + (model.portConflictProfileName ?? L10n.t("服务器")) + L10n.t("」远端端口被占用"))
                         .font(.callout.weight(.semibold))

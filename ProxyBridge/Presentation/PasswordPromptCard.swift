@@ -14,7 +14,7 @@ struct PasswordPromptCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "lock.fill")
-                        .font(.system(size: 13))
+                        .font(.callout)
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("「") + (model.pendingPasswordProfileName ?? L10n.t("服务器")) + L10n.t("」需要 SSH 密码"))
                         .font(.callout.weight(.semibold))

@@ -99,7 +99,7 @@ struct TrafficStatsView: View {
         VStack(alignment: .leading, spacing: 4) {
             Label(title + L10n.t("速率"), systemImage: symbol).foregroundStyle(color).font(.caption)
             Text(live ? TrafficFormatting.rate(rate) : "—")
-                .font(.system(size: 17, weight: .semibold)).monospacedDigit()
+                .font(.title2.weight(.semibold)).monospacedDigit()
             Text(L10n.t("累计") + title + L10n.t("：") + (value.sessionID == nil ? "—" : TrafficFormatting.total(bytes)))
                 .font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }.frame(maxWidth: .infinity, alignment: .leading)

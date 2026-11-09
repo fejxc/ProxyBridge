@@ -22,7 +22,7 @@ struct ProxySettingsView: View {
                         Text(L10n.t("手动指定")).tag(ProxySelectionMode.manual)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 260)
+                    .frame(minWidth: 260)
 
                     if model.currentProfile?.proxySelectionMode == .manual {
                         manualCard
@@ -225,7 +225,7 @@ struct ProxySettingsView: View {
                 FormRow(label: "代理地址", help: "MVP 仅支持本机回环地址") {
                     TextField("127.0.0.1", text: $manualHost)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
+                        .frame(minWidth: 180)
                         .autocorrectionDisabled()
                 }
                 FormRow(label: "代理端口") {
@@ -238,7 +238,7 @@ struct ProxySettingsView: View {
                     Text("Mixed").tag(ProxyProtocol.mixed)
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 220)
+                    .frame(minWidth: 220)
                 }
             }
 

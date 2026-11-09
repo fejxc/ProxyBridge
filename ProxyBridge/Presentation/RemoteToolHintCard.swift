@@ -13,7 +13,7 @@ struct RemoteToolHintCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "wrench.and.screwdriver")
-                        .font(.system(size: 13))
+                        .font(.callout)
                         .foregroundStyle(Palette.orange)
                     Text(L10n.t("远端缺少 ") + tool.displayName)
                         .font(.callout.weight(.semibold))
