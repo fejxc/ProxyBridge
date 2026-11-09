@@ -207,9 +207,15 @@ struct SmokeMain {
         check("S01", "合法主机/基线通过", ServerProfileRule.validate(profile()).isValid)
         check("S01b", "HTTP 入口与静态转发端口重叠时拒绝保存",
               !ServerProfileRule.validate(profile(remotePort: 7890)).isValid)
-        for bad in ["bad host", "host;rm -rf /", "$(whoami).x.com", "`id`.x.com", "a|b", "hÖst", "", "::1", "example..com"] {
+        for bad in ["bad host", "host;rm -rf /", "$(whoami).x.com", "`id`.x.com", "a|b", "hÖst", "", "example..com", "2001:db8:::1", "[2001:db8::1"] {
             check("S02", "拒绝非法主机「\(bad)」", !ServerProfileRule.validate(profile(host: bad)).isValid)
         }
+        // S02b IPv6 字面量主机（1.10.0 起）：裸形式合法、存储规范形为裸字面量
+        for good in ["::1", "fe80::1", "2001:db8::1", "2001:db8::192.0.2.1", "::ffff:192.0.2.128"] {
+            check("S02b", "接受 IPv6 字面量「\(good)」", ServerProfileRule.validate(profile(host: good)).isValid)
+        }
+        check("S02c", "IPv6 展示形自动加方括号",
+              profile(host: "2001:db8::1").displayTarget == "sunyun@[2001:db8::1]:20064")
         check("S03a", "拒绝非法用户名 user;id", !ServerProfileRule.validate(profile(username: "user;id")).isValid)
         check("S03b", "拒绝空用户名", !ServerProfileRule.validate(profile(username: "")).isValid)
         check("S03c", "拒绝符号开头用户名 -root", !ServerProfileRule.validate(profile(username: "-root")).isValid)

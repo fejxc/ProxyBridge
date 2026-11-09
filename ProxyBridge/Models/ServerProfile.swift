@@ -147,7 +147,12 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         return value
     }
 
-    var displayTarget: String { "\(username)@\(host):\(sshPort)" }
+    var displayTarget: String { "\(username)@\(displayHost):\(sshPort)" }
+    /// 展示用主机：裸 IPv6 字面量加方括号（`user@[2001:db8::1]:22`），其余原样。
+    /// 存储层始终为裸字面量（ssh 目的地与 known_hosts 的规范形式）。
+    var displayHost: String {
+        host.contains(":") && !host.hasPrefix("[") ? "[\(host)]" : host
+    }
     var remoteListenDisplay: String { "\(Self.remoteBindHost):\(remotePort)" }
     var remoteSocksListenDisplay: String { "\(Self.remoteBindHost):\(remoteSocksPort)" }
     var remoteHTTPListenDisplay: String { "\(Self.remoteBindHost):\(remoteHTTPPort)" }
@@ -221,14 +226,29 @@ enum ServerProfileRule {
     static let usernameMaxLength = 32
 
     /// host / username 采用白名单字符集校验，从源头排除 shell 控制字符。
-    /// 注意：MVP 暂不接受 IPv6 字面量（ssh 目的地语法不同），提示改用主机名。
+    /// IPv6 字面量（裸形式或 `[...]` 包裹）单独校验：冒号不在主机名白名单内。
+    /// 存储规范形为**裸字面量**（OpenSSH `user@v6` 目的地解析干净、known_hosts
+    /// 与 ssh-keyscan 的 host 字段同为裸形式），`[...]` 输入由编辑器保存时剥除。
     static func validateHost(_ raw: String) -> String? {
         let host = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if host.isEmpty { return "SSH 主机不能为空" }
         if host.count > 253 { return "主机名过长（最多 253 字符）" }
         if host.contains(where: { $0.isWhitespace }) { return "主机不能包含空白字符" }
+        // IPv6 字面量分支：含冒号，或整体被方括号包裹
+        if host.contains(":") || (host.hasPrefix("[") && host.hasSuffix("]")) {
+            if host.hasPrefix("[") && host.hasSuffix("]") {
+                let inner = String(host.dropFirst().dropLast())
+                if inner.contains(":") { // [v6]（可再带 ]port 合写？内层含冒号才按 IPv6 处理）
+                    return isValidIPv6Literal(inner)
+                        ? nil : "IPv6 地址格式不正确（示例 2001:db8::1；不支持 host:port 合写）"
+                }
+                return "主机仅允许字母、数字、点、连字符（IPv6 字面量请直接填写，无需方括号）"
+            }
+            return isValidIPv6Literal(host)
+                ? nil : "IPv6 地址格式不正确（示例 2001:db8::1）"
+        }
         if host.contains(where: { ch in !"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-".contains(ch) }) {
-            return "主机仅允许字母、数字、点、连字符（IPv6 字面量暂不支持，请使用主机名）"
+            return "主机仅允许字母、数字、点、连字符（IPv6 请填写形如 2001:db8::1 的地址）"
         }
         if isValidIPv4(host) { return nil }
         // 主机名：标签 1–63 字符，只能字母数字开头结尾，可含连字符
@@ -243,6 +263,46 @@ enum ServerProfileRule {
             // 注意：允许 "--"（punycode 形如 xn--e1afmkfd 是合法 IDN 主机名）
         }
         return nil
+    }
+
+    /// 纯函数 IPv6 字面量解析（RFC 4291 §2.2；不含 zone-id `%`，不联网、仅 ASCII）：
+    /// `::` 至多一次、总组数 ≤ 8（末尾 IPv4 后缀计 2 组且只能是整个地址的最后一组）、
+    /// 每组 1–4 位十六进制。`::1`、`2001:db8::192.0.2.1`、`::ffff:192.0.2.128` 合法；
+    /// `1.2.3.4::`、`:::`、`12345::`、全角十六进制均拒绝。
+    static func isValidIPv6Literal(_ input: String) -> Bool {
+        let s = input.lowercased()
+        let hexChars = "0123456789abcdef"
+        guard !s.isEmpty, !s.contains("%"),
+              s.allSatisfy({ hexChars.contains($0) || $0 == ":" || $0 == "." }) else { return false }
+        func isHexGroup(_ g: String) -> Bool {
+            (1...4).contains(g.count) && !g.contains(".") && g.allSatisfy { hexChars.contains($0) }
+        }
+        // 一组：十六进制组计 1，IPv4 尾巴计 2，其余非法
+        func groupCount(_ g: String) -> Int? {
+            if g.contains(".") { return isValidIPv4(g) ? 2 : nil }
+            return isHexGroup(g) ? 1 : nil
+        }
+        let parts = s.components(separatedBy: "::")
+        guard parts.count <= 2 else { return false } // "::" 至多出现一次
+        if parts.count == 1 {
+            // 全写形式：若干十六进制组 + 可选的最后一组 IPv4 尾巴，总组数恰为 8
+            let groups = parts[0].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+            guard let last = groups.last, let lastCount = groupCount(last) else { return false }
+            guard groups.dropLast().allSatisfy(isHexGroup) else { return false }
+            return groups.count - 1 + lastCount == 8
+        }
+        // 压缩形式：:: 前后段均可为空（"::" 自身 = 全零地址，合法但无实用场景）
+        let left = parts[0].isEmpty ? [] : parts[0].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        let right = parts[1].isEmpty ? [] : parts[1].split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        // IPv4 尾巴只允许作为整个地址的最后一组（right 的最后一组）；地址以 :: 结尾时不存在尾巴
+        guard let lastRight = right.last else {
+            return left.allSatisfy(isHexGroup) && left.count <= 7
+        }
+        guard let tailCount = groupCount(lastRight),
+              right.dropLast().allSatisfy(isHexGroup),
+              left.allSatisfy(isHexGroup) else { return false }
+        let total = left.count + right.count - 1 + tailCount
+        return total <= 7 // 压缩形式至少代表一个零组，总组数必须 < 8
     }
 
     static func isValidIPv4(_ s: String) -> Bool {

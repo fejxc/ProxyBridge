@@ -300,9 +300,20 @@ struct ServerEditorForm: View {
                     FormRow(label: "服务器名称", help: "1–40 字符，用于识别") {
                         TextField(L10n.t("例如：实验室 GPU 服务器"), text: $profile.name)
                     }
-                    FormRow(label: "SSH 主机", help: "IP 或域名；暂不支持 IPv6 字面量与包含空白的主机") {
-                        TextField(L10n.t("10.x.x.x 或 example.com"), text: $profile.host)
-                            .autocorrectionDisabled()
+                    FormRow(label: "SSH 主机", help: "IP 或域名；支持 IPv6 字面量（如 2001:db8::1，方括号输入会自动剥除）") {
+                        TextField(L10n.t("10.x.x.x、example.com 或 2001:db8::1"), text: Binding(
+                            get: { profile.host },
+                            // `[v6]` 括号输入在闭合的瞬间归一为裸字面量：存储与 ssh 目的地、
+                            // known_hosts 的规范形式一致；输入过程中（未闭合）不影响打字
+                            set: {
+                                var value = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if value.hasPrefix("["), value.hasSuffix("]"), value.dropFirst().dropLast().contains(":") {
+                                    value = String(value.dropFirst().dropLast())
+                                }
+                                profile.host = value
+                            }
+                        ))
+                        .autocorrectionDisabled()
                     }
                     FormRow(label: "SSH 端口") {
                         PortField(value: $profile.sshPort, prompt: "SSH 端口")

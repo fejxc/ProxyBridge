@@ -81,8 +81,15 @@ final class ProfileValidationTests: XCTestCase {
             "",                      // 空
             "example..com",          // 空标签
             "-leadinghyphen.example.com",
-            "::1",                   // IPv6 字面量 MVP 不支持
-            "fe80::1",
+            "[2001:db8::1",          // 未闭合方括号
+            "[example.com]",         // 方括号只用于 IPv6
+            "2001:db8:::1",          // 三连冒号（:: 多于一次）
+            "12345::",               // 十六进制组超 4 位
+            "1.2.3.4::",             // IPv4 尾巴必须在地址末尾
+            "1:2:3:4:5:6:7:1.2.3.4", // 全写 + IPv4 尾巴 = 9 组超界
+            "2001:db8::1%en0",       // zone-id 不支持
+            "2001:db8::1:22",        // host:port 合写会被当成 9 组拒绝
+            "ｆｆ::1",                // 全角十六进制
         ]
         for host in badHosts {
             let v = ServerProfileRule.validate(makeProfile(host: host))
@@ -113,6 +120,47 @@ final class ProfileValidationTests: XCTestCase {
         XCTAssertFalse(ServerProfileRule.isValidIPv4("1.2.3.4.5"))
         XCTAssertTrue(ServerProfileRule.isValidIPv4("0.0.0.0")) // 语法合法（是否可用是另一回事）
         XCTAssertTrue(ServerProfileRule.isValidIPv4("255.255.255.255"))
+    }
+
+    /// IPv6 字面量（1.10.0 起）：裸形式合法、解析器纯函数边界、展示形加括号。
+    func testIPv6LiteralHostsAreAccepted() {
+        let good = [
+            "::1",
+            "fe80::1",
+            "2001:db8::1",
+            "2001:0db8:0000:0000:0000:0000:0000:0001", // 全写
+            "1:2:3:4:5:6:1.2.3.4",                     // 全写 + IPv4 尾巴（7 段计 8 组）
+            "2001:db8::192.0.2.1",                     // 压缩 + IPv4 尾巴
+            "::ffff:192.0.2.128",                      // IPv4 映射地址
+            "::",                                      // 全零地址（语法合法）
+            "1::",                                     // 末尾压缩
+        ]
+        for host in good {
+            let v = ServerProfileRule.validate(makeProfile(host: host))
+            XCTAssertTrue(v.isValid, "IPv6「\(host)」应被接受：\(v.errors)")
+        }
+        // 方括号输入被编辑器归一为裸字面量（validate 层只对裸形式放行）
+        XCTAssertNotNil(ServerProfileRule.validateHost("[2001:db8::1]"), "括号形式在 validateHost 剥除前应拒绝")
+    }
+
+    func testIPv6ParserBoundary() {
+        XCTAssertTrue(ServerProfileRule.isValidIPv6Literal("::"))
+        XCTAssertTrue(ServerProfileRule.isValidIPv6Literal("::1"))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal(""))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal(":"))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal(":::"))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal("1::2::3"))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal("::1.2.3.4.5"))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal("1.2.3.4::"))
+        XCTAssertFalse(ServerProfileRule.isValidIPv6Literal("::ffff:01.2.3.4")) // IPv4 前导零
+    }
+
+    func testDisplayTargetBracketsIPv6Literal() {
+        var profile = makeProfile(host: "2001:db8::1")
+        XCTAssertEqual(profile.displayHost, "[2001:db8::1]")
+        XCTAssertEqual(profile.displayTarget, "sunyun@[2001:db8::1]:20064")
+        profile.host = "10.11.154.192"
+        XCTAssertEqual(profile.displayHost, "10.11.154.192", "IPv4/主机名不加括号")
     }
 
     // MARK: 用户名（U06/U07：不得拼 shell）
