@@ -216,6 +216,10 @@ struct SmokeMain {
         }
         check("S02c", "IPv6 展示形自动加方括号",
               profile(host: "2001:db8::1").displayTarget == "sunyun@[2001:db8::1]:20064")
+        // S02d 括号输入在模型层归一为裸字面量（validateHost 接受，构造即归一）
+        check("S02d", "[v6] 输入剥括号归一为裸字面量",
+              ServerProfileRule.validate(profile(host: "[2001:db8::1]")).isValid
+                && profile(host: "[2001:db8::1]").host == "2001:db8::1")
         check("S03a", "拒绝非法用户名 user;id", !ServerProfileRule.validate(profile(username: "user;id")).isValid)
         check("S03b", "拒绝空用户名", !ServerProfileRule.validate(profile(username: "")).isValid)
         check("S03c", "拒绝符号开头用户名 -root", !ServerProfileRule.validate(profile(username: "-root")).isValid)

@@ -148,11 +148,12 @@ final class SSHConfigParserTests: XCTestCase {
         let resolver: (String) -> (key: String, content: String)? = { raw in
             switch raw {
             case "conf.d/*.conf":
+                // 排序是生产 resolver（readIncludeFile）的职责；parser 按 resolver 给的内容顺序展开
                 return ("key-glob", """
-                Host from-glob-b
-                  HostName 10.1.0.2
                 Host from-glob-a
                   HostName 10.1.0.1
+                Host from-glob-b
+                  HostName 10.1.0.2
                 """)
             case "~/.ssh/other.conf":
                 return ("key-other", "Host from-other\n  HostName 10.2.0.1\n")

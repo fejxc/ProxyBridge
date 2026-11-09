@@ -118,7 +118,6 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
     ) {
         self.id = id
         self.name = name
-        self.host = host
         self.sshPort = sshPort
         self.username = username
         self.authMode = authMode
@@ -137,7 +136,20 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         self.autoRepairEnabled = autoRepairEnabled
         self.connectAtLaunch = connectAtLaunch
         self.rememberPassword = rememberPassword
+        // 主机最后归一（唯一赋值点）：[v6] 输入剥括号存裸字面量
+        self.host = Self.normalizedHost(host)
         self.upstreamAuthUsername = Self.normalizedUpstreamUsername(upstreamAuthUsername)
+    }
+
+    /// IPv6 主机存储归一化：`[v6]` 包裹输入剥为裸字面量（strip 前先 trim）。
+    /// 裸字面量是 OpenSSH 目的地、known_hosts、ssh-keyscan 的共同规范形式；
+    /// 编辑器/导入等任何入口进入模型即归一，下游不再见到括号。
+    static func normalizedHost(_ raw: String) -> String {
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.hasPrefix("["), value.hasSuffix("]"), value.dropFirst().dropLast().contains(":") {
+            return String(value.dropFirst().dropLast())
+        }
+        return value
     }
 
     /// 上游认证用户名归一化：去首尾空白，空串归 nil（nil = 不使用认证）。
@@ -208,6 +220,7 @@ struct ServerProfile: Codable, Identifiable, Equatable, Sendable {
         autoRepairEnabled = try c.decodeIfPresent(Bool.self, forKey: .autoRepairEnabled) ?? true
         connectAtLaunch = try c.decodeIfPresent(Bool.self, forKey: .connectAtLaunch) ?? false
         rememberPassword = try c.decodeIfPresent(Bool.self, forKey: .rememberPassword) ?? false
+        host = Self.normalizedHost(host) // 旧文件手工编辑成 [v6] 也在装载时归一
         upstreamAuthUsername = Self.normalizedUpstreamUsername(try c.decodeIfPresent(String.self, forKey: .upstreamAuthUsername))
     }
 }
@@ -227,8 +240,8 @@ enum ServerProfileRule {
 
     /// host / username 采用白名单字符集校验，从源头排除 shell 控制字符。
     /// IPv6 字面量（裸形式或 `[...]` 包裹）单独校验：冒号不在主机名白名单内。
-    /// 存储规范形为**裸字面量**（OpenSSH `user@v6` 目的地解析干净、known_hosts
-    /// 与 ssh-keyscan 的 host 字段同为裸形式），`[...]` 输入由编辑器保存时剥除。
+    /// 存储规范形为**裸字面量**（归一化见 normalizedHost——OpenSSH `user@v6` 目的地
+    /// 解析干净、known_hosts 与 ssh-keyscan 的 host 字段同为裸形式）。
     static func validateHost(_ raw: String) -> String? {
         let host = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if host.isEmpty { return "SSH 主机不能为空" }
@@ -238,7 +251,7 @@ enum ServerProfileRule {
         if host.contains(":") || (host.hasPrefix("[") && host.hasSuffix("]")) {
             if host.hasPrefix("[") && host.hasSuffix("]") {
                 let inner = String(host.dropFirst().dropLast())
-                if inner.contains(":") { // [v6]（可再带 ]port 合写？内层含冒号才按 IPv6 处理）
+                if inner.contains(":") { // [v6]：内层按 IPv6 校验（归一化在 normalizedHost）
                     return isValidIPv6Literal(inner)
                         ? nil : "IPv6 地址格式不正确（示例 2001:db8::1；不支持 host:port 合写）"
                 }

@@ -287,19 +287,10 @@ struct ServerEditorForm: View {
                         TextField(L10n.t("例如：实验室 GPU 服务器"), text: $profile.name)
                     }
                     FormRow(label: "SSH 主机", help: "IP 或域名；支持 IPv6 字面量（如 2001:db8::1，方括号输入会自动剥除）") {
-                        TextField(L10n.t("10.x.x.x、example.com 或 2001:db8::1"), text: Binding(
-                            get: { profile.host },
-                            // `[v6]` 括号输入在闭合的瞬间归一为裸字面量：存储与 ssh 目的地、
-                            // known_hosts 的规范形式一致；输入过程中（未闭合）不影响打字
-                            set: {
-                                var value = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if value.hasPrefix("["), value.hasSuffix("]"), value.dropFirst().dropLast().contains(":") {
-                                    value = String(value.dropFirst().dropLast())
-                                }
-                                profile.host = value
-                            }
-                        ))
-                        .autocorrectionDisabled()
+                        // [v6] 括号归一发生在模型层（ServerProfile.normalizedHost），
+                        // 闭合的瞬间表单即显示剥括号后的规范形式
+                        TextField(L10n.t("10.x.x.x、example.com 或 2001:db8::1"), text: $profile.host)
+                            .autocorrectionDisabled()
                     }
                     FormRow(label: "SSH 端口") {
                         PortField(value: $profile.sshPort, prompt: "SSH 端口")

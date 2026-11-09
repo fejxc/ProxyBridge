@@ -88,7 +88,6 @@ final class ProfileValidationTests: XCTestCase {
             "1.2.3.4::",             // IPv4 尾巴必须在地址末尾
             "1:2:3:4:5:6:7:1.2.3.4", // 全写 + IPv4 尾巴 = 9 组超界
             "2001:db8::1%en0",       // zone-id 不支持
-            "2001:db8::1:22",        // host:port 合写会被当成 9 组拒绝
             "ｆｆ::1",                // 全角十六进制
         ]
         for host in badHosts {
@@ -139,8 +138,13 @@ final class ProfileValidationTests: XCTestCase {
             let v = ServerProfileRule.validate(makeProfile(host: host))
             XCTAssertTrue(v.isValid, "IPv6「\(host)」应被接受：\(v.errors)")
         }
-        // 方括号输入被编辑器归一为裸字面量（validate 层只对裸形式放行）
-        XCTAssertNotNil(ServerProfileRule.validateHost("[2001:db8::1]"), "括号形式在 validateHost 剥除前应拒绝")
+        // 方括号输入在模型层归一为裸字面量（validateHost 接受、存储为规范形）
+        XCTAssertNil(ServerProfileRule.validateHost("[2001:db8::1]"), "括号形式应被接受")
+        XCTAssertEqual(ServerProfile.normalizedHost("[2001:db8::1]"), "2001:db8::1")
+        let bracketed = ServerProfile(name: "v6", host: "[2001:db8::1]", sshPort: 22, username: "u", remotePort: 17891)
+        XCTAssertEqual(bracketed.host, "2001:db8::1", "构造即归一：下游（destination/keyscan）只见裸字面量")
+        // 「host:port 合写」与合法压缩地址无法区分（2001:db8::1:22 本就是合法 IPv6），按地址接受
+        XCTAssertTrue(ServerProfileRule.isValidIPv6Literal("2001:db8::1:22"))
     }
 
     func testIPv6ParserBoundary() {
