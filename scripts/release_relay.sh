@@ -50,7 +50,12 @@ for r in d.get('workflow_runs', []):
 }
 
 echo "== 段1：等待 CI 全绿（每 60 秒查询，最多 30 分钟）=="
-SHA=$(git rev-parse "${TAG}^{commit}")
+# --tag 模式下标签尚未创建，CI 检查的是当前 HEAD；非 --tag 模式标签必须已存在
+if [[ "${AUTO_TAG}" == 1 ]]; then
+  SHA=$(git rev-parse HEAD)
+else
+  SHA=$(git rev-parse "${TAG}^{commit}")
+fi
 for _ in $(seq 1 30); do
   STATE=$(run_state "${SHA}" ci.yml)
   case "${STATE}" in
@@ -70,9 +75,7 @@ if [[ "${AUTO_TAG}" == 1 ]]; then
     echo "标签 ${TAG} 已推送（指向 ${SHA:0:7}）"
   fi
 else
-  git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null || {
-    echo "标签 ${TAG} 不存在：请先打标签推送，或使用 --tag 模式" >&2; exit 1;
-  }
+  SHA=$(git rev-parse "${TAG}^{commit}") # 标签已存在时以标签指向为准（防 HEAD 已前进）
 fi
 
 echo "== 段3：等待发布工作流（每 60 秒查询，最多 30 分钟）=="
