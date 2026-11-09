@@ -7,9 +7,8 @@ import AppKit
 struct ServerEditorView: View {
     @Environment(AppViewModel.self) private var model
 
-    @State private var draft: ServerProfile?
-    /// 草稿对应的原始值（未保存变更检测）。
-    @State private var lastLoaded: ServerProfile?
+    /// 草稿与基线存放在 ProfileManager（C2：设置窗关闭销毁视图 @State，
+    /// 重开窗口不得静默重置未保存修改），此处只做绑定与窗口本地呈现状态。
     @State private var showUnsavedBanner = false
     /// 钥匙串查询结果的视图层缓存：hasStoredPassword 直连 SecItemCopyMatching，
     /// 若在 body 里调用，表单每敲一个键就会查询一次；改为只在会改变其真值的
@@ -22,7 +21,7 @@ struct ServerEditorView: View {
 
     var body: some View {
         Group {
-            if draft != nil {
+            if model.editorDraft != nil {
                 editorForm
             } else {
                 emptyPane
@@ -37,14 +36,16 @@ struct ServerEditorView: View {
             }
         }
         .task(id: editSourceId) {
-            if showUnsavedProtection, let current = draft, let baseline = lastLoaded,
+            if showUnsavedProtection, let current = model.editorDraft, let baseline = model.editorDraftBaseline,
                current != baseline {
-                // 保留用户正在编辑的草稿，改为提示；绝不静默丢弃
+                // 保留用户正在编辑的草稿，改为提示；绝不静默丢弃（含窗口重开后的恢复）
                 showUnsavedBanner = true
                 return
             }
             showUnsavedBanner = false
-            loadDraft()
+            model.reloadEditorDraftFromCurrent()
+            refreshStoredPasswordFlag()
+            refreshUpstreamSecretFlag()
         }
     }
 
@@ -85,12 +86,12 @@ struct ServerEditorView: View {
 
     private var editorForm: some View {
         let draftBinding = Binding<ServerProfile>(
-            get: { draft ?? .placeholder },
-            set: { draft = $0 }
+            get: { model.editorDraft ?? .placeholder },
+            set: { model.editorDraft = $0 }
         )
         return VStack(alignment: .leading, spacing: 16) {
             if showUnsavedBanner {
-                InfoBlock(text: "正在编辑「\(draftBinding.wrappedValue.name)」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器不会丢弃它们，但当前显示的是草稿而非已保存配置。")
+                InfoBlock(text: "正在编辑「\(draftBinding.wrappedValue.name)」的未保存修改：这些修改尚未写入磁盘。切换左侧服务器或关闭设置窗口都不会丢弃它们，但当前显示的是草稿而非已保存配置。")
             }
             ServerEditorForm(
                 profile: draftBinding,
@@ -111,8 +112,6 @@ struct ServerEditorView: View {
                     guard ServerProfileRule.validate(normalized).isValid else { return }
                     if model.saveDraftProfile(normalized) {
                         model.applyUpstreamSecret(for: normalized.id, action: secretAction)
-                        self.draft = normalized
-                        self.lastLoaded = normalized
                         self.showUnsavedBanner = false
                         self.refreshStoredPasswordFlag()
                         refreshUpstreamSecretFlag()
@@ -120,11 +119,9 @@ struct ServerEditorView: View {
                 },
                 onDiscard: {
                     model.discardDraft()
-                    self.draft = nil
                 },
                 onDelete: { profile in
                     model.deleteProfile(profile.id)
-                    self.draft = nil
                 }
             )
         }
@@ -135,24 +132,12 @@ struct ServerEditorView: View {
         return model.currentProfileId?.uuidString ?? "none"
     }
 
-    private func loadDraft() {
-        if model.editorIsNewDraft {
-            draft = model.makeNewProfileDraft()
-        } else {
-            draft = model.currentProfile
-        }
-        lastLoaded = draft
-        showUnsavedBanner = false
-        refreshStoredPasswordFlag()
-        refreshUpstreamSecretFlag()
-    }
-
     private func refreshStoredPasswordFlag() {
-        draftHasStoredPassword = draft.map { model.hasStoredPassword(for: $0.id) } ?? false
+        draftHasStoredPassword = model.editorDraft.map { model.hasStoredPassword(for: $0.id) } ?? false
     }
 
     private func refreshUpstreamSecretFlag() {
-        draftHasStoredUpstreamPassword = draft.map { model.hasUpstreamPassword(for: $0.id) } ?? false
+        draftHasStoredUpstreamPassword = model.editorDraft.map { model.hasUpstreamPassword(for: $0.id) } ?? false
     }
 }
 

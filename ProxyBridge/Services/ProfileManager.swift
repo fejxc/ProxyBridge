@@ -49,6 +49,13 @@ final class ProfileManager {
     private(set) var defaultProfileId: UUID?
     /// 侧栏「添加服务器」置位的「新草稿」信号；编辑器据此本地建立未保存草稿。
     private(set) var editorIsNewDraft = false
+    /// 编辑器草稿（C2，1.10.0 起）：草稿与基线上移到本组件——设置窗关闭会销毁视图的
+    /// @State，此前重开窗口会静默重置用户未保存的修改；现在草稿随 App 状态存活，
+    /// 重开窗口原样恢复（含未保存修改，编辑器以横幅提示）。
+    /// setter 仅供编辑器 Binding 逐键写入；生命周期迁移一律走下方方法。
+    var editorDraft: ServerProfile?
+    /// 草稿对应的已保存基线（未保存变更检测）；新建草稿的基线即初始模板。
+    private(set) var editorDraftBaseline: ServerProfile?
     private var document: ProfilesDocument = .empty()
 
     var current: ServerProfile? {
@@ -142,7 +149,17 @@ final class ProfileManager {
     }
 
     func requestCreateProfile() {
+        // 已在新建草稿态：不重置正在编辑的草稿（重复点击「添加服务器」不得清空已输入内容）
+        guard !editorIsNewDraft || editorDraft == nil else { return }
         editorIsNewDraft = true
+        editorDraft = makeNewProfileDraft()
+        editorDraftBaseline = editorDraft
+    }
+
+    /// 编辑器装载当前应显示的草稿：新建态沿用已有模板（兜底创建），否则取当前选中服务器。
+    func reloadEditorDraftFromCurrent() {
+        editorDraft = editorIsNewDraft ? (editorDraft ?? makeNewProfileDraft()) : current
+        editorDraftBaseline = editorDraft
     }
 
     /// 编辑器保存草稿。校验失败的非法配置拒绝保存（U06「拒绝保存」半边）。
@@ -159,6 +176,8 @@ final class ProfileManager {
         editorIsNewDraft = false
         upsert(profile)
         currentProfileId = profile.id
+        editorDraft = profile
+        editorDraftBaseline = profile
         persist()
         if let conflict = remotePortConflictDescription(for: profile) {
             logStore.append(raw: "端口冲突提示：\(conflict)", level: .warning, profileId: profile.id)
@@ -169,6 +188,8 @@ final class ProfileManager {
     /// 放弃草稿。
     func discardDraft() {
         editorIsNewDraft = false
+        editorDraft = nil
+        editorDraftBaseline = nil
     }
 
     // MARK: - CRUD
@@ -243,6 +264,10 @@ final class ProfileManager {
     /// 删除前的安全检查：活跃连接先断开（由本 App 管理的进程）。
     func delete(_ id: UUID) {
         onProfileRemoving(id) // 宿主：断开隧道、清密码/通知/快照/冲突卡等会话侧状态
+        if editorDraft?.id == id {
+            editorDraft = nil
+            editorDraftBaseline = nil
+        }
         let name = profiles.first { $0.id == id }?.name ?? "?"
         profiles.removeAll { $0.id == id }
         if currentProfileId == id {

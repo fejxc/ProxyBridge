@@ -86,6 +86,41 @@ final class AppViewModelTests: XCTestCase {
 
     // MARK: 启动装配
 
+    /// C2（1.10.0）：编辑器草稿随 AppViewModel（ProfileManager）存活——模拟设置窗
+    /// 关闭重开（视图销毁重建），未保存修改不丢；保存后基线对齐；放弃即清空。
+    func testEditorDraftSurvivesWindowReopen() throws {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, _, _) = makeModel(directory: temp.url)
+        pinChineseForTesting()
+
+        // 新建草稿并逐键写入（模拟用户输入到一半关掉设置窗）
+        model.requestCreateProfile()
+        XCTAssertTrue(model.editorIsNewDraft)
+        var draft = try XCTUnwrap(model.editorDraft)
+        draft.host = "10.9.9.9"
+        model.editorDraft = draft
+        XCTAssertNotEqual(model.editorDraft, model.editorDraftBaseline, "逐键写入后应与基线不一致（未保存保护条件成立）")
+
+        // 窗口重开：视图重建（@State 全新），task 里未保存保护依赖的模型状态原样还在
+        XCTAssertEqual(model.editorDraft?.host, "10.9.9.9", "重开窗口不得重置未保存草稿")
+        XCTAssertEqual(model.editorDraft?.name, draft.name)
+
+        // 保存 → 草稿与基线对齐、退出新建态；再次「添加服务器」得全新模板
+        draft.username = "u"
+        XCTAssertTrue(model.saveDraftProfile(draft))
+        XCTAssertEqual(model.editorDraft, model.editorDraftBaseline)
+        XCTAssertFalse(model.editorIsNewDraft)
+        model.requestCreateProfile()
+        XCTAssertNotEqual(model.editorDraft?.id, draft.id, "保存后的新建草稿应是新模板")
+
+        // 放弃草稿 → 全清
+        model.discardDraft()
+        XCTAssertNil(model.editorDraft)
+        XCTAssertNil(model.editorDraftBaseline)
+        XCTAssertFalse(model.editorIsNewDraft)
+    }
+
     func testBootstrapEmptyStartsDetection() async {
         let temp = withTempDir()
         defer { temp.removeAll() }

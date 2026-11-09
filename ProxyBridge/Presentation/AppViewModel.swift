@@ -79,6 +79,14 @@ final class AppViewModel {
     var profiles: [ServerProfile] { profileManager.profiles }
     var currentProfileId: UUID? { profileManager.currentProfileId }
     var editorIsNewDraft: Bool { profileManager.editorIsNewDraft }
+    /// 编辑器草稿（C2）：随 App 状态存活，设置窗关闭重开不丢未保存修改。
+    var editorDraft: ServerProfile? {
+        get { profileManager.editorDraft }
+        set { profileManager.editorDraft = newValue } // 编辑器 Binding 逐键写入
+    }
+    var editorDraftBaseline: ServerProfile? { profileManager.editorDraftBaseline }
+    /// 编辑器装载当前应显示的草稿（新建态沿用模板 / 编辑态取当前选中服务器）。
+    func reloadEditorDraftFromCurrent() { profileManager.reloadEditorDraftFromCurrent() }
 
     private(set) var snapshots: [UUID: TunnelSnapshot] = [:]
     private(set) var detection = ProxyDetectionState()

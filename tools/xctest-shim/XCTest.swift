@@ -29,3 +29,17 @@ public func XCTAssertLessThanOrEqual<T: Comparable>(_ expression1: @autoclosure 
 public func XCTAssertGreaterThanOrEqual<T: Comparable>(_ expression1: @autoclosure () throws -> T, _ expression2: @autoclosure () throws -> T, _ message: @autoclosure () -> String = "", file: StaticString = #filePath, line: UInt = #line) {}
 public func XCTAssertThrowsError<T>(_ expression: @autoclosure () throws -> T, _ message: @autoclosure () -> String = "", file: StaticString = #filePath, line: UInt = #line, _ errorHandler: (any Error) -> Void = { _ in }) {}
 public func XCTAssertNoThrow<T>(_ expression: @autoclosure () throws -> T, _ message: @autoclosure () -> String = "", file: StaticString = #filePath, line: UInt = #line) {}
+
+/// 真实 XCTest 里：解包 Optional 表达式，nil 时记录失败并抛错中止当前测试。
+/// 本 shim 仅做编译级类型检查（本机无 Xcode），运行语义不需要模拟。
+public func XCTUnwrap<T>(_ expression: @autoclosure () throws -> T?, _ message: @autoclosure () -> String = "", file: StaticString = #filePath, line: UInt = #line) throws -> T {
+    guard let value = try expression() else {
+        throw ShimUnwrapFailure(message: message())
+    }
+    return value
+}
+
+/// XCTUnwrap 失败的占位错误（仅 shim 内部使用；真实 XCTest 用 XCTIssue 记录）。
+struct ShimUnwrapFailure: Error {
+    let message: String
+}
