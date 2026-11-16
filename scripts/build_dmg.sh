@@ -31,13 +31,33 @@ ProxyBridge（macOS 14 或更高版本，支持 Apple Silicon 与 Intel）
 
 1. 将 ProxyBridge.app 拖到 Applications 文件夹。
 2. 从应用程序文件夹启动；应用位于菜单栏。
-3. 当前使用 ad-hoc 签名，未获 Apple 公证。确认从官方仓库下载后，
-   如果 macOS 阻止打开，可到「系统设置 → 隐私与安全性」中允许打开。
+3. 首次打开被 macOS 拦截时（ad-hoc 签名，未获 Apple 公证，属预期），
+   确认从官方仓库下载后，任选其一解除：
+   a. 「系统设置 → 隐私与安全性」底部点「仍要打开」；
+   b. 终端执行：xattr -dr com.apple.quarantine /Applications/ProxyBridge.app
 4. 在此 Mac 上启动代理客户端，并在 ProxyBridge 中添加服务器。
 5. 首次连接前，请在此 Mac 的终端 SSH 登录一次并核对主机指纹。
 
 安装包不包含任何用户配置、钥匙串、密码或私钥。
 官方仓库：https://github.com/fejxc/ProxyBridge
+
+------------------------------------------------------------------------------
+English quick guide
+
+ProxyBridge (macOS 14+, universal: Apple Silicon & Intel)
+
+1. Drag ProxyBridge.app into the Applications folder.
+2. Launch it from Applications; the app lives in the menu bar.
+3. If macOS blocks the first launch (ad-hoc signature, not notarized — expected),
+   after confirming the download is from the official repo, either:
+   a. open "System Settings → Privacy & Security" and click "Open Anyway", or
+   b. run in Terminal: xattr -dr com.apple.quarantine /Applications/ProxyBridge.app
+4. Start your proxy client on this Mac, then add a server in ProxyBridge.
+5. Before the first connection, SSH into the server once from this Mac's
+   Terminal and verify the host fingerprint.
+
+The installer contains no user config, keychain, password, or private keys.
+Official repo: https://github.com/fejxc/ProxyBridge
 NOTES
 DMG="$DIST/ProxyBridge-${RELEASE_VERSION}-universal.dmg"
 hdiutil create -volname "ProxyBridge ${RELEASE_VERSION}" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG"
