@@ -155,6 +155,8 @@ curl --socks5-hostname 127.0.0.1:17890 -I \
   --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models
 ```
 
+For tools like git, npm, pip and Docker, "Copy Linux commands" in the menu bar and overview page ships ready-made per-tool templates in a "use + verify + undo" format (copy to the server and run). Persistent configs (git config / npm config / Docker systemd) always include undo commands, so you can restore direct connections after disconnecting the tunnel.
+
 To reproduce the dynamic SOCKS5 tunnel by hand on the Mac (start it first, then substitute your SSH details and port):
 
 ```bash

@@ -153,6 +153,8 @@ curl --socks5-hostname 127.0.0.1:17890 -I \
   --connect-timeout 8 --max-time 20 https://api.openai.com/v1/models
 ```
 
+git、npm、pip、Docker 等工具不想手动写配置的话，菜单栏与概览页的「复制 Linux 命令」内置了各工具的「使用 + 验证 + 撤销」三段模板（一键复制到服务器执行）；持久化配置（git config / npm config / Docker systemd）均附带撤销命令，断开隧道后可恢复直连。
+
 想在 Mac 上手工复现动态 SOCKS5 隧道（先启动隧道，替换 SSH 信息和端口）：
 
 ```bash
