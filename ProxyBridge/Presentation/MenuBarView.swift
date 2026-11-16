@@ -62,6 +62,9 @@ struct MenuBarView: View {
                 emptyState
             } else {
                 serverCard
+                if !model.activeSessionDigest.others.isEmpty {
+                    otherSessionsRow
+                }
                 if model.pendingPasswordProfileId != nil {
                     PasswordPromptCard()
                 }
@@ -335,6 +338,52 @@ struct MenuBarView: View {
         }
     }
 
+    // MARK: 他台摘要（多台活跃时才渲染；点名字即切换）
+
+    /// 多台活跃会话的「其他在连」摘要：健康的只计数，需注意的点名着色；
+    /// 点击名字切换到那台服务器（头卡与健康明细随之呈现其状态）。
+    private var otherSessionsRow: some View {
+        let digest = model.activeSessionDigest
+        let healthy = digest.others.filter { $0.tone == .green }.count
+        let attention = digest.others.filter { $0.tone != .green }
+        return SectionCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(String(format: L10n.t("其他在连 %d 台：%d 健康"), digest.others.count, healthy))
+                    .font(.footnote)
+                    .foregroundStyle(Palette.muted)
+                ForEach(attention) { item in
+                    Button {
+                        model.selectProfile(item.id)
+                    } label: {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(item.tone == .red ? Palette.red : Palette.orange)
+                                .frame(width: 6, height: 6)
+                            Text(item.name)
+                                .font(.footnote.weight(.medium))
+                                .foregroundStyle(Palette.ink)
+                            Text(Self.otherSessionToneLabel(item.tone))
+                                .font(.footnote)
+                                .foregroundStyle(Palette.muted)
+                        }
+                    }
+                    .buttonStyle(.link)
+                    .help(L10n.t("点击切换到该服务器查看详情"))
+                }
+            }
+        }
+    }
+
+    /// 他台摘要行里的 tone 简述（绿=健康不点名，其余按注意度措辞）。
+    private static func otherSessionToneLabel(_ tone: StatusTone) -> String {
+        switch tone {
+        case .red: return L10n.t("需要处理")
+        case .orange: return L10n.t("需注意")
+        case .blue: return L10n.t("连接中")
+        case .green, .gray: return L10n.t("健康")
+        }
+    }
+
     // MARK: 健康摘要（全过折叠为一行；含失败自动展开并点名）
 
     private var checks: some View {
@@ -459,12 +508,21 @@ struct MenuBarView: View {
                 if model.remoteHTTPCompatibilityText() != nil {
                     Button(L10n.t("HTTP_PROXY + CONNECT 验收")) { model.copyRemoteHTTPCompatibilityToPasteboard() }
                 }
+                if model.remoteToolHTTPEntry != nil {
+                    Section(L10n.t("接入常用工具")) {
+                        ForEach(RemoteCommandTemplate.ToolPreset.allCases) { preset in
+                            Button(L10n.t(preset.menuTitle)) {
+                                model.copyToolPresetToPasteboard(preset)
+                            }
+                        }
+                    }
+                }
             } label: {
                 Label(L10n.t("复制 Linux 命令"), systemImage: "doc.on.doc")
                     .font(.footnote)
             }
             .menuStyle(.borderlessButton)
-            .help(L10n.t("复制 Linux SOCKS5 或 HTTP_PROXY 验收命令；不修改服务器配置"))
+            .help(L10n.t("复制 Linux 侧使用命令（环境变量 / git / npm / pip / Docker）；不修改服务器配置"))
             Spacer(minLength: 0)
             if let update = model.updateInfo {
                 Button {

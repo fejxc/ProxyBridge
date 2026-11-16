@@ -41,7 +41,7 @@ struct ProxyBridgeApp: App {
         } label: {
             Image(systemName: model.menuBarSymbolName)
                 .symbolRenderingMode(.hierarchical)
-                .accessibilityLabel(Text("ProxyBridge：" + model.overallPresentation.title))
+                .accessibilityLabel(Text("ProxyBridge：" + model.menuBarAccessibilityTitle))
         }
         .menuBarExtraStyle(.window)
         .commands {

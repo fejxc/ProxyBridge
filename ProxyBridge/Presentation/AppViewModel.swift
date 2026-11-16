@@ -680,6 +680,28 @@ final class AppViewModel {
         }
     }
 
+    // MARK: 接入助手（1.11.0）
+
+    /// 工具接入命令（git/npm/pip/docker）可用的 HTTP 形式入口与其验证状态。
+    /// 静态模式：实测/选定协议为 http/mixed 时用主转发端口（纯 SOCKS5 无 HTTP 入口）；
+    /// 动态模式：HTTP 兼容入口端口（未启用则无）。nil = 无 HTTP 形式入口，接入菜单不渲染。
+    var remoteToolHTTPEntry: (port: Int, verified: Bool?)? {
+        guard let profile = currentProfile else { return nil }
+        let snapshot = snapshots[profile.id]
+        if resolvedConnectionMode(profile: profile, snapshot: snapshot) == .reverseDynamic {
+            guard profile.httpAdapterEnabled,
+                  (1...65_535).contains(profile.remoteHTTPPort) else { return nil }
+            return (profile.remoteHTTPPort, snapshot?.httpAdapterVerified)
+        }
+        guard (1...65_535).contains(profile.remotePort) else { return nil }
+        let activeEndpoint = snapshot?.sshProcessRunning == true
+            ? profileStates[profile.id]?.connectionEndpoint : nil
+        let endpoint = activeEndpoint ?? endpointValue(of: EndpointResolver.resolve(profile: profile, detection: detection))
+        let proto = endpoint?.protocol ?? profile.preferredProtocol
+        guard proto != .socks5 else { return nil }
+        return (profile.remotePort, snapshot?.remoteProbeVerified)
+    }
+
     /// 健康行详情文案：菜单栏展开行与概览页共用。index 与 healthCheckRows 顺序一致。
     func healthRowDetail(index: Int, display: HealthCheckDisplay) -> String {
         switch index {
@@ -753,15 +775,70 @@ final class AppViewModel {
         )
     }
 
-    /// 菜单栏图标（SF Symbol，按色调区分）。
+    // MARK: - 多台活跃会话聚合（1.11.0）
+
+    /// 多台活跃会话的聚合呈现：菜单栏图标与面板「其他在连」摘要行的单源。
+    /// tone 复用 TunnelStatusPresentation.overall 的单台映射，不另立映射表。
+    struct ActiveSessionDigest: Equatable {
+        struct Item: Equatable, Identifiable {
+            let id: UUID
+            let name: String
+            let tone: StatusTone
+        }
+        /// 活跃会话总数（含当前选中）。
+        let activeCount: Int
+        /// 除当前选中外的活跃会话（面板摘要行用），按 profile 列表序。
+        let others: [Item]
+        /// 全部活跃会话中注意度最高的 tone；活跃不足 2 台时为 nil（保持单台呈现不变）。
+        let worstTone: StatusTone?
+        /// 注意度最高的会话（无障碍标题用）。
+        let worstItem: Item?
+    }
+
+    /// 活跃会话聚合：多台并行连接时，未选中服务器的故障也必须反映到菜单栏图标。
+    /// 单台/零台活跃时 worstTone 为 nil，图标与无障碍标题维持既有单台行为。
+    var activeSessionDigest: ActiveSessionDigest {
+        let active = profiles.filter { tunnel.isActive(profileID: $0.id) }
+        guard active.count >= 2 else {
+            return ActiveSessionDigest(activeCount: active.count, others: [], worstTone: nil, worstItem: nil)
+        }
+        let items = active.map { profile in
+            ActiveSessionDigest.Item(
+                id: profile.id,
+                name: profile.name,
+                tone: TunnelStatusPresentation.overall(for: snapshots[profile.id] ?? TunnelSnapshot.idle(profile.id)).tone
+            )
+        }
+        let worst = items.max { AppViewModel.toneAttentionRank($0.tone) < AppViewModel.toneAttentionRank($1.tone) }
+        return ActiveSessionDigest(
+            activeCount: items.count,
+            others: items.filter { $0.id != currentProfileId },
+            worstTone: worst?.tone,
+            worstItem: worst
+        )
+    }
+
+    /// 图标聚合的注意度序（低 → 高）：red 最需要注意；gray 不应出现在活跃会话，防御性排最低。
+    static let toneAttentionOrder: [StatusTone] = [.gray, .green, .blue, .orange, .red]
+    static func toneAttentionRank(_ tone: StatusTone) -> Int {
+        toneAttentionOrder.firstIndex(of: tone) ?? 0
+    }
+
+    /// 菜单栏图标（SF Symbol，按色调区分）。多台活跃时取聚合最差 tone。
     var menuBarSymbolName: String {
-        switch overallPresentation.tone {
+        switch activeSessionDigest.worstTone ?? overallPresentation.tone {
         case .gray: return "arrow.left.arrow.right"
         case .blue: return "arrow.left.arrow.right.circle"
         case .green: return "arrow.left.arrow.right.circle.fill"
         case .orange: return "exclamationmark.arrow.circlepath"
         case .red: return "exclamationmark.triangle"
         }
+    }
+
+    /// 菜单栏图标无障碍标题：多台活跃时聚合描述，否则单台标题（既有行为）。
+    var menuBarAccessibilityTitle: String {
+        guard let worst = activeSessionDigest.worstItem else { return overallPresentation.title }
+        return String(format: L10n.t("%d 台活跃，最需注意：%@"), activeSessionDigest.activeCount, worst.name)
     }
 
     /// 主按钮形态。
@@ -1229,6 +1306,17 @@ final class AppViewModel {
     func copyRemoteHTTPCompatibilityToPasteboard() {
         guard let text = remoteHTTPCompatibilityText() else { return }
         copyToPasteboard(text, logMessage: "已复制 HTTP_PROXY 与 CONNECT 验收命令")
+    }
+
+    /// 接入助手：按工具（git/npm/pip/docker）复制「使用 + 验证 + 撤销」模板。
+    func copyToolPresetToPasteboard(_ preset: RemoteCommandTemplate.ToolPreset) {
+        guard let entry = remoteToolHTTPEntry,
+              let text = RemoteCommandTemplate.toolPresetCommands(
+                  preset: preset,
+                  httpProxyPort: entry.port,
+                  remoteVerified: entry.verified
+              ) else { return }
+        copyToPasteboard(text, logMessage: "已复制 \(preset.menuTitle) 接入命令到剪贴板")
     }
 
     private func copyToPasteboard(_ text: String, logMessage: String) {

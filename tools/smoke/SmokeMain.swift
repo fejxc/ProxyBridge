@@ -499,6 +499,25 @@ struct SmokeMain {
         let socks = RemoteCommandTemplate.exportCommands(remotePort: 7891, protocol: .socks5)
         check("S20b", "SOCKS 模板用 socks5h", (socks ?? "").contains("export ALL_PROXY=socks5h://127.0.0.1:7891"))
         check("S20c", "未验证时附提醒", (RemoteCommandTemplate.clipboardText(remotePort: 7890, protocol: .http, remoteVerified: nil) ?? "").contains("尚未验证"))
+        // 1.11.0 接入助手：三段齐全（使用注入端口/验证/撤销）、Docker 声明 sudo、新键英文查表
+        let gitPreset = RemoteCommandTemplate.toolPresetCommands(preset: .git, httpProxyPort: 7890, remoteVerified: true) ?? ""
+        check("S20d", "git 模板：使用/验证/撤销三段齐全且注入端口",
+              gitPreset.contains("git config --global http.proxy http://127.0.0.1:7890")
+                && gitPreset.contains("git ls-remote")
+                && gitPreset.contains("git config --global --unset http.proxy"))
+        check("S20e", "接入模板未验证时附提醒",
+              (RemoteCommandTemplate.toolPresetCommands(preset: .npm, httpProxyPort: 7890, remoteVerified: nil) ?? "").contains("尚未验证"))
+        check("S20f", "Docker 模板声明 sudo、NO_PROXY 保回环",
+              (RemoteCommandTemplate.toolPresetCommands(preset: .docker, httpProxyPort: 7890, remoteVerified: true) ?? "")
+                .contains("sudo") && (RemoteCommandTemplate.toolPresetCommands(preset: .docker, httpProxyPort: 7890, remoteVerified: true) ?? "")
+                .contains("NO_PROXY=localhost,127.0.0.1"))
+        L10n.apply(.english)
+        let enToolKeys = ["接入常用工具": "Use with common tools",
+                          "git（全局配置，含撤销）": "git (global config, with undo)",
+                          "Docker 拉镜像（systemd，含撤销）": "Docker image pull (systemd, with undo)"]
+            .allSatisfy { L10n.t($0.key) == $0.value }
+        L10n.apply(.chinese)
+        check("S20g", "L10n：接入助手新键英文查表覆盖", enToolKeys)
     }
 
     // MARK: S25 端点解析
@@ -704,10 +723,12 @@ struct SmokeMain {
         final class SpyTunnel: TunnelService {
             var onEvent: (@MainActor (TunnelEvent) -> Void)?
             let box = VMBox()
+            /// 测试注入：标记为活跃的 profile（A-3 聚合断言用）。
+            var activeIDs: Set<UUID> = []
             func connect(configuration: TunnelConfiguration) { box.recordConnect(configuration) }
             func disconnect(profileID: UUID) { box.recordDisconnect(profileID) }
             func runHealthCheck(profileID: UUID) {}
-            func isActive(profileID: UUID) -> Bool { false }
+            func isActive(profileID: UUID) -> Bool { activeIDs.contains(profileID) }
             func terminateAllSessions() {}
             func submitPassword(profileID: UUID, password: String, remember: Bool) {}
             func cancelPasswordPrompt(profileID: UUID) {}
@@ -800,6 +821,43 @@ struct SmokeMain {
         otherHost.id = UUID()
         otherHost.host = "other.example.com"
         check("S26k", "不同主机同端口不误报", model.remotePortConflictDescription(for: otherHost) == nil)
+
+        // A-3（1.11.0）多台活跃聚合：图标取最差 tone、others 排除当前、单台不聚合
+        var second = profile
+        second.id = UUID()
+        second.name = "第二台"
+        second.host = "second.example.com"
+        model.upsertProfile(second)
+        // 两台都 emit 健康快照（当前台此前被 S26d 打成 degraded，先复位）
+        spy.onEvent?(.snapshot(TunnelSnapshot(
+            profileId: profile.id, phase: .connected, localProxyVerified: true,
+            sshProcessRunning: true, remoteProbeVerified: true, lastRemoteProbeAt: Date(),
+            humanReadableDetail: "ok"
+        )))
+        spy.onEvent?(.snapshot(TunnelSnapshot(
+            profileId: second.id, phase: .connected, localProxyVerified: true,
+            sshProcessRunning: true, remoteProbeVerified: true, lastRemoteProbeAt: Date(),
+            humanReadableDetail: "ok"
+        )))
+        spy.activeIDs.formUnion([profile.id, second.id])
+        let digestHealthy = model.activeSessionDigest
+        check("S26m", "两台活跃全健康：worstTone 绿、others 排除当前",
+              digestHealthy.worstTone == .green && digestHealthy.others.count == 1
+                && digestHealthy.others.first?.id == second.id)
+        spy.onEvent?(.snapshot(TunnelSnapshot(
+            profileId: second.id, phase: .degraded, localProxyVerified: false,
+            sshProcessRunning: true, remoteProbeVerified: nil, lastRemoteProbeAt: nil,
+            humanReadableDetail: "本地代理未通过验证"
+        )))
+        let digestDegraded = model.activeSessionDigest
+        check("S26n", "未选中台降级 → 图标聚合为橙且点名该台",
+              digestDegraded.worstTone == .orange && digestDegraded.worstItem?.name == "第二台"
+                && model.menuBarSymbolName == "exclamationmark.arrow.circlepath"
+                && model.menuBarAccessibilityTitle.contains("2 台活跃"))
+        spy.activeIDs.remove(second.id)
+        let digestSingle = model.activeSessionDigest
+        check("S26o", "回到单台活跃：不聚合，维持既有单台呈现",
+              digestSingle.worstTone == nil && digestSingle.others.isEmpty)
     }
 
     // MARK: S27 LogStore / AppSettingsStore

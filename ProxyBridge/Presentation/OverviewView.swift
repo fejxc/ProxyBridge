@@ -289,12 +289,21 @@ struct OverviewView: View {
                 if model.remoteHTTPCompatibilityText() != nil {
                     Button(L10n.t("HTTP_PROXY + CONNECT 验收")) { model.copyRemoteHTTPCompatibilityToPasteboard() }
                 }
+                if model.remoteToolHTTPEntry != nil {
+                    Section(L10n.t("接入常用工具")) {
+                        ForEach(RemoteCommandTemplate.ToolPreset.allCases) { preset in
+                            Button(L10n.t(preset.menuTitle)) {
+                                model.copyToolPresetToPasteboard(preset)
+                            }
+                        }
+                    }
+                }
             } label: {
                 Label(L10n.t("复制 Linux 命令"), systemImage: "doc.on.doc")
                     .font(.footnote)
             }
             .menuStyle(.borderlessButton)
-            .help(L10n.t("复制 Linux SOCKS5 或 HTTP_PROXY 验收命令；不修改服务器配置"))
+            .help(L10n.t("复制 Linux 侧使用命令（环境变量 / git / npm / pip / Docker）；不修改服务器配置"))
             Spacer(minLength: 0)
             Button {
                 model.openSettings(tab: .logs)

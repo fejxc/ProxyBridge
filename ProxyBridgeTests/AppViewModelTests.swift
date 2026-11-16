@@ -564,4 +564,89 @@ final class AppViewModelTests: XCTestCase {
         spy.emit(failed)
         XCTAssertEqual(detector.detectCalls, detectCallsBefore + 1, "冷却窗口内不得重复重扫")
     }
+
+    // MARK: 多台活跃会话聚合（1.11.0 A-3）
+
+    /// 多台活跃时：图标取聚合最差 tone，「其他在连」排除当前选中并点名需注意项。
+    func testActiveSessionDigestAggregatesWorstToneAcrossProfiles() throws {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, _) = makeModel(directory: temp.url)
+        pinChineseForTesting()
+
+        let a = validProfile(name: "服务器A")
+        let b = validProfile(name: "服务器B")
+        model.upsertProfile(a)
+        model.upsertProfile(b)
+        model.selectProfile(a.id)
+
+        // 单台活跃：digest 不聚合（worstTone nil），图标维持单台行为
+        spy.activeIDs.insert(a.id)
+        var snap = activeStaticSnapshot(profile: a, endpoint: nil)
+        spy.emit(snap)
+        XCTAssertNil(model.activeSessionDigest.worstTone, "单台活跃不得改变既有单台呈现")
+        XCTAssertTrue(model.activeSessionDigest.others.isEmpty)
+
+        // 两台活跃：A 已连接（绿）、B 降级（橙）→ 最差 tone 橙，others 只含 B
+        spy.activeIDs.insert(b.id)
+        snap = activeStaticSnapshot(profile: a, endpoint: nil)
+        spy.emit(snap)
+        var bSnap = TunnelSnapshot.idle(b.id)
+        bSnap.phase = .degraded
+        bSnap.localProxyVerified = false
+        bSnap.sshProcessRunning = true
+        bSnap.humanReadableDetail = "本地代理未通过验证"
+        spy.emit(bSnap)
+
+        let digest = model.activeSessionDigest
+        XCTAssertEqual(digest.activeCount, 2)
+        XCTAssertEqual(digest.worstTone, .orange, "未选中服务器的降级必须反映到聚合")
+        XCTAssertEqual(digest.worstItem?.name, "服务器B")
+        XCTAssertEqual(digest.others.map(\.name), ["服务器B"], "当前选中的服务器不在 others 里")
+        XCTAssertTrue(model.menuBarSymbolName.contains("exclamationmark"), "多台含降级时图标应为警示形态")
+
+        // 切到 B 后 others 只剩 A；图标 tone 不变（仍是那台降级的 B，现在是当前台）
+        model.selectProfile(b.id)
+        let switched = model.activeSessionDigest
+        XCTAssertEqual(switched.others.map(\.name), ["服务器A"])
+        XCTAssertEqual(switched.worstTone, .orange)
+
+        // 全部健康：worstTone 绿、others 里无点名项
+        let healthyB = activeStaticSnapshot(profile: b, endpoint: nil)
+        spy.emit(healthyB)
+        XCTAssertEqual(model.activeSessionDigest.worstTone, .green)
+    }
+
+    /// 注意度序：red > orange > blue > green > gray（防御性最低）。
+    func testToneAttentionRankOrder() {
+        XCTAssertGreaterThan(AppViewModel.toneAttentionRank(.red), AppViewModel.toneAttentionRank(.orange))
+        XCTAssertGreaterThan(AppViewModel.toneAttentionRank(.orange), AppViewModel.toneAttentionRank(.blue))
+        XCTAssertGreaterThan(AppViewModel.toneAttentionRank(.blue), AppViewModel.toneAttentionRank(.green))
+        XCTAssertGreaterThan(AppViewModel.toneAttentionRank(.green), AppViewModel.toneAttentionRank(.gray))
+    }
+
+    /// 多台活跃时无障碍标题聚合描述；单台保持既有单台标题。
+    func testMenuBarAccessibilityTitleAggregation() throws {
+        let temp = withTempDir()
+        defer { temp.removeAll() }
+        let (model, spy, _) = makeModel(directory: temp.url)
+        pinChineseForTesting()
+
+        let a = validProfile(name: "服务器A")
+        let b = validProfile(name: "服务器B")
+        model.upsertProfile(a)
+        model.upsertProfile(b)
+        model.selectProfile(a.id)
+        XCTAssertEqual(model.menuBarAccessibilityTitle, model.overallPresentation.title, "零台活跃时保持单台标题")
+
+        spy.activeIDs.formUnion([a.id, b.id])
+        spy.emit(activeStaticSnapshot(profile: a, endpoint: nil))
+        var bSnap = TunnelSnapshot.idle(b.id)
+        bSnap.phase = .error
+        bSnap.sshProcessRunning = true
+        bSnap.humanReadableDetail = "连接失败"
+        spy.emit(bSnap)
+        XCTAssertTrue(model.menuBarAccessibilityTitle.contains("2 台活跃"), model.menuBarAccessibilityTitle)
+        XCTAssertTrue(model.menuBarAccessibilityTitle.contains("服务器B"), "最需注意的服务器要点名")
+    }
 }
