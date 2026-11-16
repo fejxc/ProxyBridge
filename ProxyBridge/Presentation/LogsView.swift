@@ -51,13 +51,14 @@ struct LogsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // 第一行：筛选。搜索框弹性占满剩余宽度；窄窗口下筛选优先保住。
             HStack(spacing: 10) {
                 Picker(L10n.t("时间"), selection: $timeScope) {
                     ForEach(TimeScope.allCases) { scope in
                         Text(scope.title).tag(scope)
                     }
                 }
-                .frame(minWidth: 110)
+                .frame(minWidth: 140)
 
                 Picker(L10n.t("级别"), selection: $levelFilter) {
                     Text(L10n.t("全部级别")).tag(LogLevel?.none)
@@ -96,9 +97,12 @@ struct LogsView: View {
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
                 .background(Palette.softFill, in: RoundedRectangle(cornerRadius: 6))
-                .frame(minWidth: 190)
+                .frame(minWidth: 190, maxWidth: .infinity)
+            }
 
-                Spacer()
+            // 第二行：操作按钮右对齐。四个按钮挤进筛选行会溢出窗口右缘（1.10.x 实况）。
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
 
                 Button {
                     model.copyLogsToPasteboard()
@@ -133,17 +137,42 @@ struct LogsView: View {
 
             SectionCard(title: filtered.isEmpty
                         ? L10n.t("暂无匹配日志")
-                        : String(format: L10n.t("最近活动（最多保留 %d 条）"), LogStore.capacity)) {
+                        : String(format: L10n.t("最近活动（%d / %d 条）"), filtered.count, LogStore.capacity)) {
+                if filtered.isEmpty {
+                    emptyStateHint
+                } else {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(filtered) { entry in
-                        logRow(entry)
+                        ForEach(filtered) { entry in
+                            logRow(entry)
+                        }
                     }
+                    .background(Palette.surface)
                 }
-                .background(Palette.surface)
             }
 
             InfoBlock(text: "日志入库前已过滤 ANSI 控制字符并遮挡密钥路径与凭据；复制时默认同时遮挡内网 IP 与 用户@主机。SSH stderr 不会被当作富文本解释执行。")
         }
+    }
+
+    /// 空态引导：说明可能是真的没有活动，也可能只是筛得太窄，各给一条出路。
+    private var emptyStateHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(searchText.isEmpty && levelFilter == nil && profileFilter == nil && timeScope == .all
+                 ? L10n.t("还没有日志。连接一台服务器后，事件与健康检查结果会显示在这里。")
+                 : L10n.t("没有匹配的日志。试着放宽时间或级别筛选、清空搜索词，或选「全部服务器」。"))
+                .font(.footnote)
+                .foregroundStyle(Palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if searchText.isEmpty && levelFilter == nil && profileFilter == nil && timeScope == .all {
+                Text(L10n.t("完整历史记录在磁盘上（日志页可定位），界面内最多保留 500 条。"))
+                    .font(.caption2)
+                    .foregroundStyle(Palette.muted.opacity(0.8))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
     }
 
     private func logRow(_ entry: LogEntry) -> some View {
