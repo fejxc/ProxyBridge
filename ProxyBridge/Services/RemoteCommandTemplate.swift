@@ -110,4 +110,97 @@ enum RemoteCommandTemplate {
         }
         return out
     }
+
+    // MARK: - 接入助手（1.11.0）
+
+    /// 常见 Linux 工具的接入模板：每套都是「使用 + 验证 + 撤销」三段。
+    /// 只生成命令文本，执行由用户决定（App 不安装软件、不用 sudo、不修改服务器配置）；
+    /// 持久化配置（git/npm/docker）必须附带撤销命令，断开隧道后用户能恢复直连。
+    enum ToolPreset: String, CaseIterable, Sendable, Identifiable {
+        case git
+        case npm
+        case pip
+        case docker
+
+        /// 菜单展示名（L10n 键，与词典一一对应）。
+        var menuTitle: String {
+            switch self {
+            case .git: return "git（全局配置，含撤销）"
+            case .npm: return "npm / pnpm（含撤销）"
+            case .pip: return "pip / uv（当前 shell 生效）"
+            case .docker: return "Docker 拉镜像（systemd，含撤销）"
+            }
+        }
+
+        var id: String { rawValue }
+    }
+
+    /// 生成工具接入模板。统一要求 HTTP 形式代理入口（git/npm/docker 的代理配置
+    /// 以 HTTP 代理为准；纯 SOCKS5 场景用户应改用环境变量模板）。
+    /// 端口越界返回 nil；未验证时附提醒（与 clipboardText 同一语义）。
+    static func toolPresetCommands(preset: ToolPreset, httpProxyPort: Int, remoteVerified: Bool?) -> String? {
+        guard (1...65_535).contains(httpProxyPort) else { return nil }
+        let proxy = "http://127.0.0.1:\(httpProxyPort)"
+        var out: String
+        switch preset {
+        case .git:
+            out = """
+            # ProxyBridge 生成：git 走 HTTP 代理（写入 ~/.gitconfig，全局持久生效）
+            # 断开隧道后务必执行撤销，否则 git 全部请求会打到失效端口
+            git config --global http.proxy \(proxy)
+            git config --global https.proxy \(proxy)
+            # 验证（应正常返回 GitHub 仓库的 HEAD 引用）
+            git ls-remote https://github.com/git/git.git HEAD
+            # 撤销（恢复直连）
+            git config --global --unset http.proxy
+            git config --global --unset https.proxy
+            """
+        case .npm:
+            out = """
+            # ProxyBridge 生成：npm / pnpm 走 HTTP 代理（写入各包管理器配置，持久生效）
+            # 断开隧道后务必执行撤销，否则安装全部失败
+            npm config set proxy \(proxy)
+            npm config set https-proxy \(proxy)
+            # pnpm 不读 npm 的配置，需单独设置：
+            pnpm config set proxy \(proxy)
+            pnpm config set https-proxy \(proxy)
+            # 验证（应返回 registry 响应时间）
+            npm ping
+            # 撤销（恢复直连）
+            npm config delete proxy && npm config delete https-proxy
+            pnpm config delete proxy && pnpm config delete https-proxy
+            """
+        case .pip:
+            out = """
+            # ProxyBridge 生成：pip / uv 走 HTTP 代理（仅当前 shell 生效，断开隧道后新开 shell 即恢复）
+            export PIP_PROXY=\(proxy)
+            # uv 与多数 Python 工具读标准代理环境变量：
+            export http_proxy=\(proxy)
+            export https_proxy=\(proxy)
+            # 验证（应列出 requests 的可用版本）
+            pip index versions requests || pip install --dry-run requests
+            # 撤销（当前 shell 内恢复直连）
+            unset PIP_PROXY http_proxy https_proxy
+            """
+        case .docker:
+            out = """
+            # ProxyBridge 生成：Docker daemon 拉镜像走 HTTP 代理
+            # 需 sudo 并重启 docker，影响整台服务器（容器不中断，daemon 短暂不可用）
+            # 方案 A（持久）：systemd 覆盖配置，断开隧道后需撤销，否则拉镜像全部失败
+            sudo mkdir -p /etc/systemd/system/docker.service.d
+            printf '[Service]\\nEnvironment="HTTP_PROXY=\(proxy)"\\nEnvironment="HTTPS_PROXY=\(proxy)"\\nEnvironment="NO_PROXY=localhost,127.0.0.1"\\n' | sudo tee /etc/systemd/system/docker.service.d/http-proxy.conf
+            sudo systemctl daemon-reload && sudo systemctl restart docker
+            # 验证（应显示 HTTP Proxy 配置）
+            docker info | grep -i proxy
+            # 撤销（恢复直连）
+            sudo rm /etc/systemd/system/docker.service.d/http-proxy.conf && sudo systemctl daemon-reload && sudo systemctl restart docker
+            # 方案 B（临时，不重启 daemon）：仅对单个容器注入环境变量
+            docker run -e http_proxy=\(proxy) -e https_proxy=\(proxy) <镜像>
+            """
+        }
+        if remoteVerified != true {
+            out += "\n# 注意：当前远端代理尚未验证（未验证 ≠ 可用），请先在 Mac 上执行检查连接"
+        }
+        return out
+    }
 }
